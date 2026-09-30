@@ -13,7 +13,15 @@ const app = express();
 
 app.use(express.json());
 app.use(cookieParser());
-app.use(express.static(path.join(__dirname, 'public')));
+// no-cache on the HTML/JS/CSS app shell so a browser refresh always picks up
+// the latest deploy — this app changes frequently and stale-cached index.html
+// or app.js (missing new features like the Chart.js tag) is a recurring
+// confusion otherwise. Static assets are tiny here, so no real cost.
+app.use(
+  express.static(path.join(__dirname, 'public'), {
+    setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache, must-revalidate'),
+  })
+);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -26,6 +34,7 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 // SPA fallback: any non-API route serves the app shell.
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) return next();
+  res.set('Cache-Control', 'no-cache, must-revalidate');
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
