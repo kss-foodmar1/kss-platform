@@ -590,8 +590,11 @@ function buildPurchaseAnalysisDashboard() {
     }
   }
 
+  let chartInstance = null;
+
   function renderBody(rows) {
     bodyWrap.innerHTML = '';
+    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
     if (!rows.length) {
       bodyWrap.innerHTML = '<p style="color:#6b7268;">ไม่พบข้อมูลตามเงื่อนไขที่เลือก</p>';
       return;
@@ -614,10 +617,99 @@ function buildPurchaseAnalysisDashboard() {
     `;
     bodyWrap.appendChild(kpiRow);
 
-    const panels = document.createElement('div');
-    panels.className = 'cogs-panels';
+    // ---- PO vs GRN vs Invoice over time (weekly buckets) ----
+    const byWeek = {};
+    rows.forEach((r) => {
+      const dateStr = r.order_date || r.issued_date || r.grn_date || r.invoice_date;
+      if (!dateStr) return;
+      const d = new Date(dateStr);
+      if (isNaN(d)) return;
+      // bucket to the Monday of that week
+      const day = d.getDay();
+      const diff = (day === 0 ? -6 : 1) - day;
+      const monday = new Date(d);
+      monday.setDate(d.getDate() + diff);
+      const key = monday.toISOString().slice(0, 10);
+      if (!byWeek[key]) byWeek[key] = { po: 0, grn: 0, inv: 0 };
+      byWeek[key].po += Number(r.po_total || 0);
+      byWeek[key].grn += Number(r.grn_total || 0);
+      byWeek[key].inv += Number(r.invoice_total || 0);
+    });
+    const weekKeys = Object.keys(byWeek).sort();
 
-    // Top suppliers by PO spend
+    const chartCard = document.createElement('div');
+    chartCard.className = 'chart-card';
+    chartCard.innerHTML = '<h3>PO vs GRN vs Invoice value over time</h3><div class="chart-wrap"><canvas></canvas></div>';
+    bodyWrap.appendChild(chartCard);
+
+    if (weekKeys.length && window.Chart) {
+      const canvas = chartCard.querySelector('canvas');
+      chartInstance = new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: {
+          labels: weekKeys.map((k) => new Date(k).toLocaleDateString('th-TH', { day: '2-digit', month: 'short' })),
+          datasets: [
+            { label: 'PO', data: weekKeys.map((k) => byWeek[k].po), borderColor: '#A9812F', backgroundColor: '#A9812F', tension: 0.25 },
+            { label: 'GRN', data: weekKeys.map((k) => byWeek[k].grn), borderColor: '#1B2B22', backgroundColor: '#1B2B22', tension: 0.25 },
+            { label: 'Invoice', data: weekKeys.map((k) => byWeek[k].inv), borderColor: '#BE4229', backgroundColor: '#BE4229', tension: 0.25 },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'top' } },
+          scales: {
+            y: { ticks: { callback: (v) => fmtCurrency(v) } },
+          },
+        },
+      });
+    } else if (!weekKeys.length) {
+      chartCard.querySelector('.chart-wrap').innerHTML = '<p style="color:#6b7268;">ไม่มีวันที่ในข้อมูลสำหรับสร้างกราฟ</p>';
+    }
+
+    const panels = document.createElement('div');
+    panels.className = 'panels-3col';
+
+    // ---- Top products needing attention (largest GRN-vs-PO value gap) ----
+    const byProduct = {};
+    rows.forEach((r) => {
+      const key = r.product_name || r.product_code || 'ไม่ระบุสินค้า';
+      if (!byProduct[key]) byProduct[key] = { po: 0, grn: 0, inv: 0 };
+      byProduct[key].po += Number(r.po_total || 0);
+      byProduct[key].grn += Number(r.grn_total || 0);
+      byProduct[key].inv += Number(r.invoice_total || 0);
+    });
+    const productList = Object.entries(byProduct)
+      .map(([name, v]) => ({
+        name,
+        po: v.po,
+        variance: v.grn - v.po,
+        variancePct: v.po ? ((v.grn - v.po) / v.po) * 100 : 0,
+      }))
+      .sort((a, b) => Math.abs(b.variance) - Math.abs(a.variance))
+      .slice(0, 10);
+
+    const attentionPanel = document.createElement('div');
+    attentionPanel.className = 'panel-card';
+    attentionPanel.innerHTML = '<h3>Top products needing attention</h3>';
+    if (!productList.length) {
+      attentionPanel.innerHTML += '<p style="color:#6b7268;font-size:13px;">ไม่มีข้อมูล</p>';
+    }
+    productList.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'margin-item-row';
+      const widthPct = Math.min(100, Math.max(4, Math.abs(item.variancePct)));
+      const tag = Math.abs(item.variancePct) > 15 ? '<span class="attention-tag">ส่วนต่างสูง</span>' : '';
+      row.innerHTML = `
+        <span class="margin-name">${item.name}${tag}</span>
+        <span class="margin-bar-track"><span class="margin-bar-fill ${barClass(item.variancePct)}" style="width:${widthPct}%"></span></span>
+        <span class="margin-pct">${fmtPct(item.variancePct)}</span>
+      `;
+      attentionPanel.appendChild(row);
+    });
+    panels.appendChild(attentionPanel);
+
+    // ---- Top suppliers by PO spend ----
     const bySupplier = {};
     rows.forEach((r) => {
       const key = r.supplier || 'ไม่ระบุซัพพลายเออร์';
@@ -645,7 +737,7 @@ function buildPurchaseAnalysisDashboard() {
     });
     panels.appendChild(supplierPanel);
 
-    // PO / GRN / Invoice value by category — variance highlighted
+    // ---- PO / GRN value by category — variance highlighted ----
     const byCategory = {};
     rows.forEach((r) => {
       const key = r.category_name || 'ไม่ระบุหมวดหมู่';

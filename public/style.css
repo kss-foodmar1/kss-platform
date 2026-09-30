@@ -316,6 +316,42 @@ table.report-table tr:hover td { background: #fbf9f2; }
 .margin-fill-warning { background: var(--brass); }
 .margin-fill-success { background: #2f6b3f; }
 
+.chart-card {
+  background: var(--white);
+  border: 1.5px solid #e8e2cf;
+  border-radius: var(--card-radius);
+  padding: 18px;
+  margin-bottom: 16px;
+}
+.chart-card h3 {
+  font-size: 14px;
+  margin: 0 0 14px;
+}
+.chart-card .chart-wrap {
+  position: relative;
+  height: 280px;
+}
+
+.panels-3col {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+@media (max-width: 1000px) {
+  .panels-3col { grid-template-columns: 1fr; }
+}
+
+.attention-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: var(--pill-radius);
+  background: #fbe4de;
+  color: var(--chili);
+  margin-left: 6px;
+}
+
 /* ---------- Modal ---------- */
 .modal-overlay {
   position: fixed;
