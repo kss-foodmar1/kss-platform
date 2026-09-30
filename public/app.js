@@ -131,8 +131,16 @@ function renderReportBlock(wrap, report) {
   block.className = 'report-block';
   block.innerHTML = `<h2>${report.display_name}</h2>`;
 
+  const FMH_ENDPOINTS = {
+    cogs: { path: '/api/reports/cogs', dateRange: true },
+    'menu-costing': { path: '/api/reports/menu-costing', dateRange: false },
+    'sales-by-branch': { path: '/api/reports/sales-by-branch', dateRange: true },
+  };
+
   if (report.report_key === 'price_change') {
     block.appendChild(buildPriceChangeReport(report));
+  } else if (FMH_ENDPOINTS[report.report_key]) {
+    block.appendChild(buildFmhReport(report, FMH_ENDPOINTS[report.report_key]));
   } else {
     const p = document.createElement('p');
     p.style.color = '#6b7268';
@@ -277,6 +285,106 @@ function buildPriceChangeReport(report) {
   return container;
 }
 
+// ---------- Generic FMH-backed report (COGS, Menu Costing, Sales by Branch) ----------
+function buildFmhReport(report, config) {
+  const container = document.createElement('div');
+
+  const filters = document.createElement('div');
+  filters.className = 'filters-row';
+
+  if (config.dateRange) {
+    filters.innerHTML = `
+      <input type="date" class="fmh-start" />
+      <input type="date" class="fmh-end" />
+      <button class="btn small fmh-reload">โหลดข้อมูล</button>
+      <button class="btn small fmh-export">Export Excel</button>
+    `;
+    const today = new Date();
+    const monthAgo = new Date(Date.now() - 30 * 86400000);
+    filters.querySelector('.fmh-end').value = today.toISOString().slice(0, 10);
+    filters.querySelector('.fmh-start').value = monthAgo.toISOString().slice(0, 10);
+  } else {
+    filters.innerHTML = `
+      <button class="btn small fmh-reload">โหลดข้อมูล</button>
+      <button class="btn small fmh-export">Export Excel</button>
+    `;
+  }
+  container.appendChild(filters);
+
+  const statusWrap = document.createElement('div');
+  container.appendChild(statusWrap);
+
+  const tableWrap = document.createElement('div');
+  container.appendChild(tableWrap);
+
+  let currentData = [];
+
+  async function load() {
+    tableWrap.innerHTML = '';
+    statusWrap.innerHTML = '<p style="color:#6b7268;">กำลังโหลดข้อมูลจาก FMH...</p>';
+    const params = new URLSearchParams();
+    if (config.dateRange) {
+      params.set('start', filters.querySelector('.fmh-start').value);
+      params.set('end', filters.querySelector('.fmh-end').value);
+    }
+    try {
+      const { data } = await api(`${config.path}?${params.toString()}`);
+      currentData = data;
+      statusWrap.innerHTML = '';
+      renderTable();
+    } catch (err) {
+      currentData = [];
+      if (err.message && err.message.includes('FMH API key not configured')) {
+        statusWrap.innerHTML =
+          '<div class="error-msg">ยังไม่ได้ตั้งค่า FMH API Key — ไปที่เมนู ⚙️ ตั้งค่า → แท็บ "FMH API" เพื่อใส่ Key ก่อนใช้งานรายงานนี้</div>';
+      } else {
+        statusWrap.innerHTML = `<div class="error-msg">โหลดข้อมูลไม่สำเร็จ: ${err.message}</div>`;
+      }
+    }
+  }
+
+  function renderTable() {
+    tableWrap.innerHTML = '';
+    if (!currentData.length) {
+      tableWrap.innerHTML = '<p style="color:#6b7268;">ไม่พบข้อมูลตามเงื่อนไขที่เลือก</p>';
+      return;
+    }
+    const columns = Object.keys(currentData[0]);
+    const table = document.createElement('table');
+    table.className = 'report-table';
+
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    columns.forEach((col) => {
+      const th = document.createElement('th');
+      th.textContent = col.replace(/_/g, ' ');
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    currentData.forEach((row) => {
+      const tr = document.createElement('tr');
+      columns.forEach((col) => {
+        const td = document.createElement('td');
+        const val = row[col];
+        td.textContent = typeof val === 'number' ? val.toLocaleString('th-TH', { maximumFractionDigits: 2 }) : (val ?? '');
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    tableWrap.appendChild(table);
+  }
+
+  filters.querySelector('.fmh-reload').addEventListener('click', load);
+  filters.querySelector('.fmh-export').addEventListener('click', () => exportToExcel(currentData));
+
+  load();
+  return container;
+}
+
 function exportToExcel(data) {
   if (!data.length) return;
   const headers = Object.keys(data[0]);
@@ -318,6 +426,50 @@ el('open-settings-btn').addEventListener('click', async () => {
   await loadUserList();
 });
 el('close-settings-btn').addEventListener('click', () => el('settings-modal').classList.add('hidden'));
+
+// ---------- Settings modal: tab switching ----------
+document.querySelectorAll('.modal-tabs button[data-panel]').forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    document.querySelectorAll('.modal-tabs button[data-panel]').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    el('settings-users-panel').classList.toggle('hidden', btn.dataset.panel !== 'users');
+    el('settings-fmh-panel').classList.toggle('hidden', btn.dataset.panel !== 'fmh');
+    if (btn.dataset.panel === 'fmh') await loadFmhKeyStatus();
+  });
+});
+
+// ---------- Settings modal: FMH API key ----------
+async function loadFmhKeyStatus() {
+  const statusEl = el('fmh-status');
+  statusEl.textContent = 'กำลังโหลดสถานะ...';
+  try {
+    const { configured, updated_at } = await api('/api/settings/fmh-key');
+    statusEl.textContent = configured
+      ? `ตั้งค่าแล้ว (อัปเดตล่าสุด: ${new Date(updated_at).toLocaleString('th-TH')})`
+      : 'ยังไม่ได้ตั้งค่า FMH API Key';
+  } catch (err) {
+    statusEl.textContent = `โหลดสถานะไม่สำเร็จ: ${err.message}`;
+  }
+}
+
+el('fmh-key-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  el('fmh-key-error').classList.add('hidden');
+  el('fmh-key-success').classList.add('hidden');
+  try {
+    const { message } = await api('/api/settings/fmh-key', {
+      method: 'POST',
+      body: JSON.stringify({ api_key: el('fmh-api-key').value.trim() }),
+    });
+    el('fmh-key-form').reset();
+    el('fmh-key-success').textContent = message;
+    el('fmh-key-success').classList.remove('hidden');
+    await loadFmhKeyStatus();
+  } catch (err) {
+    el('fmh-key-error').textContent = err.message;
+    el('fmh-key-error').classList.remove('hidden');
+  }
+});
 
 async function loadUserList() {
   const { users } = await api('/api/users');

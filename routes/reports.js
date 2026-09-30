@@ -8,8 +8,36 @@
 // need to change.
 const express = require('express');
 const { requireAuth } = require('../middleware/auth');
+const { callReport } = require('../lib/fmh');
 
 const router = express.Router();
+
+// Shared handler for the 3 real-FMH reports below: builds a date_range filter
+// from ?start&end (when the report supports one), calls FMH, and returns the
+// same {data, pagination, meta} shape the frontend already expects.
+function makeFmhReportHandler(reportKey, cardKey, { supportsDateRange = true } = {}) {
+  return async (req, res) => {
+    const { start, end } = req.query;
+    const filters = {};
+    if (supportsDateRange && start && end) {
+      filters.date_range = { start_date: start, end_date: end };
+    }
+    try {
+      const result = await callReport(reportKey, cardKey, { filters });
+      res.json({
+        data: result.data || [],
+        pagination: result.pagination || { limit: 500, offset: 0, returned: (result.data || []).length },
+        meta: { mock: false, quota: result.quota || null },
+      });
+    } catch (err) {
+      if (err.code === 'FMH_KEY_MISSING') {
+        return res.status(409).json({ error: err.message, code: err.code });
+      }
+      console.error(`FMH report ${reportKey} failed:`, err.message, err.details || '');
+      res.status(502).json({ error: `FMH API error: ${err.message}`, code: err.code || 'FMH_API_ERROR' });
+    }
+  };
+}
 
 const SUPPLIERS = [
   'ตลาดสี่มุมเมือง [Si Mum Mueang Market]',
@@ -92,5 +120,21 @@ router.get('/price-change', requireAuth, async (req, res) => {
 router.get('/price-change/suppliers', requireAuth, async (req, res) => {
   res.json({ suppliers: SUPPLIERS });
 });
+
+// ---------- Real FMH-backed reports ----------
+// cogs: Central Kitchen COGS — menu sales/cost/margin across outlets.
+router.get('/cogs', requireAuth, makeFmhReportHandler('cogs', 'cogs_table'));
+
+// menu_and_ingredients: recipe (BOM) composition and implied cost per menu item.
+// No date_range filter on this report per FMH's catalog.
+router.get(
+  '/menu-costing',
+  requireAuth,
+  makeFmhReportHandler('menu_and_ingredients', 'recipe_table', { supportsDateRange: false })
+);
+
+// order_items_by_branch: outlet ordering patterns (used here as "Sales by Branch"
+// — FMH has no province/geographic breakdown, only branch/department).
+router.get('/sales-by-branch', requireAuth, makeFmhReportHandler('order_items_by_branch', 'oibb_table'));
 
 module.exports = router;

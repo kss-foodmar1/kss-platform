@@ -70,6 +70,7 @@
     <h2>ตั้งค่า</h2>
     <div class="modal-tabs">
       <button data-panel="users" class="active">ผู้ใช้งาน</button>
+      <button data-panel="fmh">FMH API</button>
     </div>
 
     <div id="settings-users-panel">
@@ -98,6 +99,22 @@
           </select>
         </div>
         <button type="submit" class="btn primary">เพิ่มผู้ใช้งาน</button>
+      </form>
+    </div>
+
+    <div id="settings-fmh-panel" class="hidden">
+      <p class="helper-text" style="margin-top:0;">
+        API Key จะถูกเข้ารหัสก่อนเก็บลงฐานข้อมูล และจะไม่แสดงค่าจริงอีกหลังบันทึกแล้ว
+      </p>
+      <div id="fmh-status" style="margin-bottom:14px;font-size:13px;color:#6b7268;"></div>
+      <div id="fmh-key-error" class="error-msg hidden"></div>
+      <div id="fmh-key-success" class="error-msg hidden" style="background:#e3f0e6;color:#2f6b3f;"></div>
+      <form id="fmh-key-form">
+        <div class="field">
+          <label for="fmh-api-key">FMH API Key</label>
+          <input id="fmh-api-key" type="password" placeholder="fmh_rpt_..." autocomplete="off">
+        </div>
+        <button type="submit" class="btn primary">บันทึก Key</button>
       </form>
     </div>
 

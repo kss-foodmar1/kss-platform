@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "KSS Platform - shared dashboard backend (auth + tabbed dashboards + reports)",
   "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "start": "node db/migrate.js && node db/seed.js && node server.js",
     "seed": "node db/seed.js",

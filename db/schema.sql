@@ -32,5 +32,13 @@ CREATE TABLE IF NOT EXISTS reports (
   FOREIGN KEY (dashboard_id) REFERENCES dashboards(id)
 );
 
+-- Key/value store for platform-wide settings — currently just the FMH API key.
+-- Value is stored encrypted (AES-256-GCM via ENCRYPTION_KEY); see lib/crypto.js.
+CREATE TABLE IF NOT EXISTS app_settings (
+  setting_key VARCHAR(100) PRIMARY KEY,
+  setting_value TEXT NOT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
 -- Seed: one admin user + one demo dashboard/report so the app is usable immediately.
 -- Password for both seeded accounts is set by db/seed.js (bcrypt-hashed there, not here).

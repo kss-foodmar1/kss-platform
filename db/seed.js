@@ -42,6 +42,31 @@ async function main() {
     [dash.id]
   );
 
+  // Three new dashboards, each backed by a real FMH catalog report (needs the
+  // FMH API key set in Settings — see lib/fmh.js).
+  const newDashboards = [
+    { key: 'cogs', name: 'COGS Analysis', reportKey: 'cogs', reportName: 'Central Kitchen COGS' },
+    { key: 'menu_costing', name: 'Menu Costing Analysis', reportKey: 'menu-costing', reportName: 'Menu and Ingredients' },
+    { key: 'sales_by_branch', name: 'Sales by Branch', reportKey: 'sales-by-branch', reportName: 'Order Items by Branch' },
+  ];
+
+  for (let i = 0; i < newDashboards.length; i++) {
+    const d = newDashboards[i];
+    await pool.query(
+      `INSERT INTO dashboards (dashboard_key, display_name, sort_order, active)
+       VALUES (?, ?, ?, TRUE)
+       ON DUPLICATE KEY UPDATE display_name = VALUES(display_name)`,
+      [d.key, d.name, i + 2]
+    );
+    const [[row]] = await pool.query(`SELECT id FROM dashboards WHERE dashboard_key = ?`, [d.key]);
+    await pool.query(
+      `INSERT INTO reports (dashboard_id, report_key, display_name, data_source, sort_order, active)
+       VALUES (?, ?, ?, 'FMH', 1, TRUE)
+       ON DUPLICATE KEY UPDATE display_name = VALUES(display_name)`,
+      [row.id, d.reportKey, d.reportName]
+    );
+  }
+
   console.log('Seed complete.');
   console.log(`Admin login: admin@kinsupplyandservice.com / ${adminPassword}`);
   console.log(`Demo login:  demo@kinsupplyandservice.com / ${demoPassword} (must change password on first login)`);
