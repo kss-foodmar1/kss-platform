@@ -141,6 +141,8 @@ function renderReportBlock(wrap, report) {
     block.appendChild(buildPriceChangeReport(report));
   } else if (report.report_key === 'cogs-visual') {
     block.appendChild(buildCogsDashboard());
+  } else if (report.report_key === 'purchase-analysis-visual') {
+    block.appendChild(buildPurchaseAnalysisDashboard());
   } else if (FMH_ENDPOINTS[report.report_key]) {
     block.appendChild(buildFmhReport(report, FMH_ENDPOINTS[report.report_key]));
   } else {
@@ -529,6 +531,153 @@ function buildCogsDashboard() {
   }
 
   filters.querySelector('.cd-reload').addEventListener('click', load);
+  load();
+  return container;
+}
+
+// ---------- Purchase Analysis dashboard (real FMH purchase_analysis data) ----------
+function buildPurchaseAnalysisDashboard() {
+  const container = document.createElement('div');
+
+  const filters = document.createElement('div');
+  filters.className = 'filters-row';
+  filters.innerHTML = `
+    <input type="date" class="pa-start" />
+    <input type="date" class="pa-end" />
+    <button class="btn small pa-reload">โหลดข้อมูล</button>
+  `;
+  const today = new Date();
+  const monthAgo = new Date(Date.now() - 30 * 86400000);
+  filters.querySelector('.pa-end').value = today.toISOString().slice(0, 10);
+  filters.querySelector('.pa-start').value = monthAgo.toISOString().slice(0, 10);
+  container.appendChild(filters);
+
+  const statusWrap = document.createElement('div');
+  container.appendChild(statusWrap);
+
+  const bodyWrap = document.createElement('div');
+  container.appendChild(bodyWrap);
+
+  function fmtCurrency(n) {
+    return '฿' + Number(n || 0).toLocaleString('th-TH', { maximumFractionDigits: 0 });
+  }
+  function fmtPct(n) {
+    const sign = n > 0 ? '+' : '';
+    return `${sign}${n.toFixed(1)}%`;
+  }
+  function barClass(v) {
+    return v < 0 ? 'margin-fill-danger' : 'margin-fill-success';
+  }
+
+  async function load() {
+    bodyWrap.innerHTML = '';
+    statusWrap.innerHTML = '<p style="color:#6b7268;">กำลังโหลดข้อมูลจาก FMH...</p>';
+    const params = new URLSearchParams({
+      start: filters.querySelector('.pa-start').value,
+      end: filters.querySelector('.pa-end').value,
+    });
+    try {
+      const { data } = await api(`/api/reports/purchase-analysis?${params.toString()}`);
+      statusWrap.innerHTML = '';
+      renderBody(data || []);
+    } catch (err) {
+      if (err.message && err.message.includes('FMH API key not configured')) {
+        statusWrap.innerHTML =
+          '<div class="error-msg">ยังไม่ได้ตั้งค่า FMH API Key — ไปที่เมนู ⚙️ ตั้งค่า → แท็บ "FMH API" ก่อนใช้งานรายงานนี้</div>';
+      } else {
+        statusWrap.innerHTML = `<div class="error-msg">โหลดข้อมูลไม่สำเร็จ: ${err.message}</div>`;
+      }
+    }
+  }
+
+  function renderBody(rows) {
+    bodyWrap.innerHTML = '';
+    if (!rows.length) {
+      bodyWrap.innerHTML = '<p style="color:#6b7268;">ไม่พบข้อมูลตามเงื่อนไขที่เลือก</p>';
+      return;
+    }
+
+    const totalPO = rows.reduce((s, r) => s + Number(r.po_total || 0), 0);
+    const totalGRN = rows.reduce((s, r) => s + Number(r.grn_total || 0), 0);
+    const totalInvoice = rows.reduce((s, r) => s + Number(r.invoice_total || 0), 0);
+    const grnVsPoPct = totalPO ? ((totalGRN - totalPO) / totalPO) * 100 : 0;
+    const invVsGrnPct = totalGRN ? ((totalInvoice - totalGRN) / totalGRN) * 100 : 0;
+
+    const kpiRow = document.createElement('div');
+    kpiRow.className = 'kpi-row';
+    kpiRow.innerHTML = `
+      <div class="kpi-card"><div class="kpi-label">Total PO value</div><div class="kpi-value">${fmtCurrency(totalPO)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Total GRN value</div><div class="kpi-value">${fmtCurrency(totalGRN)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Total Invoice value</div><div class="kpi-value">${fmtCurrency(totalInvoice)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">GRN vs PO</div><div class="kpi-value">${fmtPct(grnVsPoPct)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Invoice vs GRN</div><div class="kpi-value">${fmtPct(invVsGrnPct)}</div></div>
+    `;
+    bodyWrap.appendChild(kpiRow);
+
+    const panels = document.createElement('div');
+    panels.className = 'cogs-panels';
+
+    // Top suppliers by PO spend
+    const bySupplier = {};
+    rows.forEach((r) => {
+      const key = r.supplier || 'ไม่ระบุซัพพลายเออร์';
+      bySupplier[key] = (bySupplier[key] || 0) + Number(r.po_total || 0);
+    });
+    const supplierList = Object.entries(bySupplier)
+      .map(([name, po]) => ({ name, po }))
+      .sort((a, b) => b.po - a.po)
+      .slice(0, 10);
+    const maxSupplierPO = Math.max(1, ...supplierList.map((s) => s.po));
+
+    const supplierPanel = document.createElement('div');
+    supplierPanel.className = 'panel-card';
+    supplierPanel.innerHTML = '<h3>Top suppliers by PO spend</h3>';
+    supplierList.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'margin-item-row';
+      const widthPct = Math.min(100, Math.max(4, (item.po / maxSupplierPO) * 100));
+      row.innerHTML = `
+        <span class="margin-name">${item.name}</span>
+        <span class="margin-bar-track"><span class="margin-bar-fill margin-fill-success" style="width:${widthPct}%"></span></span>
+        <span class="margin-pct">${fmtCurrency(item.po)}</span>
+      `;
+      supplierPanel.appendChild(row);
+    });
+    panels.appendChild(supplierPanel);
+
+    // PO / GRN / Invoice value by category — variance highlighted
+    const byCategory = {};
+    rows.forEach((r) => {
+      const key = r.category_name || 'ไม่ระบุหมวดหมู่';
+      if (!byCategory[key]) byCategory[key] = { po: 0, grn: 0 };
+      byCategory[key].po += Number(r.po_total || 0);
+      byCategory[key].grn += Number(r.grn_total || 0);
+    });
+    const categoryList = Object.entries(byCategory)
+      .map(([name, v]) => ({ name, po: v.po, variancePct: v.po ? ((v.grn - v.po) / v.po) * 100 : 0 }))
+      .sort((a, b) => b.po - a.po)
+      .slice(0, 10);
+
+    const categoryPanel = document.createElement('div');
+    categoryPanel.className = 'panel-card';
+    categoryPanel.innerHTML = '<h3>GRN vs PO variance by category</h3>';
+    categoryList.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'margin-item-row';
+      const widthPct = Math.min(100, Math.max(4, Math.abs(item.variancePct)));
+      row.innerHTML = `
+        <span class="margin-name">${item.name}</span>
+        <span class="margin-bar-track"><span class="margin-bar-fill ${barClass(item.variancePct)}" style="width:${widthPct}%"></span></span>
+        <span class="margin-pct">${fmtPct(item.variancePct)}</span>
+      `;
+      categoryPanel.appendChild(row);
+    });
+    panels.appendChild(categoryPanel);
+
+    bodyWrap.appendChild(panels);
+  }
+
+  filters.querySelector('.pa-reload').addEventListener('click', load);
   load();
   return container;
 }

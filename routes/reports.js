@@ -139,4 +139,8 @@ router.get(
 // — FMH has no province/geographic breakdown, only branch/department).
 router.get('/sales-by-branch', requireAuth, makeFmhReportHandler('order_items_by_branch', 'oibb_table'));
 
+// purchase_analysis: PO/GRN/Invoice comparison — real FMH data (confirmed
+// working via Swagger with no card_key needed for this report).
+router.get('/purchase-analysis', requireAuth, makeFmhReportHandler('purchase_analysis', null));
+
 module.exports = router;

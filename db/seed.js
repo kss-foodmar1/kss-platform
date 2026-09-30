@@ -37,7 +37,7 @@ async function main() {
 
   await pool.query(
     `INSERT INTO reports (dashboard_id, report_key, display_name, data_source, sort_order, active)
-     VALUES (?, 'price_change', 'Price Change Report', 'FMH', 1, TRUE)
+     VALUES (?, 'purchase-analysis-visual', 'PO / GRN / Invoice Dashboard', 'FMH', 1, TRUE)
      ON DUPLICATE KEY UPDATE display_name = VALUES(display_name)`,
     [dash.id]
   );
@@ -71,6 +71,11 @@ async function main() {
   // table). It's been replaced by 'cogs-visual' (KPI dashboard) — remove the
   // stale row so it doesn't show up twice under the same dashboard tab.
   await pool.query(`DELETE FROM reports WHERE report_key = 'menu-costing'`);
+
+  // Cleanup: the original mock 'price_change' report has been replaced by
+  // 'purchase-analysis-visual' (real FMH purchase_analysis data) — remove the
+  // stale row so it doesn't show up twice under the Purchase Analysis tab.
+  await pool.query(`DELETE FROM reports WHERE report_key = 'price_change'`);
 
   console.log('Seed complete.');
   console.log(`Admin login: admin@kinsupplyandservice.com / ${adminPassword}`);
