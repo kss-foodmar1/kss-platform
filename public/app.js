@@ -143,6 +143,8 @@ function renderReportBlock(wrap, report) {
     block.appendChild(buildCogsDashboard());
   } else if (report.report_key === 'purchase-analysis-visual') {
     block.appendChild(buildPurchaseAnalysisDashboard());
+  } else if (report.report_key === 'menu-ingredient-impact') {
+    block.appendChild(buildMenuIngredientImpactDashboard());
   } else if (FMH_ENDPOINTS[report.report_key]) {
     block.appendChild(buildFmhReport(report, FMH_ENDPOINTS[report.report_key]));
   } else {
@@ -770,6 +772,177 @@ function buildPurchaseAnalysisDashboard() {
   }
 
   filters.querySelector('.pa-reload').addEventListener('click', load);
+  load();
+  return container;
+}
+
+// ---------- Menu Costing Analysis: ingredient cost impact & price sensitivity ----------
+function buildMenuIngredientImpactDashboard() {
+  const container = document.createElement('div');
+
+  const filters = document.createElement('div');
+  filters.className = 'filters-row';
+  filters.innerHTML = `<button class="btn small mi-reload">โหลดข้อมูล</button>`;
+  container.appendChild(filters);
+
+  const statusWrap = document.createElement('div');
+  container.appendChild(statusWrap);
+
+  const bodyWrap = document.createElement('div');
+  container.appendChild(bodyWrap);
+
+  function fmtCurrency(n) {
+    return '฿' + Number(n || 0).toLocaleString('th-TH', { maximumFractionDigits: 0 });
+  }
+
+  let chartInstance = null;
+  let topIngredients = []; // filled by renderBody, reused by the sensitivity simulator
+
+  async function load() {
+    bodyWrap.innerHTML = '';
+    statusWrap.innerHTML = '<p style="color:#6b7268;">กำลังโหลดข้อมูลจาก FMH...</p>';
+    try {
+      const { data } = await api('/api/reports/menu-costing');
+      statusWrap.innerHTML = '';
+      renderBody(data || []);
+    } catch (err) {
+      if (err.message && err.message.includes('FMH API key not configured')) {
+        statusWrap.innerHTML =
+          '<div class="error-msg">ยังไม่ได้ตั้งค่า FMH API Key — ไปที่เมนู ⚙️ ตั้งค่า → แท็บ "FMH API" ก่อนใช้งานรายงานนี้</div>';
+      } else {
+        statusWrap.innerHTML = `<div class="error-msg">โหลดข้อมูลไม่สำเร็จ: ${err.message}</div>`;
+      }
+    }
+  }
+
+  function renderBody(rows) {
+    bodyWrap.innerHTML = '';
+    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+    if (!rows.length) {
+      bodyWrap.innerHTML = '<p style="color:#6b7268;">ไม่พบข้อมูล</p>';
+      return;
+    }
+
+    // Pass 1: total recipe cost per menu (so we can express each ingredient's
+    // share of that menu's cost).
+    const menuTotalCost = {};
+    rows.forEach((r) => {
+      const menuKey = r.menu_name || r.menu_code || 'ไม่ระบุเมนู';
+      menuTotalCost[menuKey] = (menuTotalCost[menuKey] || 0) + Number(r.total_cost || 0);
+    });
+
+    // Pass 2: per-ingredient totals, how many menus it appears in, and its
+    // cost share within each of those menus.
+    const byIngredient = {};
+    rows.forEach((r) => {
+      const menuKey = r.menu_name || r.menu_code || 'ไม่ระบุเมนู';
+      const ingKey = r.ingredient_name || r.ingredient_code || 'ไม่ระบุวัตถุดิบ';
+      const cost = Number(r.total_cost || 0);
+      if (!byIngredient[ingKey]) byIngredient[ingKey] = { totalCost: 0, menus: new Set(), shares: [] };
+      byIngredient[ingKey].totalCost += cost;
+      byIngredient[ingKey].menus.add(menuKey);
+      const menuTotal = menuTotalCost[menuKey];
+      if (menuTotal) byIngredient[ingKey].shares.push(cost / menuTotal);
+    });
+
+    const totalRecipeCost = Object.values(menuTotalCost).reduce((s, v) => s + v, 0);
+    const menuCount = Object.keys(menuTotalCost).length;
+    const ingredientCount = Object.keys(byIngredient).length;
+    const avgIngredientsPerMenu = menuCount ? (rows.length / menuCount) : 0;
+
+    const kpiRow = document.createElement('div');
+    kpiRow.className = 'kpi-row';
+    kpiRow.innerHTML = `
+      <div class="kpi-card"><div class="kpi-label">Total recipe cost</div><div class="kpi-value">${fmtCurrency(totalRecipeCost)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Menus</div><div class="kpi-value">${menuCount}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Distinct ingredients</div><div class="kpi-value">${ingredientCount}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Avg ingredients / menu</div><div class="kpi-value">${avgIngredientsPerMenu.toFixed(1)}</div></div>
+    `;
+    bodyWrap.appendChild(kpiRow);
+
+    topIngredients = Object.entries(byIngredient)
+      .map(([name, v]) => ({
+        name,
+        totalCost: v.totalCost,
+        menuCount: v.menus.size,
+        avgSharePct: v.shares.length ? (v.shares.reduce((s, x) => s + x, 0) / v.shares.length) * 100 : 0,
+      }))
+      .sort((a, b) => b.totalCost - a.totalCost)
+      .slice(0, 12);
+
+    // ---- Chart: top ingredients by total cost impact ----
+    const chartCard = document.createElement('div');
+    chartCard.className = 'chart-card';
+    chartCard.innerHTML = '<h3>Top ingredients by cost impact (across all menus)</h3><div class="chart-wrap"><canvas></canvas></div>';
+    bodyWrap.appendChild(chartCard);
+
+    if (window.Chart) {
+      const canvas = chartCard.querySelector('canvas');
+      chartInstance = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels: topIngredients.map((i) => `${i.name} (${i.menuCount} เมนู)`),
+          datasets: [{
+            label: 'Total cost impact',
+            data: topIngredients.map((i) => i.totalCost),
+            backgroundColor: '#BE4229',
+          }],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { callback: (v) => fmtCurrency(v) } },
+          },
+        },
+      });
+    }
+
+    // ---- Price sensitivity simulator ----
+    const sensitivityCard = document.createElement('div');
+    sensitivityCard.className = 'panel-card';
+    sensitivityCard.style.marginTop = '16px';
+    sensitivityCard.innerHTML = `
+      <h3>Ingredient price sensitivity</h3>
+      <p class="helper-text" style="margin-top:-4px;">
+        ถ้าราคาวัตถุดิบ (X) ขยับ ต้นทุนเมนูที่ใช้วัตถุดิบนั้นจะขยับตาม % ที่วัตถุดิบนั้นคิดเป็นสัดส่วนของต้นทุนเมนู (Y ≈ สัดส่วน × X)
+      </p>
+      <div class="field" style="max-width:260px;">
+        <label for="mi-pct-input">ราคาวัตถุดิบเปลี่ยน (X%)</label>
+        <input id="mi-pct-input" type="number" value="10" step="1">
+      </div>
+      <div id="mi-sensitivity-list"></div>
+    `;
+    bodyWrap.appendChild(sensitivityCard);
+
+    const listEl = sensitivityCard.querySelector('#mi-sensitivity-list');
+    const pctInput = sensitivityCard.querySelector('#mi-pct-input');
+
+    function renderSensitivityList() {
+      const x = Number(pctInput.value) || 0;
+      const bySensitivity = [...topIngredients].sort((a, b) => b.avgSharePct - a.avgSharePct).slice(0, 10);
+      const maxShare = Math.max(1, ...bySensitivity.map((i) => i.avgSharePct));
+      listEl.innerHTML = '';
+      bySensitivity.forEach((item) => {
+        const y = (item.avgSharePct / 100) * x;
+        const row = document.createElement('div');
+        row.className = 'margin-item-row';
+        const widthPct = Math.min(100, Math.max(4, (item.avgSharePct / maxShare) * 100));
+        row.innerHTML = `
+          <span class="margin-name">${item.name} <span style="color:#6b7268;font-weight:400;">(${item.menuCount} เมนู)</span></span>
+          <span class="margin-bar-track"><span class="margin-bar-fill margin-fill-warning" style="width:${widthPct}%"></span></span>
+          <span class="margin-pct">${x >= 0 ? '+' : ''}${y.toFixed(1)}%</span>
+        `;
+        listEl.appendChild(row);
+      });
+    }
+    pctInput.addEventListener('input', renderSensitivityList);
+    renderSensitivityList();
+  }
+
+  filters.querySelector('.mi-reload').addEventListener('click', load);
   load();
   return container;
 }

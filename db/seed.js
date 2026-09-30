@@ -46,7 +46,7 @@ async function main() {
   // FMH API key set in Settings — see lib/fmh.js).
   const newDashboards = [
     { key: 'cogs', name: 'COGS Analysis', reportKey: 'cogs', reportName: 'Central Kitchen COGS' },
-    { key: 'menu_costing', name: 'Menu Costing Analysis', reportKey: 'cogs-visual', reportName: 'Menu & COGS Dashboard' },
+    { key: 'menu_costing', name: 'Menu Costing Analysis', reportKey: 'menu-ingredient-impact', reportName: 'Ingredient Cost Impact & Price Sensitivity' },
     { key: 'sales_by_branch', name: 'Sales by Branch', reportKey: 'sales-by-branch', reportName: 'Order Items by Branch' },
   ];
 
@@ -76,6 +76,11 @@ async function main() {
   // 'purchase-analysis-visual' (real FMH purchase_analysis data) — remove the
   // stale row so it doesn't show up twice under the Purchase Analysis tab.
   await pool.query(`DELETE FROM reports WHERE report_key = 'price_change'`);
+
+  // Cleanup: Menu Costing Analysis moved from 'cogs-visual' (blocked by an
+  // FMH-side sync issue on the cogs report) to 'menu-ingredient-impact'
+  // (menu_and_ingredients report — ingredient cost impact & price sensitivity).
+  await pool.query(`DELETE FROM reports WHERE report_key = 'cogs-visual'`);
 
   console.log('Seed complete.');
   console.log(`Admin login: admin@kinsupplyandservice.com / ${adminPassword}`);
