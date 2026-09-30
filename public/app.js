@@ -1,13 +1,24 @@
-// KSS Platform — vanilla JS SPA. No build step, so this can be deployed as-is.
+// KSS Platform — vanilla JS SPA, no build step.
+//
+//   app.js   — login, app shell, dashboard view, the generic widget renderers
+//   admin.js — KSS Internal Admin Console + the shared user manager
+//
+// A dashboard is a list of widgets. Each widget = one report source + a
+// chart_type (which renderer below draws it) + a config. The page fetches
+// each report source once from the server-side cache and every widget that
+// uses that source renders from the same rows.
 
 const state = {
   user: null,
+  viewCompanyId: null, // company whose dashboards are shown (KSS staff can switch)
+  companies: [], // KSS staff only
   dashboards: [],
   activeDashboardId: null,
-  sortState: {}, // { [reportKey]: { by, dir } }
 };
 
 const el = (id) => document.getElementById(id);
+const isSuper = () => state.user && state.user.role === 'kss_superadmin';
+const isCompanyAdmin = () => state.user && state.user.role === 'company_admin';
 
 async function api(path, opts = {}) {
   const res = await fetch(path, {
@@ -15,113 +26,151 @@ async function api(path, opts = {}) {
     headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Request failed');
+  if (!res.ok) {
+    const err = new Error(data.error || 'Request failed');
+    err.code = data.code;
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
-// Renders the FMH monthly row-quota status (returned as `meta.quota` on every
-// FMH-backed report response) into the given container. Safe to call with a
-// missing/undefined quota — just clears the container in that case.
-function fmtSyncedAt(iso) {
-  if (!iso) return null;
-  return new Date(iso).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+// Everything that ends up in innerHTML and came from data or user input goes
+// through esc() — product names from FMH, company names, widget titles, etc.
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
-// Reports are no longer fetched from FMH on every page view — they're synced
-// into our own database once a day (plus on-demand via this refresh button),
-// so a normal page load never touches the FMH quota. This renders both the
-// "data as of [time]" line with its Refresh button, and (when present) the
-// FMH monthly-row-quota bar from the last time that report was actually synced.
-function renderFmhStatusBar(container, { quota, synced_at } = {}, refreshKey, onRefreshed) {
-  container.innerHTML = '';
-  const wrap = document.createElement('div');
-  wrap.className = 'fmh-status-bar';
-
-  const syncedText = fmtSyncedAt(synced_at);
-  const syncLine = document.createElement('div');
-  syncLine.className = 'fmh-sync-line';
-  syncLine.innerHTML = `
-    <span>${syncedText ? `ข้อมูลล่าสุด: ${syncedText}` : 'ยังไม่เคย sync ข้อมูล'}</span>
-    <button type="button" class="btn small ghost fmh-refresh-btn">Refresh ด่วน</button>
-  `;
-  wrap.appendChild(syncLine);
-
-  if (quota && typeof quota.monthly_row_limit === 'number') {
-    const limit = quota.monthly_row_limit;
-    const used = quota.rows_used ?? 0;
-    const remaining = quota.rows_remaining ?? Math.max(0, limit - used);
-    const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
-    const low = limit ? remaining / limit < 0.1 : false;
-    const resets = quota.resets_at
-      ? new Date(quota.resets_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
-      : null;
-    const quotaLine = document.createElement('div');
-    quotaLine.className = 'fmh-quota';
-    quotaLine.innerHTML = `
-      <span>FMH API quota เดือนนี้: ${used.toLocaleString('th-TH')} / ${limit.toLocaleString('th-TH')} แถว (เหลือ ${remaining.toLocaleString('th-TH')})${resets ? ` · รีเซ็ต ${resets}` : ''}</span>
-      <span class="fmh-quota-track"><span class="fmh-quota-fill${low ? ' fmh-quota-fill-low' : ''}" style="width:${pct}%"></span></span>
-    `;
-    wrap.appendChild(quotaLine);
+function storageGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
   }
+}
+function storageSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* private mode etc. — non-essential */
+  }
+}
 
-  container.appendChild(wrap);
-
-  wrap.querySelector('.fmh-refresh-btn').addEventListener('click', async (e) => {
-    const btn = e.currentTarget;
-    const originalText = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'กำลัง refresh...';
-    try {
-      await api(`/api/reports/${refreshKey}/refresh`, { method: 'POST' });
-      await onRefreshed();
-    } catch (err) {
-      alert(err.message || 'Refresh ไม่สำเร็จ');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = originalText;
-    }
+// ---------- number formatting ----------
+const compactFmt = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
+function fmtValue(v, format) {
+  const n = Number(v) || 0;
+  switch (format) {
+    case 'currency':
+      return '฿' + Math.round(n).toLocaleString('th-TH');
+    case 'pct':
+      return n.toFixed(1) + '%';
+    case 'pct_signed':
+      return (n > 0 ? '+' : '') + n.toFixed(1) + '%';
+    case 'decimal1':
+      return n.toFixed(1);
+    default:
+      return Math.round(n).toLocaleString('th-TH');
+  }
+}
+function fmtAxis(v, format) {
+  if (format === 'currency') return '฿' + compactFmt.format(v);
+  if (format === 'pct' || format === 'pct_signed') return v + '%';
+  return compactFmt.format(v);
+}
+function fmtDateTime(iso) {
+  if (!iso) return null;
+  return new Date(String(iso).replace(' ', 'T')).toLocaleString('th-TH', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
   });
 }
 
+// ---------- metric engine (see lib/widgetCatalog.js for the config language) ----------
+function pick(row, field) {
+  if (Array.isArray(field)) {
+    for (const f of field) {
+      const v = row[f];
+      if (v !== undefined && v !== null && v !== '') return v;
+    }
+    return undefined;
+  }
+  return row[field];
+}
+const num = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+function evalMetric(m, rows) {
+  if (!m) return 0;
+  switch (m.op) {
+    case 'sum':
+      return rows.reduce((s, r) => s + num(pick(r, m.field)), 0);
+    case 'count':
+      return rows.length;
+    case 'count_distinct':
+      return new Set(rows.map((r) => pick(r, m.field)).filter((v) => v !== undefined && v !== null && v !== '')).size;
+    case 'div': {
+      const b = evalMetric(m.b, rows);
+      return b ? evalMetric(m.a, rows) / b : 0;
+    }
+    case 'ratio_pct': {
+      const b = evalMetric(m.b, rows);
+      return b ? (evalMetric(m.a, rows) / b) * 100 : 0;
+    }
+    case 'pct_change': {
+      const from = evalMetric(m.from, rows);
+      return from ? ((evalMetric(m.to, rows) - from) / from) * 100 : 0;
+    }
+    case 'diff':
+      return evalMetric(m.a, rows) - evalMetric(m.b, rows);
+    default:
+      return 0;
+  }
+}
+function groupRows(rows, groupBy) {
+  const groups = new Map();
+  rows.forEach((r) => {
+    const k = pick(r, groupBy) ?? 'ไม่ระบุ';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(r);
+  });
+  return groups;
+}
+
+// ---------- screens / auth ----------
 function showScreen(name) {
   el('login-screen').classList.toggle('hidden', name !== 'login');
   el('force-change-screen').classList.toggle('hidden', name !== 'force-change');
   el('app-shell').classList.toggle('hidden', name !== 'app');
 }
 
-// ---------- Boot ----------
 async function boot() {
   try {
     const { user } = await api('/api/auth/me');
     state.user = user;
-    if (user.must_change_password) {
-      showScreen('force-change');
-    } else {
-      await enterApp();
-    }
+    if (user.must_change_password) showScreen('force-change');
+    else await enterApp();
   } catch {
-    showScreen('login');
+    // Only if nobody has logged in meanwhile — this check can resolve late
+    // (slow network) after a login already succeeded.
+    if (!state.user) showScreen('login');
   }
 }
 
-// ---------- Login ----------
 el('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   el('login-error').classList.add('hidden');
   try {
     const { user } = await api('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({
-        email: el('login-email').value.trim(),
-        password: el('login-password').value,
-      }),
+      body: JSON.stringify({ email: el('login-email').value.trim(), password: el('login-password').value }),
     });
     state.user = user;
-    if (user.must_change_password) {
-      showScreen('force-change');
-    } else {
-      await enterApp();
-    }
+    if (user.must_change_password) showScreen('force-change');
+    else await enterApp();
   } catch (err) {
     el('login-error').textContent = err.message;
     el('login-error').classList.remove('hidden');
@@ -136,6 +185,8 @@ el('force-change-form').addEventListener('submit', async (e) => {
       method: 'POST',
       body: JSON.stringify({ new_password: el('force-new-password').value }),
     });
+    const { user } = await api('/api/auth/me');
+    state.user = user;
     await enterApp();
   } catch (err) {
     el('force-change-error').textContent = err.message;
@@ -148,17 +199,79 @@ el('logout-btn').addEventListener('click', async () => {
   location.reload();
 });
 
-// ---------- App shell ----------
+// ---------- app shell ----------
 async function enterApp() {
   el('user-display-name').textContent = state.user.display_name;
-  el('open-settings-btn').classList.toggle('hidden', state.user.role !== 'admin');
-  el('open-manage-users-btn').classList.toggle('hidden', state.user.role !== 'admin');
+  el('open-admin-btn').classList.toggle('hidden', !isSuper());
+  el('open-manage-users-btn').classList.toggle('hidden', !isCompanyAdmin());
+  el('open-settings-btn').classList.toggle('hidden', !isCompanyAdmin());
+  el('company-picker-wrap').classList.toggle('hidden', !isSuper());
+  el('company-name').classList.toggle('hidden', isSuper() || !state.user.company_name);
+  el('company-name').textContent = state.user.company_name || '';
   showScreen('app');
 
-  const { dashboards } = await api('/api/dashboards');
+  if (isSuper()) {
+    await loadCompanyPicker();
+  } else {
+    state.viewCompanyId = state.user.company_id;
+  }
+  await loadDashboards();
+}
+
+async function loadCompanyPicker(preferredId) {
+  const { companies } = await api('/api/admin/companies');
+  state.companies = companies;
+  const saved = Number(preferredId || storageGet('kss_view_company'));
+  const initial = companies.find((c) => c.id === saved) || companies[0];
+  state.viewCompanyId = initial ? initial.id : null;
+  const picker = el('company-picker');
+  picker.innerHTML = companies
+    .map((c) => `<option value="${c.id}">${esc(c.name)}${c.status === 'demo' ? ' · DEMO' : c.status === 'suspended' ? ' · ระงับ' : ''}</option>`)
+    .join('');
+  if (state.viewCompanyId) picker.value = String(state.viewCompanyId);
+}
+
+el('company-picker').addEventListener('change', (e) => {
+  state.viewCompanyId = Number(e.target.value);
+  storageSet('kss_view_company', String(state.viewCompanyId));
+  showDashboardView();
+  loadDashboards();
+});
+
+// Used by the Admin Console's "view this company's dashboards" shortcut.
+async function viewCompanyDashboards(companyId, dashboardId) {
+  storageSet('kss_view_company', String(companyId));
+  await loadCompanyPicker(companyId);
+  showDashboardView();
+  await loadDashboards(dashboardId);
+}
+
+function showDashboardView() {
+  el('dashboard-view').classList.remove('hidden');
+  el('admin-view').classList.add('hidden');
+  el('open-admin-btn').textContent = '🏢 Admin Console';
+}
+
+async function loadDashboards(preferredDashboardId) {
+  const wrap = el('tab-panel-wrap');
+  if (!state.viewCompanyId) {
+    state.dashboards = [];
+    renderTabs();
+    wrap.innerHTML = `<p class="muted">${isSuper() ? 'ยังไม่มีบริษัทในระบบ — เพิ่มได้ใน Admin Console' : 'บัญชีนี้ยังไม่ได้ผูกกับบริษัท'}</p>`;
+    return;
+  }
+  const qs = isSuper() ? `?company_id=${state.viewCompanyId}` : '';
+  const { dashboards } = await api(`/api/dashboards${qs}`);
   state.dashboards = dashboards;
   renderTabs();
-  if (dashboards[0]) selectDashboard(dashboards[0].id);
+  const target = dashboards.find((d) => d.id === preferredDashboardId) || dashboards[0];
+  if (target) selectDashboard(target.id);
+  else {
+    destroyCharts();
+    wrap.innerHTML = `<p class="muted">${
+      isSuper() ? 'บริษัทนี้ยังไม่มี dashboard — สร้างได้ใน Admin Console' : 'ยังไม่มี dashboard ที่คุณเข้าถึงได้ กรุณาติดต่อผู้ดูแลระบบ'
+    }</p>`;
+  }
 }
 
 function renderTabs() {
@@ -169,963 +282,552 @@ function renderTabs() {
     btn.className = 'tab' + (d.id === state.activeDashboardId ? ' active' : '');
     btn.textContent = d.display_name;
     btn.setAttribute('role', 'tab');
-    btn.setAttribute('tabindex', '0');
+    btn.setAttribute('aria-selected', d.id === state.activeDashboardId ? 'true' : 'false');
     btn.addEventListener('click', () => selectDashboard(d.id));
-    btn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectDashboard(d.id); }
-    });
     tabsEl.appendChild(btn);
   });
 }
 
-function selectDashboard(id) {
+// ---------- dashboard view ----------
+const activeCharts = [];
+function destroyCharts() {
+  activeCharts.splice(0).forEach((c) => c.destroy());
+}
+
+async function selectDashboard(id) {
   state.activeDashboardId = id;
   renderTabs();
-  const dash = state.dashboards.find((d) => d.id === id);
   const wrap = el('tab-panel-wrap');
-  wrap.innerHTML = '';
-  if (!dash || !dash.reports.length) {
-    wrap.innerHTML = '<p style="color:#6b7268;">ยังไม่มีรายงานใน dashboard นี้</p>';
+  destroyCharts();
+  wrap.innerHTML = '<p class="muted">กำลังโหลด...</p>';
+  let payload;
+  try {
+    payload = await api(`/api/dashboards/${id}`);
+  } catch (err) {
+    wrap.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
     return;
   }
-  dash.reports.forEach((report) => renderReportBlock(wrap, report));
+  if (state.activeDashboardId !== id) return; // user already clicked another tab
+  new DashboardView(wrap, payload).load();
 }
 
-function renderReportBlock(wrap, report) {
-  const block = document.createElement('div');
-  block.className = 'report-block';
-  block.innerHTML = `<h2>${report.display_name}</h2>`;
-
-  const FMH_ENDPOINTS = {
-    cogs: { path: '/api/reports/cogs', dateRange: true },
-    'menu-costing': { path: '/api/reports/menu-costing', dateRange: false },
-    'sales-by-branch': { path: '/api/reports/sales-by-branch', dateRange: true },
-  };
-
-  if (report.report_key === 'price_change') {
-    block.appendChild(buildPriceChangeReport(report));
-  } else if (report.report_key === 'cogs-visual') {
-    block.appendChild(buildCogsDashboard());
-  } else if (report.report_key === 'purchase-analysis-visual') {
-    block.appendChild(buildPurchaseAnalysisDashboard());
-  } else if (report.report_key === 'menu-ingredient-impact') {
-    block.appendChild(buildMenuIngredientImpactDashboard());
-  } else if (FMH_ENDPOINTS[report.report_key]) {
-    block.appendChild(buildFmhReport(report, FMH_ENDPOINTS[report.report_key]));
-  } else {
-    const p = document.createElement('p');
-    p.style.color = '#6b7268';
-    p.textContent = 'รายงานนี้กำลังจะมาเร็ว ๆ นี้';
-    block.appendChild(p);
-  }
-  wrap.appendChild(block);
+function keyMissingMessage() {
+  if (isSuper()) return 'ยังไม่ได้ตั้งค่า FMH API Key ของบริษัทนี้ — ตั้งค่าได้ใน Admin Console';
+  if (isCompanyAdmin()) return 'ยังไม่ได้ตั้งค่า FMH API Key — กดปุ่ม ⚙️ มุมขวาบนเพื่อใส่ Key';
+  return 'ระบบยังไม่ได้เชื่อมข้อมูล FMH — กรุณาติดต่อผู้ดูแลระบบของบริษัท';
 }
 
-// ---------- Price Change report ----------
-function buildPriceChangeReport(report) {
-  const container = document.createElement('div');
+const todayIso = () => new Date().toISOString().slice(0, 10);
+const daysAgoIso = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
 
-  const filters = document.createElement('div');
-  filters.className = 'filters-row';
-  filters.innerHTML = `
-    <input type="date" id="pc-start" />
-    <input type="date" id="pc-end" />
-    <select id="pc-supplier"><option value="">ทุกซัพพลายเออร์</option></select>
-    <input type="text" id="pc-search" placeholder="ค้นหาสินค้า..." />
-    <button class="btn small" id="pc-export">Export Excel</button>
-  `;
-  container.appendChild(filters);
-
-  const tableWrap = document.createElement('div');
-  tableWrap.id = 'pc-table-wrap';
-  container.appendChild(tableWrap);
-
-  const today = new Date();
-  const weekAgo = new Date(Date.now() - 7 * 86400000);
-  filters.querySelector('#pc-end').value = today.toISOString().slice(0, 10);
-  filters.querySelector('#pc-start').value = weekAgo.toISOString().slice(0, 10);
-
-  api('/api/reports/price-change/suppliers').then(({ suppliers }) => {
-    const sel = filters.querySelector('#pc-supplier');
-    suppliers.forEach((s) => {
-      const opt = document.createElement('option');
-      opt.value = s;
-      opt.textContent = s;
-      sel.appendChild(opt);
-    });
-  });
-
-  let currentData = [];
-
-  async function load() {
-    const params = new URLSearchParams({
-      start: filters.querySelector('#pc-start').value,
-      end: filters.querySelector('#pc-end').value,
-    });
-    const supplier = filters.querySelector('#pc-supplier').value;
-    const search = filters.querySelector('#pc-search').value;
-    if (supplier) params.set('supplier', supplier);
-    if (search) params.set('search', search);
-
-    const sortState = state.sortState.price_change;
-    if (sortState) {
-      params.set('sort_by', sortState.by);
-      params.set('sort_dir', sortState.dir);
-    }
-
-    const { data } = await api(`/api/reports/price-change?${params.toString()}`);
-    currentData = data;
-    renderTable();
+class DashboardView {
+  constructor(wrap, { dashboard, widgets, sources }) {
+    this.wrap = wrap;
+    this.dashboard = dashboard;
+    this.widgets = widgets;
+    this.sources = sources;
+    this.results = {}; // source -> { data, meta } | { error, code }
+    this.hasDateSource = Object.values(sources).some((s) => s.date_field);
+    this.range = { start: daysAgoIso(30), end: todayIso() };
+    this.build();
   }
 
-  function renderTable() {
-    const columns = [
-      { key: 'product', label: 'สินค้า' },
-      { key: 'supplier', label: 'ซัพพลายเออร์' },
-      { key: 'branch', label: 'สาขา' },
-      { key: 'unit_price', label: 'ราคาปัจจุบัน' },
-      { key: 'previous_unit_price', label: 'ราคาก่อนหน้า' },
-      { key: 'variance', label: 'เปลี่ยนแปลง %' },
-    ];
-
-    const table = document.createElement('table');
-    table.className = 'report-table';
-    const thead = document.createElement('thead');
-    const headRow = document.createElement('tr');
-    columns.forEach((col) => {
-      const th = document.createElement('th');
-      th.textContent = col.label;
-      th.setAttribute('tabindex', '0');
-      const sortState = state.sortState.price_change;
-      const arrow = sortState && sortState.by === col.key ? (sortState.dir === 'asc' ? ' ▲' : ' ▼') : '';
-      th.textContent = col.label + arrow;
-      th.addEventListener('click', () => {
-        const current = state.sortState.price_change;
-        let dir = 'asc';
-        if (current && current.by === col.key) {
-          dir = current.dir === 'asc' ? 'desc' : (current.dir === 'desc' ? null : 'asc');
-        }
-        if (dir === null) {
-          delete state.sortState.price_change;
-        } else {
-          state.sortState.price_change = { by: col.key, dir };
-        }
-        load();
-      });
-      th.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); th.click(); }
-      });
-      headRow.appendChild(th);
-    });
-    thead.appendChild(headRow);
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
-    currentData.forEach((row) => {
-      const tr = document.createElement('tr');
-      columns.forEach((col) => {
-        const td = document.createElement('td');
-        if (col.key === 'variance') {
-          const badge = document.createElement('span');
-          badge.className = 'badge ' + (row.variance >= 0 ? 'up' : 'down');
-          badge.textContent = (row.variance >= 0 ? '+' : '') + row.variance.toFixed(2) + '%';
-          td.appendChild(badge);
-        } else if (col.key === 'unit_price' || col.key === 'previous_unit_price') {
-          td.textContent = Number(row[col.key]).toLocaleString('th-TH', { minimumFractionDigits: 2 });
-        } else {
-          td.textContent = row[col.key];
-        }
-        tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
-
-    tableWrap.innerHTML = '';
-    if (!currentData.length) {
-      tableWrap.innerHTML = '<p style="color:#6b7268;">ไม่พบข้อมูลตามเงื่อนไขที่เลือก</p>';
-      return;
-    }
-    tableWrap.appendChild(table);
-  }
-
-  filters.querySelectorAll('input, select').forEach((f) => f.addEventListener('change', load));
-  filters.querySelector('#pc-export').addEventListener('click', () => exportToExcel(currentData));
-
-  load();
-  return container;
-}
-
-// ---------- Generic FMH-backed report (COGS, Menu Costing, Sales by Branch) ----------
-function buildFmhReport(report, config) {
-  const container = document.createElement('div');
-
-  const filters = document.createElement('div');
-  filters.className = 'filters-row';
-
-  if (config.dateRange) {
-    filters.innerHTML = `
-      <input type="date" class="fmh-start" />
-      <input type="date" class="fmh-end" />
-      <button class="btn small fmh-reload">โหลดข้อมูล</button>
-      <button class="btn small fmh-export">Export Excel</button>
-    `;
-    const today = new Date();
-    const monthAgo = new Date(Date.now() - 30 * 86400000);
-    filters.querySelector('.fmh-end').value = today.toISOString().slice(0, 10);
-    filters.querySelector('.fmh-start').value = monthAgo.toISOString().slice(0, 10);
-  } else {
-    filters.innerHTML = `
-      <button class="btn small fmh-reload">โหลดข้อมูล</button>
-      <button class="btn small fmh-export">Export Excel</button>
-    `;
-  }
-  container.appendChild(filters);
-
-  const quotaWrap = document.createElement('div');
-  container.appendChild(quotaWrap);
-
-  const statusWrap = document.createElement('div');
-  container.appendChild(statusWrap);
-
-  const tableWrap = document.createElement('div');
-  container.appendChild(tableWrap);
-
-  let currentData = [];
-
-  async function load() {
-    tableWrap.innerHTML = '';
-    statusWrap.innerHTML = '<p style="color:#6b7268;">กำลังโหลดข้อมูลจาก FMH...</p>';
-    const params = new URLSearchParams();
-    if (config.dateRange) {
-      params.set('start', filters.querySelector('.fmh-start').value);
-      params.set('end', filters.querySelector('.fmh-end').value);
-    }
-    try {
-      const { data, meta } = await api(`${config.path}?${params.toString()}`);
-      currentData = data;
-      statusWrap.innerHTML = '';
-      renderFmhStatusBar(quotaWrap, meta || {}, report.report_key, load);
-      renderTable();
-    } catch (err) {
-      currentData = [];
-      if (err.message && err.message.includes('FMH API key not configured')) {
-        statusWrap.innerHTML =
-          '<div class="error-msg">ยังไม่ได้ตั้งค่า FMH API Key — ไปที่เมนู ⚙️ ตั้งค่า → แท็บ "FMH API" เพื่อใส่ Key ก่อนใช้งานรายงานนี้</div>';
-      } else {
-        statusWrap.innerHTML = `<div class="error-msg">โหลดข้อมูลไม่สำเร็จ: ${err.message}</div>`;
-      }
-    }
-  }
-
-  function renderTable() {
-    tableWrap.innerHTML = '';
-    if (!currentData.length) {
-      tableWrap.innerHTML = '<p style="color:#6b7268;">ไม่พบข้อมูลตามเงื่อนไขที่เลือก</p>';
-      return;
-    }
-    const columns = Object.keys(currentData[0]);
-    const table = document.createElement('table');
-    table.className = 'report-table';
-
-    const thead = document.createElement('thead');
-    const headRow = document.createElement('tr');
-    columns.forEach((col) => {
-      const th = document.createElement('th');
-      th.textContent = col.replace(/_/g, ' ');
-      headRow.appendChild(th);
-    });
-    thead.appendChild(headRow);
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
-    currentData.forEach((row) => {
-      const tr = document.createElement('tr');
-      columns.forEach((col) => {
-        const td = document.createElement('td');
-        const val = row[col];
-        td.textContent = typeof val === 'number' ? val.toLocaleString('th-TH', { maximumFractionDigits: 2 }) : (val ?? '');
-        tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
-    tableWrap.appendChild(table);
-  }
-
-  filters.querySelector('.fmh-reload').addEventListener('click', load);
-  filters.querySelector('.fmh-export').addEventListener('click', () => exportToExcel(currentData));
-
-  load();
-  return container;
-}
-
-// ---------- COGS dashboard (Menu Costing Analysis tab) ----------
-// Same underlying FMH 'cogs' report as the COGS Analysis tab, but summarized
-// as KPI cards + lowest-margin list + by-branch breakdown, matching the
-// look of the standalone menucogs app.
-function buildCogsDashboard() {
-  const container = document.createElement('div');
-
-  const filters = document.createElement('div');
-  filters.className = 'filters-row';
-  filters.innerHTML = `
-    <input type="date" class="cd-start" />
-    <input type="date" class="cd-end" />
-    <button class="btn small cd-reload">โหลดข้อมูล</button>
-  `;
-  const today = new Date();
-  const monthAgo = new Date(Date.now() - 30 * 86400000);
-  filters.querySelector('.cd-end').value = today.toISOString().slice(0, 10);
-  filters.querySelector('.cd-start').value = monthAgo.toISOString().slice(0, 10);
-  container.appendChild(filters);
-
-  const statusWrap = document.createElement('div');
-  container.appendChild(statusWrap);
-
-  const bodyWrap = document.createElement('div');
-  container.appendChild(bodyWrap);
-
-  function fmtCurrency(n) {
-    return '฿' + Number(n || 0).toLocaleString('th-TH', { maximumFractionDigits: 0 });
-  }
-  function marginClass(pct) {
-    if (pct < 0) return 'margin-fill-danger';
-    if (pct < 20) return 'margin-fill-warning';
-    return 'margin-fill-success';
-  }
-
-  async function load() {
-    bodyWrap.innerHTML = '';
-    statusWrap.innerHTML = '<p style="color:#6b7268;">กำลังโหลดข้อมูลจาก FMH...</p>';
-    const params = new URLSearchParams({
-      start: filters.querySelector('.cd-start').value,
-      end: filters.querySelector('.cd-end').value,
-    });
-    try {
-      const { data } = await api(`/api/reports/cogs?${params.toString()}`);
-      statusWrap.innerHTML = '';
-      renderBody(data || []);
-    } catch (err) {
-      if (err.message && err.message.includes('FMH API key not configured')) {
-        statusWrap.innerHTML =
-          '<div class="error-msg">ยังไม่ได้ตั้งค่า FMH API Key — ไปที่เมนู ⚙️ ตั้งค่า → แท็บ "FMH API" ก่อนใช้งานรายงานนี้</div>';
-      } else {
-        statusWrap.innerHTML = `<div class="error-msg">โหลดข้อมูลไม่สำเร็จ: ${err.message}</div>`;
-      }
-    }
-  }
-
-  function renderBody(rows) {
-    bodyWrap.innerHTML = '';
-    if (!rows.length) {
-      bodyWrap.innerHTML = '<p style="color:#6b7268;">ไม่พบข้อมูลตามเงื่อนไขที่เลือก</p>';
-      return;
-    }
-
-    const totalSales = rows.reduce((s, r) => s + Number(r.total_sales || 0), 0);
-    const totalCogs = rows.reduce((s, r) => s + Number(r.total_cost || 0), 0);
-    const grossProfit = rows.reduce((s, r) => s + Number(r.gross_profit || 0), 0);
-    const grossMarginPct = totalSales ? (grossProfit / totalSales) * 100 : 0;
-
-    const kpiRow = document.createElement('div');
-    kpiRow.className = 'kpi-row';
-    kpiRow.innerHTML = `
-      <div class="kpi-card"><div class="kpi-label">Total sales</div><div class="kpi-value">${fmtCurrency(totalSales)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Total COGS</div><div class="kpi-value">${fmtCurrency(totalCogs)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Gross profit</div><div class="kpi-value">${fmtCurrency(grossProfit)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Gross margin</div><div class="kpi-value">${grossMarginPct.toFixed(1)}%</div></div>
-    `;
-    bodyWrap.appendChild(kpiRow);
-
-    const panels = document.createElement('div');
-    panels.className = 'cogs-panels';
-
-    // Lowest-margin menu items
-    const byMenu = {};
-    rows.forEach((r) => {
-      const key = r.menu_name || r.sku || 'ไม่ระบุ';
-      if (!byMenu[key]) byMenu[key] = { sales: 0, profit: 0 };
-      byMenu[key].sales += Number(r.total_sales || 0);
-      byMenu[key].profit += Number(r.gross_profit || 0);
-    });
-    const menuList = Object.entries(byMenu)
-      .map(([name, v]) => ({ name, pct: v.sales ? (v.profit / v.sales) * 100 : 0 }))
-      .sort((a, b) => a.pct - b.pct)
-      .slice(0, 10);
-
-    const menuPanel = document.createElement('div');
-    menuPanel.className = 'panel-card';
-    menuPanel.innerHTML = '<h3>Lowest-margin menu items</h3>';
-    menuList.forEach((item) => {
-      const row = document.createElement('div');
-      row.className = 'margin-item-row';
-      const widthPct = Math.min(100, Math.max(4, Math.abs(item.pct)));
-      row.innerHTML = `
-        <span class="margin-name">${item.name}</span>
-        <span class="margin-bar-track"><span class="margin-bar-fill ${marginClass(item.pct)}" style="width:${widthPct}%"></span></span>
-        <span class="margin-pct">${item.pct.toFixed(1)}%</span>
-      `;
-      menuPanel.appendChild(row);
-    });
-    panels.appendChild(menuPanel);
-
-    // Gross margin by branch
-    const byBranch = {};
-    rows.forEach((r) => {
-      const key = r.branch_name || 'ไม่ระบุสาขา';
-      if (!byBranch[key]) byBranch[key] = { sales: 0, profit: 0 };
-      byBranch[key].sales += Number(r.total_sales || 0);
-      byBranch[key].profit += Number(r.gross_profit || 0);
-    });
-    const branchList = Object.entries(byBranch)
-      .map(([name, v]) => ({ name, pct: v.sales ? (v.profit / v.sales) * 100 : 0 }))
-      .sort((a, b) => b.pct - a.pct);
-
-    const branchPanel = document.createElement('div');
-    branchPanel.className = 'panel-card';
-    branchPanel.innerHTML = '<h3>Gross margin by branch</h3>';
-    branchList.forEach((item) => {
-      const row = document.createElement('div');
-      row.className = 'margin-item-row';
-      const widthPct = Math.min(100, Math.max(4, Math.abs(item.pct)));
-      row.innerHTML = `
-        <span class="margin-name">${item.name}</span>
-        <span class="margin-bar-track"><span class="margin-bar-fill ${marginClass(item.pct)}" style="width:${widthPct}%"></span></span>
-        <span class="margin-pct">${item.pct.toFixed(1)}%</span>
-      `;
-      branchPanel.appendChild(row);
-    });
-    panels.appendChild(branchPanel);
-
-    bodyWrap.appendChild(panels);
-  }
-
-  filters.querySelector('.cd-reload').addEventListener('click', load);
-  load();
-  return container;
-}
-
-// ---------- Purchase Analysis dashboard (real FMH purchase_analysis data) ----------
-function buildPurchaseAnalysisDashboard() {
-  const container = document.createElement('div');
-
-  const filters = document.createElement('div');
-  filters.className = 'filters-row';
-  filters.innerHTML = `
-    <input type="date" class="pa-start" />
-    <input type="date" class="pa-end" />
-    <button class="btn small pa-reload">โหลดข้อมูล</button>
-  `;
-  const today = new Date();
-  const monthAgo = new Date(Date.now() - 30 * 86400000);
-  filters.querySelector('.pa-end').value = today.toISOString().slice(0, 10);
-  filters.querySelector('.pa-start').value = monthAgo.toISOString().slice(0, 10);
-  container.appendChild(filters);
-
-  const quotaWrap = document.createElement('div');
-  container.appendChild(quotaWrap);
-
-  const statusWrap = document.createElement('div');
-  container.appendChild(statusWrap);
-
-  const bodyWrap = document.createElement('div');
-  container.appendChild(bodyWrap);
-
-  function fmtCurrency(n) {
-    return '฿' + Number(n || 0).toLocaleString('th-TH', { maximumFractionDigits: 0 });
-  }
-  function fmtPct(n) {
-    const sign = n > 0 ? '+' : '';
-    return `${sign}${n.toFixed(1)}%`;
-  }
-  function barClass(v) {
-    return v < 0 ? 'margin-fill-danger' : 'margin-fill-success';
-  }
-
-  async function load() {
-    bodyWrap.innerHTML = '';
-    statusWrap.innerHTML = '<p style="color:#6b7268;">กำลังโหลดข้อมูลจาก FMH...</p>';
-    const params = new URLSearchParams({
-      start: filters.querySelector('.pa-start').value,
-      end: filters.querySelector('.pa-end').value,
-    });
-    try {
-      const { data, meta } = await api(`/api/reports/purchase-analysis?${params.toString()}`);
-      statusWrap.innerHTML = '';
-      renderFmhStatusBar(quotaWrap, meta || {}, 'purchase-analysis', load);
-      renderBody(data || []);
-    } catch (err) {
-      if (err.message && err.message.includes('FMH API key not configured')) {
-        statusWrap.innerHTML =
-          '<div class="error-msg">ยังไม่ได้ตั้งค่า FMH API Key — ไปที่เมนู ⚙️ ตั้งค่า → แท็บ "FMH API" ก่อนใช้งานรายงานนี้</div>';
-      } else {
-        statusWrap.innerHTML = `<div class="error-msg">โหลดข้อมูลไม่สำเร็จ: ${err.message}</div>`;
-      }
-    }
-  }
-
-  let chartInstance = null;
-
-  function renderBody(rows) {
-    bodyWrap.innerHTML = '';
-    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
-    if (!rows.length) {
-      bodyWrap.innerHTML = '<p style="color:#6b7268;">ไม่พบข้อมูลตามเงื่อนไขที่เลือก</p>';
-      return;
-    }
-
-    const totalPO = rows.reduce((s, r) => s + Number(r.po_total || 0), 0);
-    const totalGRN = rows.reduce((s, r) => s + Number(r.grn_total || 0), 0);
-    const totalInvoice = rows.reduce((s, r) => s + Number(r.invoice_total || 0), 0);
-    const grnVsPoPct = totalPO ? ((totalGRN - totalPO) / totalPO) * 100 : 0;
-    const invVsGrnPct = totalGRN ? ((totalInvoice - totalGRN) / totalGRN) * 100 : 0;
-
-    const kpiRow = document.createElement('div');
-    kpiRow.className = 'kpi-row';
-    kpiRow.innerHTML = `
-      <div class="kpi-card"><div class="kpi-label">Total PO value</div><div class="kpi-value">${fmtCurrency(totalPO)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Total GRN value</div><div class="kpi-value">${fmtCurrency(totalGRN)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Total Invoice value</div><div class="kpi-value">${fmtCurrency(totalInvoice)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">GRN vs PO</div><div class="kpi-value">${fmtPct(grnVsPoPct)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Invoice vs GRN</div><div class="kpi-value">${fmtPct(invVsGrnPct)}</div></div>
-    `;
-    bodyWrap.appendChild(kpiRow);
-
-    // ---- PO vs GRN vs Invoice over time (weekly buckets) ----
-    const byWeek = {};
-    rows.forEach((r) => {
-      const dateStr = r.order_date || r.issued_date || r.grn_date || r.invoice_date;
-      if (!dateStr) return;
-      const d = new Date(dateStr);
-      if (isNaN(d)) return;
-      // bucket to the Monday of that week
-      const day = d.getDay();
-      const diff = (day === 0 ? -6 : 1) - day;
-      const monday = new Date(d);
-      monday.setDate(d.getDate() + diff);
-      const key = monday.toISOString().slice(0, 10);
-      if (!byWeek[key]) byWeek[key] = { po: 0, grn: 0, inv: 0 };
-      byWeek[key].po += Number(r.po_total || 0);
-      byWeek[key].grn += Number(r.grn_total || 0);
-      byWeek[key].inv += Number(r.invoice_total || 0);
-    });
-    const weekKeys = Object.keys(byWeek).sort();
-
-    const chartCard = document.createElement('div');
-    chartCard.className = 'chart-card';
-    chartCard.innerHTML = '<h3>PO vs GRN vs Invoice value over time</h3><div class="chart-wrap"><canvas></canvas></div>';
-    bodyWrap.appendChild(chartCard);
-
-    if (weekKeys.length && window.Chart) {
-      const canvas = chartCard.querySelector('canvas');
-      chartInstance = new Chart(canvas.getContext('2d'), {
-        type: 'line',
-        data: {
-          labels: weekKeys.map((k) => new Date(k).toLocaleDateString('th-TH', { day: '2-digit', month: 'short' })),
-          datasets: [
-            { label: 'PO', data: weekKeys.map((k) => byWeek[k].po), borderColor: '#A9812F', backgroundColor: '#A9812F', tension: 0.25 },
-            { label: 'GRN', data: weekKeys.map((k) => byWeek[k].grn), borderColor: '#1B2B22', backgroundColor: '#1B2B22', tension: 0.25 },
-            { label: 'Invoice', data: weekKeys.map((k) => byWeek[k].inv), borderColor: '#BE4229', backgroundColor: '#BE4229', tension: 0.25 },
-          ],
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { position: 'top' } },
-          scales: {
-            y: { ticks: { callback: (v) => fmtCurrency(v) } },
-          },
-        },
-      });
-    } else if (!weekKeys.length) {
-      chartCard.querySelector('.chart-wrap').innerHTML = '<p style="color:#6b7268;">ไม่มีวันที่ในข้อมูลสำหรับสร้างกราฟ</p>';
-    }
-
-    const panels = document.createElement('div');
-    panels.className = 'panels-3col';
-
-    // ---- Top products needing attention (largest GRN-vs-PO value gap) ----
-    const byProduct = {};
-    rows.forEach((r) => {
-      const key = r.product_name || r.product_code || 'ไม่ระบุสินค้า';
-      if (!byProduct[key]) byProduct[key] = { po: 0, grn: 0, inv: 0 };
-      byProduct[key].po += Number(r.po_total || 0);
-      byProduct[key].grn += Number(r.grn_total || 0);
-      byProduct[key].inv += Number(r.invoice_total || 0);
-    });
-    const productList = Object.entries(byProduct)
-      .map(([name, v]) => ({
-        name,
-        po: v.po,
-        variance: v.grn - v.po,
-        variancePct: v.po ? ((v.grn - v.po) / v.po) * 100 : 0,
-      }))
-      .sort((a, b) => Math.abs(b.variance) - Math.abs(a.variance))
-      .slice(0, 10);
-
-    const attentionPanel = document.createElement('div');
-    attentionPanel.className = 'panel-card';
-    attentionPanel.innerHTML = '<h3>Top products needing attention</h3>';
-    if (!productList.length) {
-      attentionPanel.innerHTML += '<p style="color:#6b7268;font-size:13px;">ไม่มีข้อมูล</p>';
-    }
-    productList.forEach((item) => {
-      const row = document.createElement('div');
-      row.className = 'margin-item-row';
-      const widthPct = Math.min(100, Math.max(4, Math.abs(item.variancePct)));
-      const tag = Math.abs(item.variancePct) > 15 ? '<span class="attention-tag">ส่วนต่างสูง</span>' : '';
-      row.innerHTML = `
-        <span class="margin-name">${item.name}${tag}</span>
-        <span class="margin-bar-track"><span class="margin-bar-fill ${barClass(item.variancePct)}" style="width:${widthPct}%"></span></span>
-        <span class="margin-pct">${fmtPct(item.variancePct)}</span>
-      `;
-      attentionPanel.appendChild(row);
-    });
-    panels.appendChild(attentionPanel);
-
-    // ---- Top suppliers by PO spend ----
-    const bySupplier = {};
-    rows.forEach((r) => {
-      const key = r.supplier || 'ไม่ระบุซัพพลายเออร์';
-      bySupplier[key] = (bySupplier[key] || 0) + Number(r.po_total || 0);
-    });
-    const supplierList = Object.entries(bySupplier)
-      .map(([name, po]) => ({ name, po }))
-      .sort((a, b) => b.po - a.po)
-      .slice(0, 10);
-    const maxSupplierPO = Math.max(1, ...supplierList.map((s) => s.po));
-
-    const supplierPanel = document.createElement('div');
-    supplierPanel.className = 'panel-card';
-    supplierPanel.innerHTML = '<h3>Top suppliers by PO spend</h3>';
-    supplierList.forEach((item) => {
-      const row = document.createElement('div');
-      row.className = 'margin-item-row';
-      const widthPct = Math.min(100, Math.max(4, (item.po / maxSupplierPO) * 100));
-      row.innerHTML = `
-        <span class="margin-name">${item.name}</span>
-        <span class="margin-bar-track"><span class="margin-bar-fill margin-fill-success" style="width:${widthPct}%"></span></span>
-        <span class="margin-pct">${fmtCurrency(item.po)}</span>
-      `;
-      supplierPanel.appendChild(row);
-    });
-    panels.appendChild(supplierPanel);
-
-    // ---- PO / GRN value by category — variance highlighted ----
-    const byCategory = {};
-    rows.forEach((r) => {
-      const key = r.category_name || 'ไม่ระบุหมวดหมู่';
-      if (!byCategory[key]) byCategory[key] = { po: 0, grn: 0 };
-      byCategory[key].po += Number(r.po_total || 0);
-      byCategory[key].grn += Number(r.grn_total || 0);
-    });
-    const categoryList = Object.entries(byCategory)
-      .map(([name, v]) => ({ name, po: v.po, variancePct: v.po ? ((v.grn - v.po) / v.po) * 100 : 0 }))
-      .sort((a, b) => b.po - a.po)
-      .slice(0, 10);
-
-    const categoryPanel = document.createElement('div');
-    categoryPanel.className = 'panel-card';
-    categoryPanel.innerHTML = '<h3>GRN vs PO variance by category</h3>';
-    categoryList.forEach((item) => {
-      const row = document.createElement('div');
-      row.className = 'margin-item-row';
-      const widthPct = Math.min(100, Math.max(4, Math.abs(item.variancePct)));
-      row.innerHTML = `
-        <span class="margin-name">${item.name}</span>
-        <span class="margin-bar-track"><span class="margin-bar-fill ${barClass(item.variancePct)}" style="width:${widthPct}%"></span></span>
-        <span class="margin-pct">${fmtPct(item.variancePct)}</span>
-      `;
-      categoryPanel.appendChild(row);
-    });
-    panels.appendChild(categoryPanel);
-
-    bodyWrap.appendChild(panels);
-  }
-
-  filters.querySelector('.pa-reload').addEventListener('click', load);
-  load();
-  return container;
-}
-
-// ---------- Menu Costing Analysis: ingredient cost impact & price sensitivity ----------
-function buildMenuIngredientImpactDashboard() {
-  const container = document.createElement('div');
-
-  const filters = document.createElement('div');
-  filters.className = 'filters-row';
-  filters.innerHTML = `<button class="btn small mi-reload">โหลดข้อมูล</button>`;
-  container.appendChild(filters);
-
-  const quotaWrap = document.createElement('div');
-  container.appendChild(quotaWrap);
-
-  const statusWrap = document.createElement('div');
-  container.appendChild(statusWrap);
-
-  const bodyWrap = document.createElement('div');
-  container.appendChild(bodyWrap);
-
-  function fmtCurrency(n) {
-    return '฿' + Number(n || 0).toLocaleString('th-TH', { maximumFractionDigits: 0 });
-  }
-
-  let chartInstance = null;
-  let topIngredients = []; // filled by renderBody, reused by the sensitivity simulator
-
-  async function load() {
-    bodyWrap.innerHTML = '';
-    statusWrap.innerHTML = '<p style="color:#6b7268;">กำลังโหลดข้อมูลจาก FMH...</p>';
-    try {
-      const { data, meta } = await api('/api/reports/menu-costing');
-      statusWrap.innerHTML = '';
-      renderFmhStatusBar(quotaWrap, meta || {}, 'menu-costing', load);
-      renderBody(data || []);
-    } catch (err) {
-      if (err.message && err.message.includes('FMH API key not configured')) {
-        statusWrap.innerHTML =
-          '<div class="error-msg">ยังไม่ได้ตั้งค่า FMH API Key — ไปที่เมนู ⚙️ ตั้งค่า → แท็บ "FMH API" ก่อนใช้งานรายงานนี้</div>';
-      } else {
-        statusWrap.innerHTML = `<div class="error-msg">โหลดข้อมูลไม่สำเร็จ: ${err.message}</div>`;
-      }
-    }
-  }
-
-  function renderBody(rows) {
-    bodyWrap.innerHTML = '';
-    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
-    if (!rows.length) {
-      bodyWrap.innerHTML = '<p style="color:#6b7268;">ไม่พบข้อมูล</p>';
-      return;
-    }
-
-    // Pass 1: total recipe cost per menu (so we can express each ingredient's
-    // share of that menu's cost).
-    const menuTotalCost = {};
-    rows.forEach((r) => {
-      const menuKey = r.menu_name || r.menu_code || 'ไม่ระบุเมนู';
-      menuTotalCost[menuKey] = (menuTotalCost[menuKey] || 0) + Number(r.total_cost || 0);
-    });
-
-    // Pass 2: per-ingredient totals, how many menus it appears in, and its
-    // cost share within each of those menus.
-    const byIngredient = {};
-    rows.forEach((r) => {
-      const menuKey = r.menu_name || r.menu_code || 'ไม่ระบุเมนู';
-      const ingKey = r.ingredient_name || r.ingredient_code || 'ไม่ระบุวัตถุดิบ';
-      const cost = Number(r.total_cost || 0);
-      if (!byIngredient[ingKey]) byIngredient[ingKey] = { totalCost: 0, menus: new Set(), shares: [] };
-      byIngredient[ingKey].totalCost += cost;
-      byIngredient[ingKey].menus.add(menuKey);
-      const menuTotal = menuTotalCost[menuKey];
-      if (menuTotal) byIngredient[ingKey].shares.push(cost / menuTotal);
-    });
-
-    const totalRecipeCost = Object.values(menuTotalCost).reduce((s, v) => s + v, 0);
-    const menuCount = Object.keys(menuTotalCost).length;
-    const ingredientCount = Object.keys(byIngredient).length;
-    const avgIngredientsPerMenu = menuCount ? (rows.length / menuCount) : 0;
-
-    const kpiRow = document.createElement('div');
-    kpiRow.className = 'kpi-row';
-    kpiRow.innerHTML = `
-      <div class="kpi-card"><div class="kpi-label">Total recipe cost</div><div class="kpi-value">${fmtCurrency(totalRecipeCost)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Menus</div><div class="kpi-value">${menuCount}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Distinct ingredients</div><div class="kpi-value">${ingredientCount}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Avg ingredients / menu</div><div class="kpi-value">${avgIngredientsPerMenu.toFixed(1)}</div></div>
-    `;
-    bodyWrap.appendChild(kpiRow);
-
-    topIngredients = Object.entries(byIngredient)
-      .map(([name, v]) => ({
-        name,
-        totalCost: v.totalCost,
-        menuCount: v.menus.size,
-        avgSharePct: v.shares.length ? (v.shares.reduce((s, x) => s + x, 0) / v.shares.length) * 100 : 0,
-      }))
-      .sort((a, b) => b.totalCost - a.totalCost)
-      .slice(0, 12);
-
-    // ---- Chart: top ingredients by total cost impact ----
-    const chartCard = document.createElement('div');
-    chartCard.className = 'chart-card';
-    chartCard.innerHTML = '<h3>Top ingredients by cost impact (across all menus)</h3><div class="chart-wrap"><canvas></canvas></div>';
-    bodyWrap.appendChild(chartCard);
-
-    if (window.Chart) {
-      const canvas = chartCard.querySelector('canvas');
-      chartInstance = new Chart(canvas.getContext('2d'), {
-        type: 'bar',
-        data: {
-          labels: topIngredients.map((i) => `${i.name} (${i.menuCount} เมนู)`),
-          datasets: [{
-            label: 'Total cost impact',
-            data: topIngredients.map((i) => i.totalCost),
-            backgroundColor: '#BE4229',
-          }],
-        },
-        options: {
-          indexAxis: 'y',
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
-          scales: {
-            x: { ticks: { callback: (v) => fmtCurrency(v) } },
-          },
-        },
-      });
-    }
-
-    // ---- Price sensitivity simulator ----
-    const sensitivityCard = document.createElement('div');
-    sensitivityCard.className = 'panel-card';
-    sensitivityCard.style.marginTop = '16px';
-    sensitivityCard.innerHTML = `
-      <h3>Ingredient price sensitivity</h3>
-      <p class="helper-text" style="margin-top:-4px;">
-        ถ้าราคาวัตถุดิบ (X) ขยับ ต้นทุนเมนูที่ใช้วัตถุดิบนั้นจะขยับตาม % ที่วัตถุดิบนั้นคิดเป็นสัดส่วนของต้นทุนเมนู (Y ≈ สัดส่วน × X)
-      </p>
-      <div class="field" style="max-width:260px;">
-        <label for="mi-pct-input">ราคาวัตถุดิบเปลี่ยน (X%)</label>
-        <input id="mi-pct-input" type="number" value="10" step="1">
+  build() {
+    this.wrap.innerHTML = '';
+    const header = document.createElement('div');
+    header.className = 'dash-header';
+    header.innerHTML = `
+      <div>
+        <h1 class="dash-title">${esc(this.dashboard.display_name)}</h1>
+        ${this.dashboard.description ? `<p class="dash-desc">${esc(this.dashboard.description)}</p>` : ''}
       </div>
-      <div id="mi-sensitivity-list"></div>
-    `;
-    bodyWrap.appendChild(sensitivityCard);
+      <div class="dash-controls">
+        ${
+          this.hasDateSource
+            ? `<div class="range-control" role="group" aria-label="ช่วงวันที่">
+                 <button type="button" class="range-chip" data-days="7">7 วัน</button>
+                 <button type="button" class="range-chip active" data-days="30">30 วัน</button>
+                 <button type="button" class="range-chip" data-days="90">90 วัน</button>
+                 <input type="date" class="range-start" value="${this.range.start}" aria-label="วันที่เริ่ม">
+                 <span class="muted">–</span>
+                 <input type="date" class="range-end" value="${this.range.end}" aria-label="วันที่สิ้นสุด">
+               </div>`
+            : ''
+        }
+      </div>`;
+    this.wrap.appendChild(header);
 
-    const listEl = sensitivityCard.querySelector('#mi-sensitivity-list');
-    const pctInput = sensitivityCard.querySelector('#mi-pct-input');
+    this.statusEl = document.createElement('div');
+    this.wrap.appendChild(this.statusEl);
 
-    function renderSensitivityList() {
-      const x = Number(pctInput.value) || 0;
-      const bySensitivity = [...topIngredients].sort((a, b) => b.avgSharePct - a.avgSharePct).slice(0, 10);
-      const maxShare = Math.max(1, ...bySensitivity.map((i) => i.avgSharePct));
-      listEl.innerHTML = '';
-      bySensitivity.forEach((item) => {
-        const y = (item.avgSharePct / 100) * x;
-        const row = document.createElement('div');
-        row.className = 'margin-item-row';
-        const widthPct = Math.min(100, Math.max(4, (item.avgSharePct / maxShare) * 100));
-        row.innerHTML = `
-          <span class="margin-name">${item.name} <span style="color:#6b7268;font-weight:400;">(${item.menuCount} เมนู)</span></span>
-          <span class="margin-bar-track"><span class="margin-bar-fill margin-fill-warning" style="width:${widthPct}%"></span></span>
-          <span class="margin-pct">${x >= 0 ? '+' : ''}${y.toFixed(1)}%</span>
-        `;
-        listEl.appendChild(row);
+    if (!this.widgets.length) {
+      const p = document.createElement('p');
+      p.className = 'muted';
+      p.textContent = 'dashboard นี้ยังไม่มี widget';
+      this.wrap.appendChild(p);
+      return;
+    }
+
+    const grid = document.createElement('div');
+    grid.className = 'widget-grid';
+    this.cards = this.widgets.map((w) => {
+      const card = document.createElement('section');
+      card.className = `widget-card size-${w.config.size || 'half'} widget-${w.chart_type}`;
+      card.innerHTML = `<h3 class="widget-title">${esc(w.title)}</h3><div class="widget-body"><p class="muted">กำลังโหลด...</p></div>`;
+      grid.appendChild(card);
+      return { widget: w, body: card.querySelector('.widget-body') };
+    });
+    this.wrap.appendChild(grid);
+
+    if (this.hasDateSource) this.bindRange(header);
+  }
+
+  bindRange(header) {
+    const start = header.querySelector('.range-start');
+    const end = header.querySelector('.range-end');
+    const chips = header.querySelectorAll('.range-chip');
+    chips.forEach((chip) =>
+      chip.addEventListener('click', () => {
+        chips.forEach((c) => c.classList.toggle('active', c === chip));
+        this.range = { start: daysAgoIso(Number(chip.dataset.days)), end: todayIso() };
+        start.value = this.range.start;
+        end.value = this.range.end;
+        this.renderWidgets();
+      })
+    );
+    [start, end].forEach((input) =>
+      input.addEventListener('change', () => {
+        chips.forEach((c) => c.classList.remove('active'));
+        this.range = { start: start.value, end: end.value };
+        this.renderWidgets();
+      })
+    );
+  }
+
+  async load() {
+    const sources = Object.keys(this.sources);
+    await Promise.all(
+      sources.map(async (source) => {
+        try {
+          this.results[source] = await api(`/api/dashboards/${this.dashboard.id}/data/${source}`);
+        } catch (err) {
+          this.results[source] = { error: err.message, code: err.code };
+        }
+      })
+    );
+    if (state.activeDashboardId !== this.dashboard.id) return;
+    this.renderStatus();
+    this.renderWidgets();
+  }
+
+  rowsFor(source) {
+    const r = this.results[source];
+    if (!r || r.error) return null;
+    const dateField = this.sources[source] && this.sources[source].date_field;
+    if (!dateField || !this.hasDateSource) return r.data;
+    const { start, end } = this.range;
+    return r.data.filter((row) => {
+      const d = row[dateField] ? String(row[dateField]).slice(0, 10) : null;
+      return d && (!start || d >= start) && (!end || d <= end);
+    });
+  }
+
+  renderStatus() {
+    const ok = Object.values(this.results).filter((r) => r && !r.error);
+    const errors = Object.values(this.results).filter((r) => r && r.error);
+    const keyMissing = errors.some((r) => r.code === 'FMH_KEY_MISSING');
+    const syncedTimes = ok.map((r) => r.meta && r.meta.synced_at).filter(Boolean).sort();
+    const latest = ok
+      .filter((r) => r.meta && r.meta.quota)
+      .sort((a, b) => String(b.meta.synced_at).localeCompare(String(a.meta.synced_at)))[0];
+
+    this.statusEl.innerHTML = '';
+    const bar = document.createElement('div');
+    bar.className = 'fmh-status-bar';
+    const oldest = fmtDateTime(syncedTimes[0]);
+    bar.innerHTML = `
+      <div class="fmh-sync-line">
+        <span>${oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'}</span>
+        ${keyMissing ? '' : '<button type="button" class="btn small ghost fmh-refresh-btn">Refresh ด่วน</button>'}
+      </div>`;
+
+    if (latest) {
+      const q = latest.meta.quota;
+      const limit = Number(q.monthly_row_limit) || 0;
+      const used = Number(q.rows_used) || 0;
+      const remaining = q.rows_remaining ?? Math.max(0, limit - used);
+      const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
+      const low = limit ? remaining / limit < 0.1 : false;
+      const resets = q.resets_at ? new Date(q.resets_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }) : null;
+      bar.insertAdjacentHTML(
+        'beforeend',
+        `<div class="fmh-quota">
+           <span>FMH API quota เดือนนี้: ${used.toLocaleString('th-TH')} / ${limit.toLocaleString('th-TH')} แถว (เหลือ ${Number(remaining).toLocaleString('th-TH')})${resets ? ` · รีเซ็ต ${esc(resets)}` : ''}</span>
+           <span class="fmh-quota-track" role="img" aria-label="ใช้ไป ${pct.toFixed(0)}%"><span class="fmh-quota-fill${low ? ' fmh-quota-fill-low' : ''}" style="width:${pct}%"></span></span>
+         </div>`
+      );
+    }
+    if (keyMissing) bar.insertAdjacentHTML('beforeend', `<div class="error-msg" style="margin:4px 0 0;">${esc(keyMissingMessage())}</div>`);
+    this.statusEl.appendChild(bar);
+
+    const btn = bar.querySelector('.fmh-refresh-btn');
+    if (btn) {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = 'กำลัง refresh...';
+        try {
+          await api(`/api/dashboards/${this.dashboard.id}/refresh`, { method: 'POST' });
+          await this.load();
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = 'Refresh ด่วน';
+          const note = document.createElement('div');
+          note.className = 'inline-note';
+          note.textContent = err.message;
+          bar.appendChild(note);
+          setTimeout(() => note.remove(), 6000);
+        }
       });
     }
-    pctInput.addEventListener('input', renderSensitivityList);
-    renderSensitivityList();
+  }
 
-    // ---- Menu view: cost breakdown & sensitivity for one menu at a time ----
-    const byMenu = {};
-    rows.forEach((r) => {
-      const menuKey = r.menu_name || r.menu_code || 'ไม่ระบุเมนู';
-      const ingKey = r.ingredient_name || r.ingredient_code || 'ไม่ระบุวัตถุดิบ';
-      const cost = Number(r.total_cost || 0);
-      if (!byMenu[menuKey]) byMenu[menuKey] = { totalCost: 0, ingredients: {} };
-      byMenu[menuKey].totalCost += cost;
-      byMenu[menuKey].ingredients[ingKey] = (byMenu[menuKey].ingredients[ingKey] || 0) + cost;
-    });
-    const menuList = Object.entries(byMenu)
-      .map(([name, v]) => ({ name, totalCost: v.totalCost, ingredients: v.ingredients }))
-      .sort((a, b) => b.totalCost - a.totalCost);
-
-    const menuViewCard = document.createElement('div');
-    menuViewCard.className = 'panel-card';
-    menuViewCard.style.marginTop = '16px';
-    menuViewCard.innerHTML = `
-      <h3>มุมมองรายเมนู — วัตถุดิบไหนคุมต้นทุนเมนูนี้</h3>
-      <p class="helper-text" style="margin-top:-4px;">
-        เลือกเมนู เพื่อดูว่าวัตถุดิบตัวไหนเป็นสัดส่วนต้นทุนมากที่สุดของเมนูนั้น และถ้าราคาวัตถุดิบตัวนั้นขยับ X% ต้นทุนเมนูนี้จะขยับเท่าไหร่
-      </p>
-      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;margin-bottom:4px;">
-        <div class="field" style="max-width:320px;flex:1;min-width:220px;">
-          <label for="mi-menu-select">เลือกเมนู (เรียงตามต้นทุนรวมมากไปน้อย)</label>
-          <select id="mi-menu-select"></select>
-        </div>
-        <div class="field" style="max-width:180px;">
-          <label for="mi-menu-pct-input">วัตถุดิบเปลี่ยนราคา (X%)</label>
-          <input id="mi-menu-pct-input" type="number" value="10" step="1">
-        </div>
-      </div>
-      <div id="mi-menu-summary" style="margin:6px 0 14px;font-size:13px;color:#6b7268;"></div>
-      <div id="mi-menu-ingredient-list"></div>
-    `;
-    bodyWrap.appendChild(menuViewCard);
-
-    const menuSelect = menuViewCard.querySelector('#mi-menu-select');
-    const menuPctInput = menuViewCard.querySelector('#mi-menu-pct-input');
-    const menuSummaryEl = menuViewCard.querySelector('#mi-menu-summary');
-    const menuIngListEl = menuViewCard.querySelector('#mi-menu-ingredient-list');
-
-    menuList.forEach((m) => {
-      const opt = document.createElement('option');
-      opt.value = m.name;
-      opt.textContent = `${m.name} — ${fmtCurrency(m.totalCost)}`;
-      menuSelect.appendChild(opt);
-    });
-
-    function renderMenuView() {
-      const selected = menuList.find((m) => m.name === menuSelect.value) || menuList[0];
-      if (!selected) {
-        menuSummaryEl.textContent = 'ไม่มีข้อมูลเมนู';
-        menuIngListEl.innerHTML = '';
+  renderWidgets() {
+    destroyCharts();
+    (this.cards || []).forEach(({ widget, body }) => {
+      body.innerHTML = '';
+      const res = this.results[widget.report_source];
+      if (!res) return;
+      if (res.error) {
+        body.innerHTML = `<p class="muted">${esc(res.code === 'FMH_KEY_MISSING' ? 'ยังไม่มีข้อมูล' : res.error)}</p>`;
         return;
       }
-      const x = Number(menuPctInput.value) || 0;
-      const ingCount = Object.keys(selected.ingredients).length;
-      menuSummaryEl.textContent = `ต้นทุนรวมเมนูนี้: ${fmtCurrency(selected.totalCost)} · ใช้วัตถุดิบทั้งหมด ${ingCount} รายการ`;
-
-      const ingList = Object.entries(selected.ingredients)
-        .map(([name, cost]) => ({
-          name,
-          cost,
-          sharePct: selected.totalCost ? (cost / selected.totalCost) * 100 : 0,
-        }))
-        .sort((a, b) => b.cost - a.cost)
-        .slice(0, 10);
-      const maxCost = Math.max(1, ...ingList.map((i) => i.cost));
-
-      menuIngListEl.innerHTML = '';
-      ingList.forEach((item) => {
-        const y = (item.sharePct / 100) * x;
-        const row = document.createElement('div');
-        row.className = 'margin-item-row';
-        const widthPct = Math.min(100, Math.max(4, (item.cost / maxCost) * 100));
-        row.innerHTML = `
-          <span class="margin-name">${item.name} <span style="color:#6b7268;font-weight:400;">(${item.sharePct.toFixed(1)}% ของต้นทุนเมนู)</span></span>
-          <span class="margin-bar-track"><span class="margin-bar-fill margin-fill-warning" style="width:${widthPct}%"></span></span>
-          <span class="margin-pct">${x >= 0 ? '+' : ''}${y.toFixed(1)}%</span>
-        `;
-        menuIngListEl.appendChild(row);
-      });
-    }
-    menuSelect.addEventListener('change', renderMenuView);
-    menuPctInput.addEventListener('input', renderMenuView);
-    if (menuList.length) renderMenuView();
+      const rows = this.rowsFor(widget.report_source);
+      if (!rows.length) {
+        body.innerHTML = '<p class="muted">ไม่พบข้อมูลในช่วงวันที่เลือก</p>';
+        return;
+      }
+      const renderer = RENDERERS[widget.chart_type];
+      if (!renderer) {
+        body.innerHTML = `<p class="muted">ไม่รู้จักประเภท widget: ${esc(widget.chart_type)}</p>`;
+        return;
+      }
+      try {
+        renderer(body, rows, widget.config || {});
+      } catch (err) {
+        console.error('Widget render failed', widget, err);
+        body.innerHTML = `<p class="muted">แสดงผล widget นี้ไม่สำเร็จ (${esc(err.message)})</p>`;
+      }
+    });
   }
-
-  filters.querySelector('.mi-reload').addEventListener('click', load);
-  load();
-  return container;
 }
 
-function exportToExcel(data) {
-  if (!data.length) return;
-  const headers = Object.keys(data[0]);
-  const csvRows = [headers.join(',')].concat(
-    data.map((row) => headers.map((h) => `"${String(row[h]).replace(/"/g, '""')}"`).join(','))
-  );
-  const blob = new Blob(['﻿' + csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+// ---------- widget renderers ----------
+// Every renderer: (bodyElement, rows, config) — rows are already date-filtered.
+
+function renderKpi(body, rows, cfg) {
+  const row = document.createElement('div');
+  row.className = 'kpi-row';
+  (cfg.metrics || []).forEach((m) => {
+    const card = document.createElement('div');
+    card.className = 'kpi-card';
+    card.innerHTML = `<div class="kpi-label">${esc(m.label)}</div><div class="kpi-value">${esc(fmtValue(evalMetric(m.value, rows), m.format))}</div>`;
+    row.appendChild(card);
+  });
+  body.appendChild(row);
+}
+
+// Signed values: diverging blue (+) / chili (-). Margin: status colors, always
+// shown next to the printed value, so color is never the only signal.
+function barColor(value, cfg) {
+  if (cfg.color_mode === 'signed') return value < 0 ? 'var(--chili)' : 'var(--series-blue)';
+  if (cfg.color_mode === 'margin') return value < 0 ? 'var(--chili)' : value < 20 ? 'var(--brass)' : 'var(--status-good)';
+  return cfg.color || 'var(--series-blue)';
+}
+
+// Ranked horizontal bars as HTML rows (name · bar · value): every value is
+// printed, long names truncate with a tooltip, and it stays readable on phones.
+function renderBar(body, rows, cfg) {
+  const groups = groupRows(rows, cfg.group_by);
+  let items = [...groups].map(([name, rs]) => ({
+    name: String(name),
+    value: evalMetric(cfg.value, rs),
+    rank: cfg.rank_by ? evalMetric(cfg.rank_by, rs) : null,
+    extra: cfg.label_extra ? evalMetric(cfg.label_extra.value, rs) : null,
+  }));
+  const key = (i) => (cfg.rank_by ? i.rank : i.value);
+  const sorters = {
+    asc: (a, b) => key(a) - key(b),
+    abs_desc: (a, b) => Math.abs(key(b)) - Math.abs(key(a)),
+    desc: (a, b) => key(b) - key(a),
+  };
+  items.sort(sorters[cfg.sort] || sorters.desc);
+  items = items.slice(0, cfg.top_n || 10);
+
+  const maxAbs = Math.max(...items.map((i) => Math.abs(i.value)), 1e-9);
+  const list = document.createElement('div');
+  list.className = 'bar-list';
+  items.forEach((item) => {
+    const label = item.extra !== null ? `${item.name} (${fmtValue(item.extra)}${cfg.label_extra.suffix || ''})` : item.name;
+    const width = Math.max(2, (Math.abs(item.value) / maxAbs) * 100);
+    const valueText = fmtValue(item.value, cfg.format);
+    const row = document.createElement('div');
+    row.className = 'bar-row';
+    row.title = `${label}: ${valueText}`;
+    row.innerHTML = `
+      <span class="bar-name">${esc(label)}</span>
+      <span class="bar-track"><span class="bar-fill" style="width:${width}%;background:${barColor(item.value, cfg)}"></span></span>
+      <span class="bar-value">${esc(valueText)}</span>`;
+    list.appendChild(row);
+  });
+  body.appendChild(list);
+  if (groups.size > items.length) {
+    body.insertAdjacentHTML('beforeend', `<p class="widget-foot">แสดง ${items.length} จาก ${groups.size} รายการ</p>`);
+  }
+}
+
+function bucketKey(dateStr, bucket) {
+  const d = new Date(String(dateStr).slice(0, 10) + 'T00:00:00');
+  if (isNaN(d)) return null;
+  if (bucket === 'day') return d.toISOString().slice(0, 10);
+  if (bucket === 'month') return d.toISOString().slice(0, 7) + '-01';
+  const day = d.getDay(); // week: Monday of that week
+  d.setDate(d.getDate() + ((day === 0 ? -6 : 1) - day));
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function renderLine(body, rows, cfg) {
+  const buckets = new Map();
+  rows.forEach((r) => {
+    const raw = pick(r, cfg.date_fields || []);
+    const k = raw ? bucketKey(raw, cfg.bucket || 'week') : null;
+    if (!k) return;
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(r);
+  });
+  const keys = [...buckets.keys()].sort();
+  if (!keys.length || !window.Chart) {
+    body.innerHTML = `<p class="muted">${window.Chart ? 'ไม่มีวันที่ในข้อมูลสำหรับสร้างกราฟ' : 'โหลดไลบรารีกราฟไม่สำเร็จ'}</p>`;
+    return;
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-wrap';
+  wrap.innerHTML = '<canvas></canvas>';
+  body.appendChild(wrap);
+  const series = cfg.series || [];
+  const chart = new Chart(wrap.querySelector('canvas'), {
+    type: 'line',
+    data: {
+      labels: keys.map((k) =>
+        new Date(k + 'T00:00:00').toLocaleDateString('th-TH', cfg.bucket === 'month' ? { month: 'short', year: '2-digit' } : { day: 'numeric', month: 'short' })
+      ),
+      datasets: series.map((s) => ({
+        label: s.label,
+        data: keys.map((k) => evalMetric(s.value, buckets.get(k))),
+        borderColor: s.color,
+        backgroundColor: s.color,
+        borderWidth: 2,
+        pointRadius: 3,
+        pointHoverRadius: 6,
+        pointBorderColor: '#fff',
+        pointBorderWidth: 1.5,
+        tension: 0.25,
+      })),
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: '#1B2B22' } },
+        tooltip: { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${fmtValue(ctx.parsed.y, cfg.format)}` } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#6b7268' } },
+        y: { grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
+      },
+    },
+  });
+  activeCharts.push(chart);
+}
+
+function renderTable(body, rows, cfg) {
+  const columns = cfg.columns && cfg.columns.length ? cfg.columns : Object.keys(rows[0]).map((field) => ({ field }));
+  let sort = null; // { field, dir }
+  const limit = cfg.top_n || 200;
+
+  const tools = document.createElement('div');
+  tools.className = 'table-tools';
+  tools.innerHTML = `<span class="widget-foot"></span><button type="button" class="btn small ghost">Export CSV</button>`;
+  tools.querySelector('button').addEventListener('click', () => exportCsv(rows, columns));
+  const scroller = document.createElement('div');
+  scroller.className = 'table-scroll';
+  body.appendChild(tools);
+  body.appendChild(scroller);
+
+  function draw() {
+    let data = [...rows];
+    if (sort) {
+      data.sort((a, b) => {
+        const x = a[sort.field];
+        const y = b[sort.field];
+        const cmp = typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? ''), 'th');
+        return sort.dir === 'asc' ? cmp : -cmp;
+      });
+    }
+    const shown = data.slice(0, limit);
+    tools.querySelector('.widget-foot').textContent =
+      data.length > limit ? `แสดง ${limit.toLocaleString('th-TH')} จาก ${data.length.toLocaleString('th-TH')} แถว (Export ได้ครบ)` : `${data.length.toLocaleString('th-TH')} แถว`;
+    const head = columns
+      .map((c) => {
+        const arrow = sort && sort.field === c.field ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+        return `<th tabindex="0" data-field="${esc(c.field)}">${esc(c.label || c.field.replace(/_/g, ' '))}${arrow}</th>`;
+      })
+      .join('');
+    const bodyHtml = shown
+      .map(
+        (r) =>
+          `<tr>${columns
+            .map((c) => {
+              const v = r[c.field];
+              return typeof v === 'number'
+                ? `<td class="num">${esc(c.format ? fmtValue(v, c.format) : v.toLocaleString('th-TH', { maximumFractionDigits: 2 }))}</td>`
+                : `<td>${esc(v)}</td>`;
+            })
+            .join('')}</tr>`
+      )
+      .join('');
+    scroller.innerHTML = `<table class="report-table"><thead><tr>${head}</tr></thead><tbody>${bodyHtml}</tbody></table>`;
+    scroller.querySelectorAll('th').forEach((th) => {
+      const toggle = () => {
+        const f = th.dataset.field;
+        sort = !sort || sort.field !== f ? { field: f, dir: 'desc' } : sort.dir === 'desc' ? { field: f, dir: 'asc' } : null;
+        draw();
+      };
+      th.addEventListener('click', toggle);
+      th.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggle();
+        }
+      });
+    });
+  }
+  draw();
+}
+
+function exportCsv(rows, columns) {
+  if (!rows.length) return;
+  const fields = columns.map((c) => c.field);
+  const csv = [fields.join(',')]
+    .concat(rows.map((r) => fields.map((f) => `"${String(r[f] ?? '').replace(/"/g, '""')}"`).join(',')))
+    .join('\n');
   const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = 'price-change-report.csv';
+  link.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }));
+  link.download = 'kss-report.csv';
   link.click();
 }
 
-// ---------- Change password modal ----------
+// Recipe cost structure shared by the two menu-costing simulators.
+function menuCostModel(rows) {
+  const MENU = ['menu_name', 'menu_code'];
+  const ING = ['ingredient_name', 'ingredient_code'];
+  const menus = {};
+  rows.forEach((r) => {
+    const m = pick(r, MENU) ?? 'ไม่ระบุเมนู';
+    const i = pick(r, ING) ?? 'ไม่ระบุวัตถุดิบ';
+    const cost = num(r.total_cost);
+    if (!menus[m]) menus[m] = { total: 0, ingredients: {} };
+    menus[m].total += cost;
+    menus[m].ingredients[i] = (menus[m].ingredients[i] || 0) + cost;
+  });
+  return menus;
+}
+
+function sensitivityRows(list, x, shareKey, labelFn) {
+  const maxShare = Math.max(...list.map((i) => i[shareKey]), 1e-9);
+  return list
+    .map((item) => {
+      const y = (item[shareKey] / 100) * x;
+      return `<div class="bar-row" title="${esc(labelFn(item))}: ${fmtValue(y, 'pct_signed')}">
+        <span class="bar-name">${esc(labelFn(item))}</span>
+        <span class="bar-track"><span class="bar-fill" style="width:${Math.max(2, (item[shareKey] / maxShare) * 100)}%;background:var(--brass)"></span></span>
+        <span class="bar-value">${esc(fmtValue(y, 'pct_signed'))}</span>
+      </div>`;
+    })
+    .join('');
+}
+
+// Ingredient price sensitivity: if an ingredient's price moves X%, the menus
+// using it move by (its average share of those menus' cost) × X.
+function renderSensitivity(body, rows, cfg) {
+  const menus = menuCostModel(rows);
+  const byIng = {};
+  Object.values(menus).forEach((m) => {
+    Object.entries(m.ingredients).forEach(([name, cost]) => {
+      if (!byIng[name]) byIng[name] = { name, shares: [], menuCount: 0 };
+      byIng[name].menuCount++;
+      if (m.total) byIng[name].shares.push(cost / m.total);
+    });
+  });
+  const list = Object.values(byIng)
+    .map((i) => ({ ...i, avgSharePct: i.shares.length ? (i.shares.reduce((s, v) => s + v, 0) / i.shares.length) * 100 : 0 }))
+    .sort((a, b) => b.avgSharePct - a.avgSharePct)
+    .slice(0, cfg.top_n || 10);
+
+  body.innerHTML = `
+    <p class="widget-help">ถ้าราคาวัตถุดิบขยับ X% ต้นทุนเมนูที่ใช้วัตถุดิบนั้นจะขยับตามสัดส่วนที่วัตถุดิบคิดเป็นของต้นทุนเมนู</p>
+    <label class="inline-field">ราคาวัตถุดิบเปลี่ยน (X%) <input type="number" class="sens-x" value="${Number(cfg.default_pct) || 10}" step="1"></label>
+    <div class="bar-list sens-list"></div>`;
+  const input = body.querySelector('.sens-x');
+  const draw = () => {
+    body.querySelector('.sens-list').innerHTML = sensitivityRows(list, Number(input.value) || 0, 'avgSharePct', (i) => `${i.name} (${i.menuCount} เมนู)`);
+  };
+  input.addEventListener('input', draw);
+  draw();
+}
+
+function renderMenuBreakdown(body, rows, cfg) {
+  const menus = menuCostModel(rows);
+  const list = Object.entries(menus)
+    .map(([name, m]) => ({ name, ...m }))
+    .sort((a, b) => b.total - a.total);
+  body.innerHTML = `
+    <p class="widget-help">เลือกเมนู เพื่อดูว่าวัตถุดิบไหนเป็นสัดส่วนต้นทุนมากที่สุด และถ้าราคาวัตถุดิบนั้นขยับ X% ต้นทุนเมนูนี้ขยับเท่าไหร่</p>
+    <div class="inline-fields">
+      <label class="inline-field">เมนู <select class="mb-menu">${list
+        .map((m) => `<option value="${esc(m.name)}">${esc(m.name)} — ${esc(fmtValue(m.total, 'currency'))}</option>`)
+        .join('')}</select></label>
+      <label class="inline-field">วัตถุดิบเปลี่ยนราคา (X%) <input type="number" class="mb-x" value="${Number(cfg.default_pct) || 10}" step="1"></label>
+    </div>
+    <p class="widget-foot mb-summary"></p>
+    <div class="bar-list mb-list"></div>`;
+  const select = body.querySelector('.mb-menu');
+  const input = body.querySelector('.mb-x');
+  const draw = () => {
+    const menu = list.find((m) => m.name === select.value) || list[0];
+    if (!menu) return;
+    const ings = Object.entries(menu.ingredients)
+      .map(([name, cost]) => ({ name, cost, sharePct: menu.total ? (cost / menu.total) * 100 : 0 }))
+      .sort((a, b) => b.cost - a.cost)
+      .slice(0, cfg.top_n || 10);
+    body.querySelector('.mb-summary').textContent = `ต้นทุนรวมเมนูนี้ ${fmtValue(menu.total, 'currency')} · ใช้วัตถุดิบ ${Object.keys(menu.ingredients).length} รายการ`;
+    body.querySelector('.mb-list').innerHTML = sensitivityRows(ings, Number(input.value) || 0, 'sharePct', (i) => `${i.name} (${i.sharePct.toFixed(1)}% ของต้นทุน)`);
+  };
+  select.addEventListener('change', draw);
+  input.addEventListener('input', draw);
+  draw();
+}
+
+const RENDERERS = {
+  kpi: renderKpi,
+  bar: renderBar,
+  line: renderLine,
+  table: renderTable,
+  sensitivity: renderSensitivity,
+  menu_breakdown: renderMenuBreakdown,
+};
+
+// ---------- change password ----------
 el('open-password-btn').addEventListener('click', () => el('password-modal').classList.remove('hidden'));
 el('close-password-btn').addEventListener('click', () => el('password-modal').classList.add('hidden'));
 el('password-modal-form').addEventListener('submit', async (e) => {
@@ -1134,10 +836,7 @@ el('password-modal-form').addEventListener('submit', async (e) => {
   try {
     await api('/api/auth/change-password', {
       method: 'POST',
-      body: JSON.stringify({
-        current_password: el('current-password').value,
-        new_password: el('new-password').value,
-      }),
+      body: JSON.stringify({ current_password: el('current-password').value, new_password: el('new-password').value }),
     });
     el('password-modal').classList.add('hidden');
     el('password-modal-form').reset();
@@ -1147,200 +846,4 @@ el('password-modal-form').addEventListener('submit', async (e) => {
   }
 });
 
-// ---------- Settings modal (admin) — FMH API key only ----------
-el('open-settings-btn').addEventListener('click', async () => {
-  el('settings-modal').classList.remove('hidden');
-  await loadFmhKeyStatus();
-});
-el('close-settings-btn').addEventListener('click', () => el('settings-modal').classList.add('hidden'));
-
-// ---------- Manage Users modal (admin) — separate menu from Settings ----------
-el('open-manage-users-btn').addEventListener('click', async () => {
-  el('manage-users-modal').classList.remove('hidden');
-  await loadUserList();
-});
-el('close-manage-users-btn').addEventListener('click', () => el('manage-users-modal').classList.add('hidden'));
-
-// ---------- Settings modal: FMH API key ----------
-async function loadFmhKeyStatus() {
-  const statusEl = el('fmh-status');
-  statusEl.textContent = 'กำลังโหลดสถานะ...';
-  try {
-    const { configured, updated_at } = await api('/api/settings/fmh-key');
-    statusEl.textContent = configured
-      ? `ตั้งค่าแล้ว (อัปเดตล่าสุด: ${new Date(updated_at).toLocaleString('th-TH')})`
-      : 'ยังไม่ได้ตั้งค่า FMH API Key';
-  } catch (err) {
-    statusEl.textContent = `โหลดสถานะไม่สำเร็จ: ${err.message}`;
-  }
-}
-
-el('fmh-key-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  el('fmh-key-error').classList.add('hidden');
-  el('fmh-key-success').classList.add('hidden');
-  try {
-    const { message } = await api('/api/settings/fmh-key', {
-      method: 'POST',
-      body: JSON.stringify({ api_key: el('fmh-api-key').value.trim() }),
-    });
-    el('fmh-key-form').reset();
-    el('fmh-key-success').textContent = message;
-    el('fmh-key-success').classList.remove('hidden');
-    await loadFmhKeyStatus();
-  } catch (err) {
-    el('fmh-key-error').textContent = err.message;
-    el('fmh-key-error').classList.remove('hidden');
-  }
-});
-
-async function loadUserList() {
-  const [{ users }, { dashboards: allDashboards }] = await Promise.all([
-    api('/api/users'),
-    api('/api/dashboards/admin/all'),
-  ]);
-  const listEl = el('user-list');
-  listEl.innerHTML = '';
-  const isSelf = (u) => state.user && u.id === state.user.id;
-
-  users.forEach((u) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'user-row-wrap';
-
-    const row = document.createElement('div');
-    row.className = 'user-row';
-    row.innerHTML = `
-      <div>
-        <div><strong>${u.display_name}</strong> <span class="badge ${u.role === 'admin' ? 'up' : 'down'}">${u.role}</span></div>
-        <div class="meta">${u.email}${u.must_change_password ? ' · รอเปลี่ยนรหัสผ่านครั้งแรก' : ''}</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <select class="user-role-select" data-id="${u.id}" ${isSelf(u) ? 'disabled title="เปลี่ยนสิทธิ์ตัวเองไม่ได้"' : ''}>
-          <option value="client" ${u.role === 'client' ? 'selected' : ''}>Client</option>
-          <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
-        </select>
-        <button class="btn small ghost user-tabs-toggle" data-id="${u.id}">Dashboard ▾</button>
-        <button class="btn small danger" data-id="${u.id}" ${isSelf(u) ? 'disabled title="ลบตัวเองไม่ได้"' : ''}>ลบ</button>
-      </div>
-    `;
-    row.querySelector('.user-role-select').addEventListener('change', async (e) => {
-      const newRole = e.target.value;
-      try {
-        await api(`/api/users/${u.id}/role`, {
-          method: 'PATCH',
-          body: JSON.stringify({ role: newRole }),
-        });
-        loadUserList();
-      } catch (err) {
-        alert(`เปลี่ยนสิทธิ์ไม่สำเร็จ: ${err.message}`);
-        e.target.value = u.role;
-      }
-    });
-    row.querySelector('button.danger').addEventListener('click', async () => {
-      if (!confirm(`ลบผู้ใช้งาน ${u.email}?`)) return;
-      await api(`/api/users/${u.id}`, { method: 'DELETE' });
-      loadUserList();
-    });
-
-    // ---- Per-user dashboard (tab) access ----
-    const tabsPanel = document.createElement('div');
-    tabsPanel.className = 'user-tabs-panel hidden';
-
-    if (u.role === 'admin') {
-      tabsPanel.innerHTML = '<p class="helper-text" style="margin:8px 0 0;">Admin เห็นทุกแท็บเสมอ ไม่ต้องกำหนด</p>';
-    } else if (!allDashboards.length) {
-      tabsPanel.innerHTML = '<p class="helper-text" style="margin:8px 0 0;">ยังไม่มี dashboard ในระบบ</p>';
-    } else {
-      const checklistWrap = document.createElement('div');
-      checklistWrap.className = 'user-tabs-checklist';
-      allDashboards.forEach((d) => {
-        const label = document.createElement('label');
-        label.className = 'user-tab-checkbox';
-        label.innerHTML = `<input type="checkbox" value="${d.id}"> ${d.display_name}${d.active ? '' : ' (ปิดใช้งาน)'}`;
-        checklistWrap.appendChild(label);
-      });
-      tabsPanel.appendChild(checklistWrap);
-
-      const saveRow = document.createElement('div');
-      saveRow.className = 'user-tabs-save-row';
-      saveRow.innerHTML = `
-        <span class="user-tabs-dirty-note hidden">มีการเปลี่ยนแปลงที่ยังไม่บันทึก</span>
-        <button type="button" class="btn small primary user-tabs-save" disabled>บันทึก</button>
-      `;
-      tabsPanel.appendChild(saveRow);
-
-      const dirtyNote = saveRow.querySelector('.user-tabs-dirty-note');
-      const saveBtn = saveRow.querySelector('.user-tabs-save');
-
-      checklistWrap.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
-        cb.addEventListener('change', () => {
-          dirtyNote.classList.remove('hidden');
-          saveBtn.disabled = false;
-        });
-      });
-
-      saveBtn.addEventListener('click', async () => {
-        const checkedIds = Array.from(checklistWrap.querySelectorAll('input[type="checkbox"]:checked')).map((c) =>
-          Number(c.value)
-        );
-        saveBtn.disabled = true;
-        saveBtn.textContent = 'กำลังบันทึก...';
-        try {
-          await api(`/api/users/${u.id}/dashboard-access`, {
-            method: 'PUT',
-            body: JSON.stringify({ dashboard_ids: checkedIds }),
-          });
-          dirtyNote.classList.add('hidden');
-          saveBtn.textContent = 'บันทึกแล้ว ✓';
-          setTimeout(() => {
-            saveBtn.textContent = 'บันทึก';
-          }, 1500);
-        } catch (err) {
-          alert(`บันทึกไม่สำเร็จ: ${err.message}`);
-          saveBtn.disabled = false;
-          saveBtn.textContent = 'บันทึก';
-        }
-      });
-    }
-
-    let loadedAccess = false;
-    row.querySelector('.user-tabs-toggle').addEventListener('click', async () => {
-      const willShow = tabsPanel.classList.contains('hidden');
-      tabsPanel.classList.toggle('hidden');
-      if (willShow && u.role !== 'admin' && !loadedAccess) {
-        loadedAccess = true;
-        const { dashboard_ids } = await api(`/api/users/${u.id}/dashboard-access`);
-        tabsPanel.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
-          cb.checked = dashboard_ids.includes(Number(cb.value));
-        });
-      }
-    });
-
-    wrap.appendChild(row);
-    wrap.appendChild(tabsPanel);
-    listEl.appendChild(wrap);
-  });
-}
-
-el('add-user-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  el('add-user-error').classList.add('hidden');
-  try {
-    await api('/api/users', {
-      method: 'POST',
-      body: JSON.stringify({
-        display_name: el('new-user-name').value.trim(),
-        email: el('new-user-email').value.trim(),
-        temp_password: el('new-user-password').value,
-        role: el('new-user-role').value,
-      }),
-    });
-    el('add-user-form').reset();
-    loadUserList();
-  } catch (err) {
-    el('add-user-error').textContent = err.message;
-    el('add-user-error').classList.remove('hidden');
-  }
-});
-
-boot();
+document.addEventListener('DOMContentLoaded', boot);

@@ -4,12 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>KSS Dashboard</title>
-<meta name="description" content="KSS Platform — internal dashboard hub">
+<meta name="description" content="KSS Platform — dashboard hub">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%23BE4229%22/><text x=%2250%22 y=%2265%22 font-size=%2255%22 text-anchor=%22middle%22 fill=%22white%22 font-family=%22sans-serif%22>K</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Kanit:wght@600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Kanit:wght@400;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<!-- defer: a slow or blocked CDN must never hold up the page; line charts
+     check for window.Chart and show a message if it didn't load. -->
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
 <body>
 
@@ -52,81 +54,64 @@
 <!-- APP SHELL -->
 <div id="app-shell" class="hidden">
   <div class="topbar">
-    <div class="brand">KSS <span>Dashboard</span></div>
+    <div class="topbar-left">
+      <div class="brand">KSS <span>Dashboard</span></div>
+      <!-- KSS staff: pick which company's dashboards to view -->
+      <label class="company-picker-wrap hidden" id="company-picker-wrap">
+        <span class="sr-only">บริษัท</span>
+        <select id="company-picker" aria-label="เลือกบริษัท"></select>
+      </label>
+      <span id="company-name" class="company-name hidden"></span>
+    </div>
     <div class="topbar-actions">
-      <span id="user-display-name" style="font-size:13px;color:#6b7268;margin-right:8px;"></span>
-      <button id="open-password-btn" class="icon-btn" title="เปลี่ยนรหัสผ่าน" aria-label="เปลี่ยนรหัสผ่าน">🔑</button>
+      <span id="user-display-name" class="user-display-name"></span>
+      <button id="open-admin-btn" class="btn small ghost hidden" title="KSS Admin Console">🏢 Admin Console</button>
       <button id="open-manage-users-btn" class="icon-btn hidden" title="จัดการผู้ใช้งาน" aria-label="จัดการผู้ใช้งาน">👥</button>
-      <button id="open-settings-btn" class="icon-btn hidden" title="ตั้งค่า" aria-label="ตั้งค่า">⚙️</button>
+      <button id="open-settings-btn" class="icon-btn hidden" title="ตั้งค่า FMH API" aria-label="ตั้งค่า">⚙️</button>
+      <button id="open-password-btn" class="icon-btn" title="เปลี่ยนรหัสผ่าน" aria-label="เปลี่ยนรหัสผ่าน">🔑</button>
       <button id="logout-btn" class="icon-btn" title="ออกจากระบบ" aria-label="ออกจากระบบ">⏻</button>
     </div>
   </div>
 
-  <div id="tabs" class="tabs" role="tablist"></div>
-  <div id="tab-panel-wrap" class="tab-panel-wrap"></div>
+  <!-- Dashboard view -->
+  <div id="dashboard-view">
+    <div id="tabs" class="tabs" role="tablist"></div>
+    <div id="tab-panel-wrap" class="tab-panel-wrap"></div>
+  </div>
+
+  <!-- KSS Internal Admin Console (kss_superadmin only) -->
+  <div id="admin-view" class="admin-view hidden">
+    <aside class="admin-sidebar">
+      <div class="admin-side-title">บริษัทลูกค้า</div>
+      <div id="admin-company-list"></div>
+      <button id="admin-add-company-btn" class="btn small ghost admin-add-btn">+ เพิ่มบริษัท</button>
+      <div class="admin-side-title">ระบบ</div>
+      <button class="admin-nav-item" data-view="catalog">🧩 Widget Catalog</button>
+      <button class="admin-nav-item" data-view="staff">👤 ทีม KSS</button>
+    </aside>
+    <main id="admin-main" class="admin-main"></main>
+  </div>
 </div>
 
-<!-- SETTINGS MODAL (admin only) — platform-wide config (currently just the FMH API key) -->
+<!-- SETTINGS MODAL (company admin) — this company's FMH API key -->
 <div id="settings-modal" class="modal-overlay hidden">
   <div class="modal-card">
-    <h2>ตั้งค่า</h2>
-
-    <div id="settings-fmh-panel">
-      <h3 style="font-size:14px;margin-bottom:10px;">FMH API</h3>
-      <p class="helper-text" style="margin-top:0;">
-        API Key จะถูกเข้ารหัสก่อนเก็บลงฐานข้อมูล และจะไม่แสดงค่าจริงอีกหลังบันทึกแล้ว
-      </p>
-      <div id="fmh-status" style="margin-bottom:14px;font-size:13px;color:#6b7268;"></div>
-      <div id="fmh-key-error" class="error-msg hidden"></div>
-      <div id="fmh-key-success" class="error-msg hidden" style="background:#e3f0e6;color:#2f6b3f;"></div>
-      <form id="fmh-key-form">
-        <div class="field">
-          <label for="fmh-api-key">FMH API Key</label>
-          <input id="fmh-api-key" type="password" placeholder="fmh_rpt_..." autocomplete="off">
-        </div>
-        <button type="submit" class="btn primary">บันทึก Key</button>
-      </form>
-    </div>
-
+    <h2>ตั้งค่า FMH API</h2>
+    <p class="helper-text" style="margin-top:0;">
+      API Key จะถูกเข้ารหัสก่อนเก็บลงฐานข้อมูล และจะไม่แสดงค่าจริงอีกหลังบันทึกแล้ว
+    </p>
+    <div id="fmh-key-panel"></div>
     <div class="modal-close-row">
       <button class="btn ghost" id="close-settings-btn">ปิด</button>
     </div>
   </div>
 </div>
 
-<!-- MANAGE USERS MODAL (admin only) — accounts, roles, and per-user tab access -->
+<!-- MANAGE USERS MODAL (company admin) -->
 <div id="manage-users-modal" class="modal-overlay hidden">
-  <div class="modal-card" style="max-width:560px;">
+  <div class="modal-card" style="max-width:600px;">
     <h2>จัดการผู้ใช้งาน</h2>
-
-    <div id="user-list"></div>
-
-    <hr style="border:none;border-top:1px solid #f0ece0;margin:16px 0;">
-    <h3 style="font-size:14px;margin-bottom:10px;">เพิ่มผู้ใช้งานใหม่</h3>
-    <div id="add-user-error" class="error-msg hidden"></div>
-    <form id="add-user-form">
-      <div class="field">
-        <label for="new-user-name">ชื่อที่แสดง</label>
-        <input id="new-user-name" required>
-      </div>
-      <div class="field">
-        <label for="new-user-email">อีเมล</label>
-        <input id="new-user-email" type="email" required>
-      </div>
-      <div class="field">
-        <label for="new-user-password">รหัสผ่านชั่วคราว</label>
-        <input id="new-user-password" type="password" required minlength="8">
-      </div>
-      <div class="field">
-        <label for="new-user-role">สิทธิ์</label>
-        <select id="new-user-role">
-          <option value="client">Client</option>
-          <option value="admin">Admin</option>
-        </select>
-      </div>
-      <button type="submit" class="btn primary">เพิ่มผู้ใช้งาน</button>
-    </form>
-
+    <div id="user-manager"></div>
     <div class="modal-close-row">
       <button class="btn ghost" id="close-manage-users-btn">ปิด</button>
     </div>
@@ -156,5 +141,6 @@
 </div>
 
 <script src="/app.js"></script>
+<script src="/admin.js"></script>
 </body>
 </html>

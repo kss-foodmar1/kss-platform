@@ -1,106 +1,79 @@
-// Seeds one admin account, one demo client account, and the dashboard/report
-// catalog for the demo. Safe to re-run (uses INSERT ... ON DUPLICATE KEY).
+// Runs on every boot, after db/migrate.js. Safe to re-run.
+//
+//   - KSS superadmin account (admin@kinsupplyandservice.com)
+//   - "Demo Co": the sales-demo company (status 'demo', not billed). Sales
+//     shows it by switching to it from the company picker. It gets two
+//     showcase dashboards the first time only — after that the team curates
+//     it in the Admin Console like any other company. Its FMH key (the FMH
+//     demo account's key) is entered in the Admin Console, never in code.
+//   - demo@kinsupplyandservice.com: a client login for Demo Co, created only if
+//     that email doesn't exist yet (on production it already exists from the
+//     single-tenant days and stays wherever the migration put it).
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const pool = require('./pool');
+const { syncCatalog, addTemplatesToDashboard } = require('../lib/widgetCatalog');
+
+const DEMO_COMPANY_NAME = 'Demo Co';
+
+const DEMO_DASHBOARDS = [
+  {
+    name: 'ภาพรวมการจัดซื้อ',
+    description: 'PO / GRN / Invoice — ส่วนต่าง, supplier และหมวดหมู่',
+    templates: ['pa_kpis', 'pa_trend', 'pa_attention_products', 'pa_top_suppliers', 'pa_category_variance'],
+  },
+  {
+    name: 'ต้นทุนเมนู',
+    description: 'วัตถุดิบไหนคุมต้นทุน และผลกระทบถ้าราคาขยับ',
+    templates: ['mc_kpis', 'mc_top_ingredients', 'mc_top_menus', 'mc_sensitivity', 'mc_menu_breakdown'],
+  },
+];
 
 async function main() {
   const adminPassword = process.env.SEED_ADMIN_PASSWORD || 'ChangeMe123!';
   const demoPassword = process.env.SEED_DEMO_PASSWORD || 'DemoPass123!';
 
-  const adminHash = await bcrypt.hash(adminPassword, 10);
-  const demoHash = await bcrypt.hash(demoPassword, 10);
-
   await pool.query(
-    `INSERT INTO users (email, password_hash, display_name, role, must_change_password)
-     VALUES (?, ?, ?, 'admin', FALSE)
+    `INSERT INTO users (email, password_hash, display_name, role, company_id, must_change_password)
+     VALUES (?, ?, ?, 'kss_superadmin', NULL, FALSE)
      ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash)`,
-    ['admin@kinsupplyandservice.com', adminHash, 'KSS Admin']
+    ['admin@kinsupplyandservice.com', await bcrypt.hash(adminPassword, 10), 'KSS Admin']
   );
 
-  await pool.query(
-    `INSERT INTO users (email, password_hash, display_name, role, must_change_password)
-     VALUES (?, ?, ?, 'client', TRUE)
-     ON DUPLICATE KEY UPDATE password_hash = VALUES(password_hash)`,
-    ['demo@kinsupplyandservice.com', demoHash, 'Demo Client']
-  );
+  await syncCatalog();
 
-  await pool.query(
-    `INSERT INTO dashboards (dashboard_key, display_name, sort_order, active)
-     VALUES ('purchase_analysis', 'Purchase Analysis', 1, TRUE)
-     ON DUPLICATE KEY UPDATE display_name = VALUES(display_name)`
-  );
-
-  const [[dash]] = await pool.query(
-    `SELECT id FROM dashboards WHERE dashboard_key = 'purchase_analysis'`
-  );
-
-  await pool.query(
-    `INSERT INTO reports (dashboard_id, report_key, display_name, data_source, sort_order, active)
-     VALUES (?, 'purchase-analysis-visual', 'PO / GRN / Invoice Dashboard', 'FMH', 1, TRUE)
-     ON DUPLICATE KEY UPDATE display_name = VALUES(display_name)`,
-    [dash.id]
-  );
-
-  // Three new dashboards, each backed by a real FMH catalog report (needs the
-  // FMH API key set in Settings — see lib/fmh.js).
-  const newDashboards = [
-    { key: 'cogs', name: 'COGS Analysis', reportKey: 'cogs', reportName: 'Central Kitchen COGS' },
-    { key: 'menu_costing', name: 'Menu Costing Analysis', reportKey: 'menu-ingredient-impact', reportName: 'Ingredient Cost Impact & Price Sensitivity' },
-    { key: 'sales_by_branch', name: 'Sales by Branch', reportKey: 'sales-by-branch', reportName: 'Order Items by Branch' },
-  ];
-
-  for (let i = 0; i < newDashboards.length; i++) {
-    const d = newDashboards[i];
-    await pool.query(
-      `INSERT INTO dashboards (dashboard_key, display_name, sort_order, active)
-       VALUES (?, ?, ?, TRUE)
-       ON DUPLICATE KEY UPDATE display_name = VALUES(display_name)`,
-      [d.key, d.name, i + 2]
+  let [[demoCo]] = await pool.query(`SELECT id FROM companies WHERE status = 'demo' ORDER BY id LIMIT 1`);
+  if (!demoCo) {
+    const [res] = await pool.query(
+      `INSERT INTO companies (name, status, plan_tier) VALUES (?, 'demo', 'growth')`,
+      [DEMO_COMPANY_NAME]
     );
-    const [[row]] = await pool.query(`SELECT id FROM dashboards WHERE dashboard_key = ?`, [d.key]);
-    await pool.query(
-      `INSERT INTO reports (dashboard_id, report_key, display_name, data_source, sort_order, active)
-       VALUES (?, ?, ?, 'FMH', 1, TRUE)
-       ON DUPLICATE KEY UPDATE display_name = VALUES(display_name)`,
-      [row.id, d.reportKey, d.reportName]
-    );
+    demoCo = { id: res.insertId };
+    for (let i = 0; i < DEMO_DASHBOARDS.length; i++) {
+      const d = DEMO_DASHBOARDS[i];
+      const [dash] = await pool.query(
+        `INSERT INTO dashboards (company_id, display_name, description, sort_order) VALUES (?, ?, ?, ?)`,
+        [demoCo.id, d.name, d.description, i + 1]
+      );
+      await addTemplatesToDashboard(pool, dash.insertId, d.templates);
+    }
+    console.log(`Created ${DEMO_COMPANY_NAME} (id ${demoCo.id}) with ${DEMO_DASHBOARDS.length} showcase dashboards.`);
   }
 
-  // Cleanup: an earlier seed created a 'menu-costing' report (raw ingredient
-  // table). It's been replaced by 'cogs-visual' (KPI dashboard) — remove the
-  // stale row so it doesn't show up twice under the same dashboard tab.
-  await pool.query(`DELETE FROM reports WHERE report_key = 'menu-costing'`);
-
-  // Cleanup: the original mock 'price_change' report has been replaced by
-  // 'purchase-analysis-visual' (real FMH purchase_analysis data) — remove the
-  // stale row so it doesn't show up twice under the Purchase Analysis tab.
-  await pool.query(`DELETE FROM reports WHERE report_key = 'price_change'`);
-
-  // Cleanup: Menu Costing Analysis moved from 'cogs-visual' (blocked by an
-  // FMH-side sync issue on the cogs report) to 'menu-ingredient-impact'
-  // (menu_and_ingredients report — ingredient cost impact & price sensitivity).
-  await pool.query(`DELETE FROM reports WHERE report_key = 'cogs-visual'`);
-
-  // Give the two seeded accounts access to every dashboard tab by default,
-  // so nothing regresses now that per-user tab access exists. Admins ignore
-  // this table entirely (they always see everything) — this only matters
-  // for the demo client account. New users created later start with none,
-  // and an admin picks their tabs from Manage Users.
-  const [[demoUser]] = await pool.query(
-    `SELECT id FROM users WHERE email = 'demo@kinsupplyandservice.com'`
-  );
-  const [allDashboards] = await pool.query(`SELECT id FROM dashboards`);
-  for (const d of allDashboards) {
-    await pool.query(
-      `INSERT IGNORE INTO user_dashboard_access (user_id, dashboard_id) VALUES (?, ?)`,
-      [demoUser.id, d.id]
+  const [[existingDemoUser]] = await pool.query(`SELECT id FROM users WHERE email = 'demo@kinsupplyandservice.com'`);
+  if (!existingDemoUser) {
+    const [res] = await pool.query(
+      `INSERT INTO users (email, password_hash, display_name, role, company_id, must_change_password)
+       VALUES (?, ?, 'Demo Client', 'client', ?, TRUE)`,
+      ['demo@kinsupplyandservice.com', await bcrypt.hash(demoPassword, 10), demoCo.id]
     );
+    const [dashes] = await pool.query(`SELECT id FROM dashboards WHERE company_id = ?`, [demoCo.id]);
+    for (const d of dashes) {
+      await pool.query(`INSERT IGNORE INTO user_dashboard_access (user_id, dashboard_id) VALUES (?, ?)`, [res.insertId, d.id]);
+    }
   }
 
   console.log('Seed complete.');
-  console.log(`Admin login: admin@kinsupplyandservice.com / ${adminPassword}`);
-  console.log(`Demo login:  demo@kinsupplyandservice.com / ${demoPassword} (must change password on first login)`);
   process.exit(0);
 }
 

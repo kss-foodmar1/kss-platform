@@ -1,0 +1,752 @@
+// KSS Internal Admin Console (kss_superadmin only), plus two components that
+// are shared with a client's own company_admin:
+//   renderFmhKeyPanel  — enter/remove a company's FMH API key
+//   renderUserManager  — users, roles, passwords, per-user dashboard access
+// Relies on helpers from app.js (el, api, esc, state, isSuper, ...).
+
+// ---------- shared: FMH key panel ----------
+async function renderFmhKeyPanel(container, companyId, onSaved) {
+  const qs = isSuper() ? `?company_id=${companyId}` : '';
+  container.innerHTML = '<p class="muted">กำลังโหลด...</p>';
+  const { configured, updated_at } = await api(`/api/settings/fmh-key${qs}`);
+  container.innerHTML = `
+    <p class="status-line">${
+      configured
+        ? `<span class="dot dot-good" aria-hidden="true"></span> เชื่อมต่อแล้ว · อัปเดตล่าสุด ${esc(fmtDateTime(updated_at))}`
+        : '<span class="dot dot-off" aria-hidden="true"></span> ยังไม่ได้ตั้งค่า FMH API Key'
+    }</p>
+    <div class="form-msg"></div>
+    <form class="inline-form">
+      <input type="password" class="fmh-key-input" placeholder="${configured ? 'ใส่ Key ใหม่เพื่อเปลี่ยน' : 'fmh_rpt_...'}" autocomplete="off" aria-label="FMH API Key">
+      <button type="submit" class="btn small primary">บันทึก Key</button>
+      ${configured ? '<button type="button" class="btn small danger fmh-remove">ลบ Key</button>' : ''}
+    </form>`;
+  const msg = container.querySelector('.form-msg');
+  container.querySelector('form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const { message } = await api(`/api/settings/fmh-key${qs}`, {
+        method: 'POST',
+        body: JSON.stringify({ api_key: container.querySelector('.fmh-key-input').value.trim() }),
+      });
+      await renderFmhKeyPanel(container, companyId, onSaved);
+      container.querySelector('.form-msg').innerHTML = `<div class="ok-msg">${esc(message)}</div>`;
+      if (onSaved) onSaved();
+    } catch (err) {
+      msg.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    }
+  });
+  const remove = container.querySelector('.fmh-remove');
+  if (remove) {
+    remove.addEventListener('click', async () => {
+      if (!confirm('ลบ FMH API Key ของบริษัทนี้? ข้อมูลที่ sync ไว้แล้วยังอยู่ แต่จะไม่อัปเดตอีก')) return;
+      await api(`/api/settings/fmh-key${qs}`, { method: 'DELETE' });
+      await renderFmhKeyPanel(container, companyId, onSaved);
+      if (onSaved) onSaved();
+    });
+  }
+}
+
+// ---------- shared: user manager ----------
+// scope: { companyId } for a company's users, or { kss: true } for KSS staff.
+async function renderUserManager(container, scope) {
+  const qs = scope.kss ? '?company_id=kss' : isSuper() ? `?company_id=${scope.companyId}` : '';
+  container.innerHTML = '<p class="muted">กำลังโหลด...</p>';
+  const [{ users }, dashboards] = await Promise.all([
+    api(`/api/users${qs}`),
+    scope.kss
+      ? Promise.resolve([])
+      : isSuper()
+        ? api(`/api/admin/companies/${scope.companyId}/dashboards`).then((r) => r.dashboards)
+        : api('/api/dashboards').then((r) => r.dashboards),
+  ]);
+  const roleLabel = { kss_superadmin: 'KSS', company_admin: 'Admin บริษัท', client: 'ผู้ใช้งาน' };
+
+  container.innerHTML = `
+    <div class="user-list"></div>
+    <details class="add-user">
+      <summary class="btn small ghost">+ เพิ่มผู้ใช้งาน</summary>
+      <form class="add-user-form">
+        <div class="form-msg"></div>
+        <div class="grid-2">
+          <div class="field"><label>ชื่อที่แสดง</label><input name="display_name" required></div>
+          <div class="field"><label>อีเมล</label><input name="email" type="email" required></div>
+          <div class="field"><label>รหัสผ่านชั่วคราว (≥ 8 ตัว)</label><input name="temp_password" type="text" required minlength="8"></div>
+          ${
+            scope.kss
+              ? ''
+              : `<div class="field"><label>สิทธิ์</label><select name="role"><option value="client">ผู้ใช้งาน (ดูอย่างเดียว)</option><option value="company_admin">Admin บริษัท</option></select></div>`
+          }
+        </div>
+        <button type="submit" class="btn small primary">เพิ่มผู้ใช้งาน</button>
+        <p class="helper-text" style="margin:8px 0 0;">ผู้ใช้ใหม่ต้องเปลี่ยนรหัสผ่านตอนเข้าระบบครั้งแรก</p>
+      </form>
+    </details>`;
+
+  const list = container.querySelector('.user-list');
+  if (!users.length) list.innerHTML = '<p class="muted">ยังไม่มีผู้ใช้งาน</p>';
+  users.forEach((u) => {
+    const self = state.user && u.id === state.user.id;
+    const wrap = document.createElement('div');
+    wrap.className = 'user-row-wrap';
+    wrap.innerHTML = `
+      <div class="user-row">
+        <div>
+          <div><strong>${esc(u.display_name)}</strong> <span class="pill">${esc(roleLabel[u.role] || u.role)}</span></div>
+          <div class="meta">${esc(u.email)}${u.must_change_password ? ' · รอเปลี่ยนรหัสผ่านครั้งแรก' : ''}</div>
+        </div>
+        <div class="user-actions">
+          ${
+            scope.kss
+              ? ''
+              : `<select class="user-role-select" aria-label="สิทธิ์ของ ${esc(u.display_name)}" ${self ? 'disabled' : ''}>
+                   <option value="client" ${u.role === 'client' ? 'selected' : ''}>ผู้ใช้งาน</option>
+                   <option value="company_admin" ${u.role === 'company_admin' ? 'selected' : ''}>Admin บริษัท</option>
+                 </select>
+                 <button type="button" class="btn small ghost toggle-access">Dashboard ▾</button>`
+          }
+          <button type="button" class="btn small ghost toggle-reset">รีเซ็ตรหัส</button>
+          <button type="button" class="btn small danger delete-user" ${self ? 'disabled' : ''}>ลบ</button>
+        </div>
+      </div>
+      <form class="user-subpanel reset-panel hidden">
+        <input type="text" minlength="8" required placeholder="รหัสผ่านชั่วคราวใหม่ (≥ 8 ตัว)" aria-label="รหัสผ่านชั่วคราวใหม่">
+        <button type="submit" class="btn small primary">ตั้งรหัสใหม่</button>
+        <span class="inline-note"></span>
+      </form>
+      <div class="user-subpanel access-panel hidden"></div>`;
+    list.appendChild(wrap);
+
+    const roleSelect = wrap.querySelector('.user-role-select');
+    if (roleSelect) {
+      roleSelect.addEventListener('change', async () => {
+        try {
+          await api(`/api/users/${u.id}/role${qs}`, { method: 'PATCH', body: JSON.stringify({ role: roleSelect.value }) });
+          renderUserManager(container, scope);
+        } catch (err) {
+          alert(`เปลี่ยนสิทธิ์ไม่สำเร็จ: ${err.message}`);
+          roleSelect.value = u.role;
+        }
+      });
+    }
+
+    const resetPanel = wrap.querySelector('.reset-panel');
+    wrap.querySelector('.toggle-reset').addEventListener('click', () => resetPanel.classList.toggle('hidden'));
+    resetPanel.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const note = resetPanel.querySelector('.inline-note');
+      try {
+        await api(`/api/users/${u.id}/reset-password${qs}`, {
+          method: 'POST',
+          body: JSON.stringify({ temp_password: resetPanel.querySelector('input').value }),
+        });
+        note.textContent = 'ตั้งรหัสใหม่แล้ว — ผู้ใช้ต้องเปลี่ยนตอนเข้าระบบ';
+        resetPanel.querySelector('input').value = '';
+      } catch (err) {
+        note.textContent = err.message;
+      }
+    });
+
+    wrap.querySelector('.delete-user').addEventListener('click', async () => {
+      if (!confirm(`ลบผู้ใช้งาน ${u.email}?`)) return;
+      try {
+        await api(`/api/users/${u.id}${qs}`, { method: 'DELETE' });
+        renderUserManager(container, scope);
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+
+    // Per-user dashboard access — changes apply only on an explicit Save.
+    const accessToggle = wrap.querySelector('.toggle-access');
+    if (accessToggle) {
+      const panel = wrap.querySelector('.access-panel');
+      let loaded = false;
+      accessToggle.addEventListener('click', async () => {
+        panel.classList.toggle('hidden');
+        if (loaded || panel.classList.contains('hidden')) return;
+        loaded = true;
+        if (u.role === 'company_admin') {
+          panel.innerHTML = '<p class="helper-text" style="margin:0;">Admin บริษัทเห็นทุก dashboard ของบริษัทเสมอ</p>';
+          return;
+        }
+        if (!dashboards.length) {
+          panel.innerHTML = '<p class="helper-text" style="margin:0;">บริษัทนี้ยังไม่มี dashboard</p>';
+          return;
+        }
+        const { dashboard_ids } = await api(`/api/users/${u.id}/dashboard-access${qs}`);
+        panel.innerHTML = `
+          <div class="user-tabs-checklist">${dashboards
+            .map(
+              (d) =>
+                `<label class="user-tab-checkbox"><input type="checkbox" value="${d.id}" ${dashboard_ids.includes(d.id) ? 'checked' : ''}> ${esc(d.display_name)}</label>`
+            )
+            .join('')}</div>
+          <div class="user-tabs-save-row">
+            <span class="user-tabs-dirty-note hidden">มีการเปลี่ยนแปลงที่ยังไม่บันทึก</span>
+            <button type="button" class="btn small primary user-tabs-save" disabled>บันทึก</button>
+          </div>`;
+        const save = panel.querySelector('.user-tabs-save');
+        const dirty = panel.querySelector('.user-tabs-dirty-note');
+        panel.querySelectorAll('input[type="checkbox"]').forEach((cb) =>
+          cb.addEventListener('change', () => {
+            dirty.classList.remove('hidden');
+            save.disabled = false;
+          })
+        );
+        save.addEventListener('click', async () => {
+          const ids = [...panel.querySelectorAll('input:checked')].map((c) => Number(c.value));
+          save.disabled = true;
+          save.textContent = 'กำลังบันทึก...';
+          try {
+            await api(`/api/users/${u.id}/dashboard-access${qs}`, { method: 'PUT', body: JSON.stringify({ dashboard_ids: ids }) });
+            dirty.classList.add('hidden');
+            save.textContent = 'บันทึกแล้ว ✓';
+            setTimeout(() => (save.textContent = 'บันทึก'), 1500);
+          } catch (err) {
+            alert(`บันทึกไม่สำเร็จ: ${err.message}`);
+            save.disabled = false;
+            save.textContent = 'บันทึก';
+          }
+        });
+      });
+    }
+  });
+
+  const form = container.querySelector('.add-user-form');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(form).entries());
+    try {
+      await api(`/api/users${qs}`, { method: 'POST', body: JSON.stringify(body) });
+      await renderUserManager(container, scope);
+    } catch (err) {
+      form.querySelector('.form-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    }
+  });
+}
+
+// ---------- company_admin modals ----------
+el('open-settings-btn').addEventListener('click', () => {
+  el('settings-modal').classList.remove('hidden');
+  renderFmhKeyPanel(el('fmh-key-panel'), state.user.company_id);
+});
+el('close-settings-btn').addEventListener('click', () => {
+  el('settings-modal').classList.add('hidden');
+  loadDashboards(state.activeDashboardId);
+});
+el('open-manage-users-btn').addEventListener('click', () => {
+  el('manage-users-modal').classList.remove('hidden');
+  renderUserManager(el('user-manager'), { companyId: state.user.company_id });
+});
+el('close-manage-users-btn').addEventListener('click', () => el('manage-users-modal').classList.add('hidden'));
+
+// ================= KSS Internal Admin Console =================
+const adminState = { meta: null, templates: [], selected: null };
+const STATUS_LABEL = { active: 'ใช้งาน', trial: 'ทดลองใช้', suspended: 'ระงับ', demo: 'Demo' };
+const TIER_LABEL = { starter: 'Starter', growth: 'Growth', enterprise: 'Enterprise' };
+const CHART_LABEL = {
+  kpi: 'KPI cards',
+  bar: 'Bar ranking',
+  line: 'Line (ตามเวลา)',
+  table: 'Table',
+  sensitivity: 'Price sensitivity',
+  menu_breakdown: 'Menu breakdown',
+};
+const sourceLabel = (s) => (adminState.meta && adminState.meta.report_sources[s] ? adminState.meta.report_sources[s].label : s);
+
+el('open-admin-btn').addEventListener('click', () => {
+  if (el('admin-view').classList.contains('hidden')) openAdminConsole();
+  else {
+    showDashboardView();
+    loadCompanyPicker(state.viewCompanyId).then(() => loadDashboards(state.activeDashboardId));
+  }
+});
+
+async function openAdminConsole() {
+  destroyCharts();
+  el('dashboard-view').classList.add('hidden');
+  el('admin-view').classList.remove('hidden');
+  el('open-admin-btn').textContent = '← กลับไปดู Dashboard';
+  if (!adminState.meta) adminState.meta = await api('/api/admin/meta');
+  await loadTemplates();
+  await renderAdminCompanyList();
+  if (!adminState.selected) adminState.selected = state.viewCompanyId ? { type: 'company', id: state.viewCompanyId } : { type: 'catalog' };
+  renderAdminMain();
+}
+
+async function loadTemplates() {
+  adminState.templates = (await api('/api/admin/widget-templates')).templates;
+}
+
+async function renderAdminCompanyList() {
+  const { companies } = await api('/api/admin/companies');
+  state.companies = companies;
+  const list = el('admin-company-list');
+  list.innerHTML = companies
+    .map(
+      (c) => `<button type="button" class="admin-nav-item company-item" data-id="${c.id}">
+        <span class="company-item-name">${esc(c.name)}</span>
+        <span class="company-item-meta">
+          <span class="dot ${c.fmh_configured ? 'dot-good' : 'dot-off'}" title="${c.fmh_configured ? 'เชื่อม FMH แล้ว' : 'ยังไม่ได้ใส่ FMH key'}"></span>
+          ${esc(STATUS_LABEL[c.status] || c.status)} · ${c.dashboard_count} dashboards
+        </span>
+      </button>`
+    )
+    .join('');
+  list.querySelectorAll('.company-item').forEach((b) =>
+    b.addEventListener('click', () => {
+      adminState.selected = { type: 'company', id: Number(b.dataset.id) };
+      renderAdminMain();
+    })
+  );
+  markActiveNav();
+}
+
+function markActiveNav() {
+  const sel = adminState.selected || {};
+  document.querySelectorAll('#admin-view .admin-nav-item').forEach((b) => {
+    const active = b.dataset.id ? sel.type === 'company' && Number(b.dataset.id) === sel.id : b.dataset.view === sel.type;
+    b.classList.toggle('active', !!active);
+  });
+}
+
+document.querySelectorAll('#admin-view .admin-nav-item[data-view]').forEach((b) =>
+  b.addEventListener('click', () => {
+    adminState.selected = { type: b.dataset.view };
+    renderAdminMain();
+  })
+);
+
+el('admin-add-company-btn').addEventListener('click', () => {
+  adminState.selected = { type: 'new-company' };
+  renderAdminMain();
+});
+
+function renderAdminMain() {
+  markActiveNav();
+  const sel = adminState.selected || {};
+  const main = el('admin-main');
+  main.scrollTop = 0;
+  if (sel.type === 'company') return renderCompanyDetail(main, sel.id);
+  if (sel.type === 'new-company') return renderNewCompany(main);
+  if (sel.type === 'catalog') return renderCatalog(main);
+  if (sel.type === 'staff') {
+    main.innerHTML = `<h1 class="admin-h1">ทีม KSS</h1>
+      <p class="muted">บัญชีทีม KSS เห็นทุกบริษัทและใช้ Admin Console ได้</p>
+      <section class="admin-card"><div class="staff-users"></div></section>`;
+    return renderUserManager(main.querySelector('.staff-users'), { kss: true });
+  }
+}
+
+function tierStatusSelects(company = {}) {
+  const meta = adminState.meta;
+  return `
+    <div class="field"><label>สถานะ</label><select name="status">${meta.statuses
+      .map((s) => `<option value="${s}" ${company.status === s ? 'selected' : ''}>${esc(STATUS_LABEL[s] || s)}</option>`)
+      .join('')}</select></div>
+    <div class="field"><label>Plan tier</label><select name="plan_tier">${meta.tiers
+      .map((t) => `<option value="${t}" ${company.plan_tier === t ? 'selected' : ''}>${esc(TIER_LABEL[t] || t)}</option>`)
+      .join('')}</select></div>`;
+}
+
+function renderNewCompany(main) {
+  main.innerHTML = `
+    <h1 class="admin-h1">เพิ่มบริษัทใหม่</h1>
+    <section class="admin-card">
+      <form class="new-company-form">
+        <div class="form-msg"></div>
+        <div class="grid-3">
+          <div class="field"><label>ชื่อบริษัท</label><input name="name" required></div>
+          ${tierStatusSelects({ status: 'trial', plan_tier: 'starter' })}
+        </div>
+        <button type="submit" class="btn primary">สร้างบริษัท</button>
+      </form>
+      <p class="helper-text" style="margin:12px 0 0;">ขั้นต่อไป: สร้าง dashboard + วาง widget, เพิ่ม Admin บริษัทคนแรก แล้วให้ลูกค้าใส่ FMH API Key เอง (หรือใส่ให้ที่นี่)</p>
+    </section>`;
+  const form = main.querySelector('form');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const { id } = await api('/api/admin/companies', { method: 'POST', body: JSON.stringify(Object.fromEntries(new FormData(form).entries())) });
+      adminState.selected = { type: 'company', id };
+      await renderAdminCompanyList();
+      renderAdminMain();
+    } catch (err) {
+      form.querySelector('.form-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    }
+  });
+}
+
+async function renderCompanyDetail(main, companyId) {
+  main.innerHTML = '<p class="muted">กำลังโหลด...</p>';
+  let data;
+  try {
+    data = await api(`/api/admin/companies/${companyId}`);
+  } catch (err) {
+    main.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    return;
+  }
+  const c = data.company;
+  main.innerHTML = `
+    <div class="admin-head">
+      <div>
+        <h1 class="admin-h1">${esc(c.name)}</h1>
+        <p class="muted">${esc(STATUS_LABEL[c.status] || c.status)} · ${esc(TIER_LABEL[c.plan_tier] || c.plan_tier)} · สร้างเมื่อ ${esc(fmtDateTime(c.created_at))}</p>
+      </div>
+      <button type="button" class="btn small view-dashboards">ดู dashboard ของบริษัทนี้ →</button>
+    </div>
+
+    <section class="admin-card">
+      <h2>1. ข้อมูลบริษัท</h2>
+      <form class="company-form">
+        <div class="form-msg"></div>
+        <div class="grid-3">
+          <div class="field"><label>ชื่อบริษัท</label><input name="name" value="${esc(c.name)}" required></div>
+          ${tierStatusSelects(c)}
+        </div>
+        <button type="submit" class="btn small primary">บันทึก</button>
+      </form>
+    </section>
+
+    <section class="admin-card">
+      <h2>2. FMH API Key</h2>
+      <p class="helper-text" style="margin-top:0;">ปกติให้ Admin บริษัทของลูกค้าใส่ Key เองผ่านปุ่ม ⚙️ — ใส่แทนได้ที่นี่ในกรณีจำเป็น (เช่น Demo Co)</p>
+      <div class="fmh-panel"></div>
+      <div class="sync-block"></div>
+    </section>
+
+    <section class="admin-card">
+      <h2>3. Dashboards &amp; Widgets</h2>
+      <div class="composer"></div>
+    </section>
+
+    <section class="admin-card">
+      <h2>4. ผู้ใช้งาน</h2>
+      <div class="company-users"></div>
+    </section>`;
+
+  main.querySelector('.view-dashboards').addEventListener('click', () => viewCompanyDashboards(companyId));
+  const form = main.querySelector('.company-form');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api(`/api/admin/companies/${companyId}`, { method: 'PATCH', body: JSON.stringify(Object.fromEntries(new FormData(form).entries())) });
+      await renderAdminCompanyList();
+      renderCompanyDetail(main, companyId);
+    } catch (err) {
+      form.querySelector('.form-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    }
+  });
+
+  const refreshSyncBlock = async () => {
+    const block = main.querySelector('.sync-block');
+    const { company, sync_status } = await api(`/api/admin/companies/${companyId}`);
+    block.innerHTML = `
+      <div class="sync-head">
+        <strong>ข้อมูลที่ sync ไว้</strong>
+        ${company.fmh_configured ? '<button type="button" class="btn small ghost sync-now">Sync ตอนนี้</button>' : ''}
+      </div>
+      ${
+        sync_status.length
+          ? `<table class="mini-table"><thead><tr><th>Report source</th><th class="num">แถว</th><th>Sync ล่าสุด</th></tr></thead><tbody>${sync_status
+              .map((s) => `<tr><td>${esc(sourceLabel(s.cache_key))}</td><td class="num">${Number(s.rows_cached).toLocaleString('th-TH')}</td><td>${esc(fmtDateTime(s.synced_at))}</td></tr>`)
+              .join('')}</tbody></table>`
+          : '<p class="muted">ยังไม่มีข้อมูล — จะ sync เฉพาะ report source ที่มี widget ใช้งาน</p>'
+      }
+      <div class="sync-result"></div>`;
+    const btn = block.querySelector('.sync-now');
+    if (btn) {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = 'กำลัง sync...';
+        try {
+          const { results } = await api(`/api/admin/companies/${companyId}/sync`, { method: 'POST' });
+          const failed = Object.entries(results).filter(([, r]) => !r.ok);
+          await refreshSyncBlock();
+          block.querySelector('.sync-result').innerHTML = failed.length
+            ? `<div class="error-msg">${failed.map(([s, r]) => `${esc(sourceLabel(s))}: ${esc(r.error)}`).join('<br>')}</div>`
+            : Object.keys(results).length
+              ? '<div class="ok-msg">Sync สำเร็จ</div>'
+              : '<p class="muted">ยังไม่มี widget ที่ต้องใช้ข้อมูล</p>';
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = 'Sync ตอนนี้';
+          block.querySelector('.sync-result').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+        }
+      });
+    }
+  };
+
+  renderFmhKeyPanel(main.querySelector('.fmh-panel'), companyId, async () => {
+    await renderAdminCompanyList();
+    setTimeout(refreshSyncBlock, 1500); // first sync runs in the background
+  });
+  refreshSyncBlock();
+  renderComposer(main.querySelector('.composer'), companyId);
+  renderUserManager(main.querySelector('.company-users'), { companyId });
+}
+
+// ---------- dashboard composer ----------
+function templateOptions() {
+  const byCat = {};
+  adminState.templates
+    .filter((t) => t.active)
+    .forEach((t) => {
+      (byCat[t.category] = byCat[t.category] || []).push(t);
+    });
+  return Object.entries(byCat)
+    .map(
+      ([cat, list]) =>
+        `<optgroup label="${esc(cat)}">${list
+          .map((t) => `<option value="${t.id}">${esc(t.name)} — ${esc(CHART_LABEL[t.chart_type] || t.chart_type)}</option>`)
+          .join('')}</optgroup>`
+    )
+    .join('');
+}
+
+async function renderComposer(container, companyId) {
+  const { dashboards } = await api(`/api/admin/companies/${companyId}/dashboards`);
+  container.innerHTML = `
+    <div class="composer-list"></div>
+    <form class="inline-form new-dash-form">
+      <input name="display_name" required placeholder="ชื่อ dashboard ใหม่ เช่น ภาพรวมผู้บริหาร" aria-label="ชื่อ dashboard ใหม่">
+      <input name="description" placeholder="คำอธิบาย (ไม่บังคับ)" aria-label="คำอธิบาย dashboard">
+      <button type="submit" class="btn small primary">+ สร้าง dashboard</button>
+    </form>`;
+  const list = container.querySelector('.composer-list');
+  if (!dashboards.length) list.innerHTML = '<p class="muted">ยังไม่มี dashboard</p>';
+
+  dashboards.forEach((d, idx) => {
+    const block = document.createElement('div');
+    block.className = 'composer-dash';
+    block.innerHTML = `
+      <div class="composer-dash-head">
+        <div class="order-btns">
+          <button type="button" class="icon-mini move-dash" data-dir="-1" ${idx === 0 ? 'disabled' : ''} aria-label="เลื่อนขึ้น">▲</button>
+          <button type="button" class="icon-mini move-dash" data-dir="1" ${idx === dashboards.length - 1 ? 'disabled' : ''} aria-label="เลื่อนลง">▼</button>
+        </div>
+        <form class="dash-meta-form">
+          <input name="display_name" value="${esc(d.display_name)}" required aria-label="ชื่อ dashboard">
+          <input name="description" value="${esc(d.description || '')}" placeholder="คำอธิบาย" aria-label="คำอธิบาย">
+          <button type="submit" class="btn small ghost">บันทึกชื่อ</button>
+        </form>
+        <div class="composer-dash-actions">
+          <button type="button" class="btn small ghost preview-dash">ดูตัวอย่าง</button>
+          <button type="button" class="btn small danger delete-dash">ลบ</button>
+        </div>
+      </div>
+      <div class="widget-rows"><p class="muted">กำลังโหลด widget...</p></div>
+      <div class="inline-form add-widget-row">
+        <select class="add-widget-select" aria-label="เลือก widget จาก catalog">${templateOptions()}</select>
+        <button type="button" class="btn small primary add-widget">+ วาง widget</button>
+      </div>`;
+    list.appendChild(block);
+
+    block.querySelector('.dash-meta-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await api(`/api/admin/dashboards/${d.id}`, { method: 'PATCH', body: JSON.stringify(Object.fromEntries(new FormData(e.target).entries())) });
+      renderComposer(container, companyId);
+    });
+    block.querySelectorAll('.move-dash').forEach((b) =>
+      b.addEventListener('click', async () => {
+        const ids = dashboards.map((x) => x.id);
+        const j = idx + Number(b.dataset.dir);
+        [ids[idx], ids[j]] = [ids[j], ids[idx]];
+        await api(`/api/admin/companies/${companyId}/dashboard-order`, { method: 'PUT', body: JSON.stringify({ dashboard_ids: ids }) });
+        renderComposer(container, companyId);
+      })
+    );
+    block.querySelector('.preview-dash').addEventListener('click', () => viewCompanyDashboards(companyId, d.id));
+    block.querySelector('.delete-dash').addEventListener('click', async () => {
+      if (!confirm(`ลบ dashboard "${d.display_name}" และ widget ทั้งหมดในนั้น?`)) return;
+      await api(`/api/admin/dashboards/${d.id}`, { method: 'DELETE' });
+      await renderAdminCompanyList();
+      renderComposer(container, companyId);
+    });
+    block.querySelector('.add-widget').addEventListener('click', async () => {
+      const templateId = Number(block.querySelector('.add-widget-select').value);
+      if (!templateId) return;
+      await api(`/api/admin/dashboards/${d.id}/widgets`, { method: 'POST', body: JSON.stringify({ template_id: templateId }) });
+      renderWidgetRows(block.querySelector('.widget-rows'), d.id);
+    });
+    renderWidgetRows(block.querySelector('.widget-rows'), d.id);
+  });
+
+  container.querySelector('.new-dash-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await api(`/api/admin/companies/${companyId}/dashboards`, { method: 'POST', body: JSON.stringify(Object.fromEntries(new FormData(e.target).entries())) });
+    await renderAdminCompanyList();
+    renderComposer(container, companyId);
+  });
+}
+
+async function renderWidgetRows(container, dashboardId) {
+  const { widgets } = await api(`/api/admin/dashboards/${dashboardId}/widgets`);
+  if (!widgets.length) {
+    container.innerHTML = '<p class="muted">ยังไม่มี widget — เลือกจาก catalog ด้านล่าง</p>';
+    return;
+  }
+  container.innerHTML = '';
+  widgets.forEach((w, idx) => {
+    const row = document.createElement('div');
+    row.className = 'widget-row';
+    const size = w.config.size || 'half';
+    row.innerHTML = `
+      <div class="widget-row-main">
+        <div class="order-btns">
+          <button type="button" class="icon-mini move-w" data-dir="-1" ${idx === 0 ? 'disabled' : ''} aria-label="เลื่อนขึ้น">▲</button>
+          <button type="button" class="icon-mini move-w" data-dir="1" ${idx === widgets.length - 1 ? 'disabled' : ''} aria-label="เลื่อนลง">▼</button>
+        </div>
+        <div class="widget-row-text">
+          <strong>${esc(w.title)}</strong>
+          <span class="meta">${esc(w.custom_title ? `${w.template_name} · ` : '')}${esc(CHART_LABEL[w.chart_type] || w.chart_type)} · ${esc(sourceLabel(w.report_source))}</span>
+        </div>
+        <select class="size-select" aria-label="ความกว้าง">
+          <option value="full" ${size === 'full' ? 'selected' : ''}>เต็มแถว</option>
+          <option value="half" ${size === 'half' ? 'selected' : ''}>ครึ่งแถว</option>
+          <option value="third" ${size === 'third' ? 'selected' : ''}>1/3 แถว</option>
+        </select>
+        <button type="button" class="btn small ghost edit-w">ตั้งค่า</button>
+        <button type="button" class="icon-mini danger-mini remove-w" aria-label="ลบ widget">✕</button>
+      </div>
+      <form class="widget-edit hidden">
+        <div class="field"><label>ชื่อที่แสดง (เว้นว่าง = ใช้ชื่อจาก catalog)</label><input name="title" value="${esc(w.custom_title || '')}" placeholder="${esc(w.template_name)}"></div>
+        <div class="field"><label>Config override (JSON — ค่าที่ต่างจาก template เช่น {"top_n": 5})</label>
+          <textarea name="config" rows="4" spellcheck="false">${esc(Object.keys(w.config_overrides).length ? JSON.stringify(w.config_overrides, null, 2) : '')}</textarea></div>
+        <div class="form-msg"></div>
+        <button type="submit" class="btn small primary">บันทึก widget</button>
+      </form>`;
+    container.appendChild(row);
+
+    const save = (title, overrides) =>
+      api(`/api/admin/widgets/${w.id}`, { method: 'PATCH', body: JSON.stringify({ title, config_overrides: overrides }) });
+
+    row.querySelectorAll('.move-w').forEach((b) =>
+      b.addEventListener('click', async () => {
+        const ids = widgets.map((x) => x.id);
+        const j = idx + Number(b.dataset.dir);
+        [ids[idx], ids[j]] = [ids[j], ids[idx]];
+        await api(`/api/admin/dashboards/${dashboardId}/widget-order`, { method: 'PUT', body: JSON.stringify({ widget_ids: ids }) });
+        renderWidgetRows(container, dashboardId);
+      })
+    );
+    row.querySelector('.size-select').addEventListener('change', async (e) => {
+      await save(w.custom_title, { ...w.config_overrides, size: e.target.value });
+      renderWidgetRows(container, dashboardId);
+    });
+    row.querySelector('.edit-w').addEventListener('click', () => row.querySelector('.widget-edit').classList.toggle('hidden'));
+    row.querySelector('.widget-edit').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = e.target;
+      try {
+        await save(f.elements.title.value, f.elements.config.value.trim() || {});
+        renderWidgetRows(container, dashboardId);
+      } catch (err) {
+        f.querySelector('.form-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+      }
+    });
+    row.querySelector('.remove-w').addEventListener('click', async () => {
+      if (!confirm(`เอา widget "${w.title}" ออกจาก dashboard นี้?`)) return;
+      await api(`/api/admin/widgets/${w.id}`, { method: 'DELETE' });
+      renderWidgetRows(container, dashboardId);
+    });
+  });
+}
+
+// ---------- widget catalog ----------
+async function renderCatalog(main) {
+  await loadTemplates();
+  const meta = adminState.meta;
+  main.innerHTML = `
+    <div class="admin-head">
+      <div>
+        <h1 class="admin-h1">Widget Catalog</h1>
+        <p class="muted">คลัง widget กลางที่ใช้ซ้ำได้ทุกบริษัท — แก้ template ที่นี่ มีผลกับทุก dashboard ที่ใช้ template นั้น</p>
+      </div>
+      <button type="button" class="btn small primary new-template">+ สร้าง template ใหม่</button>
+    </div>
+    <div class="template-editor"></div>
+    <section class="admin-card">
+      <div class="table-scroll">
+        <table class="report-table catalog-table">
+          <thead><tr><th>Template</th><th>หมวด</th><th>Report source</th><th>ประเภท</th><th class="num">ใช้อยู่</th><th></th></tr></thead>
+          <tbody>${adminState.templates
+            .map(
+              (t) => `<tr class="${t.active ? '' : 'inactive-row'}">
+                <td><strong>${esc(t.name)}</strong>${t.customized ? ' <span class="pill">แก้ไขแล้ว</span>' : ''}${t.active ? '' : ' <span class="pill">ปิดใช้งาน</span>'}<div class="meta">${esc(t.description || '')}</div></td>
+                <td>${esc(t.category)}</td>
+                <td>${esc(sourceLabel(t.report_source))}</td>
+                <td>${esc(CHART_LABEL[t.chart_type] || t.chart_type)}</td>
+                <td class="num">${t.usage_count}</td>
+                <td class="nowrap">
+                  <button type="button" class="btn small ghost edit-t" data-id="${t.id}">แก้ไข</button>
+                  <button type="button" class="btn small ghost copy-t" data-id="${t.id}">ทำสำเนา</button>
+                  <button type="button" class="btn small ghost toggle-t" data-id="${t.id}">${t.active ? 'ปิด' : 'เปิด'}</button>
+                </td></tr>`
+            )
+            .join('')}</tbody>
+        </table>
+      </div>
+    </section>`;
+
+  const editor = main.querySelector('.template-editor');
+  const openEditor = (tpl, mode) => {
+    const cfg = tpl ? JSON.stringify(JSON.parse(tpl.default_config_json || '{}'), null, 2) : '{\n  "size": "half"\n}';
+    editor.innerHTML = `
+      <section class="admin-card editor-card">
+        <h2>${mode === 'edit' ? `แก้ไข: ${esc(tpl.name)}` : 'Template ใหม่'}</h2>
+        <form class="template-form">
+          <div class="grid-3">
+            <div class="field"><label>ชื่อ</label><input name="name" required value="${esc(tpl ? (mode === 'copy' ? `${tpl.name} (สำเนา)` : tpl.name) : '')}"></div>
+            <div class="field"><label>หมวด</label><input name="category" value="${esc(tpl ? tpl.category : 'General')}"></div>
+            <div class="field"><label>Report source</label><select name="report_source">${Object.entries(meta.report_sources)
+              .map(([k, v]) => `<option value="${k}" ${tpl && tpl.report_source === k ? 'selected' : ''}>${esc(v.label)}</option>`)
+              .join('')}</select></div>
+            <div class="field"><label>ประเภท (renderer)</label><select name="chart_type">${meta.chart_types
+              .map((c) => `<option value="${c}" ${tpl && tpl.chart_type === c ? 'selected' : ''}>${esc(CHART_LABEL[c] || c)}</option>`)
+              .join('')}</select></div>
+            <div class="field span-2"><label>คำอธิบาย</label><input name="description" value="${esc(tpl ? tpl.description || '' : '')}"></div>
+          </div>
+          <div class="field"><label>Default config (JSON)</label><textarea name="default_config" rows="12" spellcheck="false">${esc(cfg)}</textarea></div>
+          <div class="form-msg"></div>
+          <div class="inline-form">
+            <button type="submit" class="btn small primary">บันทึก template</button>
+            <button type="button" class="btn small ghost cancel-edit">ยกเลิก</button>
+          </div>
+        </form>
+      </section>`;
+    editor.querySelector('.cancel-edit').addEventListener('click', () => (editor.innerHTML = ''));
+    editor.querySelector('form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = e.target;
+      const body = Object.fromEntries(new FormData(f).entries());
+      try {
+        JSON.parse(body.default_config);
+      } catch {
+        f.querySelector('.form-msg').innerHTML = '<div class="error-msg">Default config ไม่ใช่ JSON ที่ถูกต้อง</div>';
+        return;
+      }
+      try {
+        if (mode === 'edit') await api(`/api/admin/widget-templates/${tpl.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+        else await api('/api/admin/widget-templates', { method: 'POST', body: JSON.stringify(body) });
+        renderCatalog(main);
+      } catch (err) {
+        f.querySelector('.form-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+      }
+    });
+    editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const byId = (id) => adminState.templates.find((t) => t.id === Number(id));
+  main.querySelector('.new-template').addEventListener('click', () => openEditor(null, 'new'));
+  main.querySelectorAll('.edit-t').forEach((b) => b.addEventListener('click', () => openEditor(byId(b.dataset.id), 'edit')));
+  main.querySelectorAll('.copy-t').forEach((b) => b.addEventListener('click', () => openEditor(byId(b.dataset.id), 'copy')));
+  main.querySelectorAll('.toggle-t').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const t = byId(b.dataset.id);
+      await api(`/api/admin/widget-templates/${t.id}`, { method: 'PATCH', body: JSON.stringify({ active: !t.active }) });
+      renderCatalog(main);
+    })
+  );
+}
