@@ -19,6 +19,28 @@ async function api(path, opts = {}) {
   return data;
 }
 
+// Renders the FMH monthly row-quota status (returned as `meta.quota` on every
+// FMH-backed report response) into the given container. Safe to call with a
+// missing/undefined quota — just clears the container in that case.
+function renderFmhQuota(container, quota) {
+  container.innerHTML = '';
+  if (!quota || typeof quota.monthly_row_limit !== 'number') return;
+  const limit = quota.monthly_row_limit;
+  const used = quota.rows_used ?? 0;
+  const remaining = quota.rows_remaining ?? Math.max(0, limit - used);
+  const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
+  const low = limit ? remaining / limit < 0.1 : false;
+  const resets = quota.resets_at
+    ? new Date(quota.resets_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
+    : null;
+  container.innerHTML = `
+    <div class="fmh-quota">
+      <span>FMH API quota เดือนนี้: ${used.toLocaleString('th-TH')} / ${limit.toLocaleString('th-TH')} แถว (เหลือ ${remaining.toLocaleString('th-TH')})${resets ? ` · รีเซ็ต ${resets}` : ''}</span>
+      <span class="fmh-quota-track"><span class="fmh-quota-fill${low ? ' fmh-quota-fill-low' : ''}" style="width:${pct}%"></span></span>
+    </div>
+  `;
+}
+
 function showScreen(name) {
   el('login-screen').classList.toggle('hidden', name !== 'login');
   el('force-change-screen').classList.toggle('hidden', name !== 'force-change');
@@ -317,6 +339,9 @@ function buildFmhReport(report, config) {
   }
   container.appendChild(filters);
 
+  const quotaWrap = document.createElement('div');
+  container.appendChild(quotaWrap);
+
   const statusWrap = document.createElement('div');
   container.appendChild(statusWrap);
 
@@ -334,9 +359,10 @@ function buildFmhReport(report, config) {
       params.set('end', filters.querySelector('.fmh-end').value);
     }
     try {
-      const { data } = await api(`${config.path}?${params.toString()}`);
+      const { data, meta } = await api(`${config.path}?${params.toString()}`);
       currentData = data;
       statusWrap.innerHTML = '';
+      renderFmhQuota(quotaWrap, meta && meta.quota);
       renderTable();
     } catch (err) {
       currentData = [];
@@ -554,6 +580,9 @@ function buildPurchaseAnalysisDashboard() {
   filters.querySelector('.pa-start').value = monthAgo.toISOString().slice(0, 10);
   container.appendChild(filters);
 
+  const quotaWrap = document.createElement('div');
+  container.appendChild(quotaWrap);
+
   const statusWrap = document.createElement('div');
   container.appendChild(statusWrap);
 
@@ -579,8 +608,9 @@ function buildPurchaseAnalysisDashboard() {
       end: filters.querySelector('.pa-end').value,
     });
     try {
-      const { data } = await api(`/api/reports/purchase-analysis?${params.toString()}`);
+      const { data, meta } = await api(`/api/reports/purchase-analysis?${params.toString()}`);
       statusWrap.innerHTML = '';
+      renderFmhQuota(quotaWrap, meta && meta.quota);
       renderBody(data || []);
     } catch (err) {
       if (err.message && err.message.includes('FMH API key not configured')) {
@@ -785,6 +815,9 @@ function buildMenuIngredientImpactDashboard() {
   filters.innerHTML = `<button class="btn small mi-reload">โหลดข้อมูล</button>`;
   container.appendChild(filters);
 
+  const quotaWrap = document.createElement('div');
+  container.appendChild(quotaWrap);
+
   const statusWrap = document.createElement('div');
   container.appendChild(statusWrap);
 
@@ -802,8 +835,9 @@ function buildMenuIngredientImpactDashboard() {
     bodyWrap.innerHTML = '';
     statusWrap.innerHTML = '<p style="color:#6b7268;">กำลังโหลดข้อมูลจาก FMH...</p>';
     try {
-      const { data } = await api('/api/reports/menu-costing');
+      const { data, meta } = await api('/api/reports/menu-costing');
       statusWrap.innerHTML = '';
+      renderFmhQuota(quotaWrap, meta && meta.quota);
       renderBody(data || []);
     } catch (err) {
       if (err.message && err.message.includes('FMH API key not configured')) {
