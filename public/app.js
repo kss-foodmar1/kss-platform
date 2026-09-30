@@ -1209,11 +1209,55 @@ async function loadUserList() {
     } else if (!allDashboards.length) {
       tabsPanel.innerHTML = '<p class="helper-text" style="margin:8px 0 0;">ยังไม่มี dashboard ในระบบ</p>';
     } else {
+      const checklistWrap = document.createElement('div');
+      checklistWrap.className = 'user-tabs-checklist';
       allDashboards.forEach((d) => {
         const label = document.createElement('label');
         label.className = 'user-tab-checkbox';
         label.innerHTML = `<input type="checkbox" value="${d.id}"> ${d.display_name}${d.active ? '' : ' (ปิดใช้งาน)'}`;
-        tabsPanel.appendChild(label);
+        checklistWrap.appendChild(label);
+      });
+      tabsPanel.appendChild(checklistWrap);
+
+      const saveRow = document.createElement('div');
+      saveRow.className = 'user-tabs-save-row';
+      saveRow.innerHTML = `
+        <span class="user-tabs-dirty-note hidden">มีการเปลี่ยนแปลงที่ยังไม่บันทึก</span>
+        <button type="button" class="btn small primary user-tabs-save" disabled>บันทึก</button>
+      `;
+      tabsPanel.appendChild(saveRow);
+
+      const dirtyNote = saveRow.querySelector('.user-tabs-dirty-note');
+      const saveBtn = saveRow.querySelector('.user-tabs-save');
+
+      checklistWrap.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+        cb.addEventListener('change', () => {
+          dirtyNote.classList.remove('hidden');
+          saveBtn.disabled = false;
+        });
+      });
+
+      saveBtn.addEventListener('click', async () => {
+        const checkedIds = Array.from(checklistWrap.querySelectorAll('input[type="checkbox"]:checked')).map((c) =>
+          Number(c.value)
+        );
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'กำลังบันทึก...';
+        try {
+          await api(`/api/users/${u.id}/dashboard-access`, {
+            method: 'PUT',
+            body: JSON.stringify({ dashboard_ids: checkedIds }),
+          });
+          dirtyNote.classList.add('hidden');
+          saveBtn.textContent = 'บันทึกแล้ว ✓';
+          setTimeout(() => {
+            saveBtn.textContent = 'บันทึก';
+          }, 1500);
+        } catch (err) {
+          alert(`บันทึกไม่สำเร็จ: ${err.message}`);
+          saveBtn.disabled = false;
+          saveBtn.textContent = 'บันทึก';
+        }
       });
     }
 
@@ -1226,17 +1270,6 @@ async function loadUserList() {
         const { dashboard_ids } = await api(`/api/users/${u.id}/dashboard-access`);
         tabsPanel.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
           cb.checked = dashboard_ids.includes(Number(cb.value));
-        });
-        tabsPanel.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
-          cb.addEventListener('change', async () => {
-            const checkedIds = Array.from(tabsPanel.querySelectorAll('input[type="checkbox"]:checked')).map((c) =>
-              Number(c.value)
-            );
-            await api(`/api/users/${u.id}/dashboard-access`, {
-              method: 'PUT',
-              body: JSON.stringify({ dashboard_ids: checkedIds }),
-            });
-          });
         });
       }
     });
