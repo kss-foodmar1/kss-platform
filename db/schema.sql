@@ -52,5 +52,20 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
+-- Cached FMH report data — populated by a daily sync job (lib/fmhCache.js,
+-- cron in server.js) plus on-demand user-triggered refreshes, instead of
+-- every dashboard page view calling FMH directly. This is what keeps FMH's
+-- monthly row quota from being burned by ordinary page traffic. data_json
+-- holds the raw FMH rows for a 90-day rolling window (FMH's own max lookback);
+-- quota_json holds the {monthly_row_limit, rows_used, rows_remaining,
+-- resets_at} object FMH returned on that same call, so the dashboard can show
+-- quota status without a separate FMH call just to check it.
+CREATE TABLE IF NOT EXISTS fmh_report_cache (
+  cache_key VARCHAR(50) PRIMARY KEY,   -- 'cogs', 'menu-costing', 'sales-by-branch', 'purchase-analysis'
+  data_json LONGTEXT NOT NULL,
+  quota_json TEXT,
+  synced_at TIMESTAMP NOT NULL
+);
+
 -- Seed: one admin user + one demo dashboard/report so the app is usable immediately.
 -- Password for both seeded accounts is set by db/seed.js (bcrypt-hashed there, not here).

@@ -22,23 +22,65 @@ async function api(path, opts = {}) {
 // Renders the FMH monthly row-quota status (returned as `meta.quota` on every
 // FMH-backed report response) into the given container. Safe to call with a
 // missing/undefined quota — just clears the container in that case.
-function renderFmhQuota(container, quota) {
+function fmtSyncedAt(iso) {
+  if (!iso) return null;
+  return new Date(iso).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+// Reports are no longer fetched from FMH on every page view — they're synced
+// into our own database once a day (plus on-demand via this refresh button),
+// so a normal page load never touches the FMH quota. This renders both the
+// "data as of [time]" line with its Refresh button, and (when present) the
+// FMH monthly-row-quota bar from the last time that report was actually synced.
+function renderFmhStatusBar(container, { quota, synced_at } = {}, refreshKey, onRefreshed) {
   container.innerHTML = '';
-  if (!quota || typeof quota.monthly_row_limit !== 'number') return;
-  const limit = quota.monthly_row_limit;
-  const used = quota.rows_used ?? 0;
-  const remaining = quota.rows_remaining ?? Math.max(0, limit - used);
-  const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
-  const low = limit ? remaining / limit < 0.1 : false;
-  const resets = quota.resets_at
-    ? new Date(quota.resets_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
-    : null;
-  container.innerHTML = `
-    <div class="fmh-quota">
+  const wrap = document.createElement('div');
+  wrap.className = 'fmh-status-bar';
+
+  const syncedText = fmtSyncedAt(synced_at);
+  const syncLine = document.createElement('div');
+  syncLine.className = 'fmh-sync-line';
+  syncLine.innerHTML = `
+    <span>${syncedText ? `ข้อมูลล่าสุด: ${syncedText}` : 'ยังไม่เคย sync ข้อมูล'}</span>
+    <button type="button" class="btn small ghost fmh-refresh-btn">Refresh ด่วน</button>
+  `;
+  wrap.appendChild(syncLine);
+
+  if (quota && typeof quota.monthly_row_limit === 'number') {
+    const limit = quota.monthly_row_limit;
+    const used = quota.rows_used ?? 0;
+    const remaining = quota.rows_remaining ?? Math.max(0, limit - used);
+    const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
+    const low = limit ? remaining / limit < 0.1 : false;
+    const resets = quota.resets_at
+      ? new Date(quota.resets_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
+      : null;
+    const quotaLine = document.createElement('div');
+    quotaLine.className = 'fmh-quota';
+    quotaLine.innerHTML = `
       <span>FMH API quota เดือนนี้: ${used.toLocaleString('th-TH')} / ${limit.toLocaleString('th-TH')} แถว (เหลือ ${remaining.toLocaleString('th-TH')})${resets ? ` · รีเซ็ต ${resets}` : ''}</span>
       <span class="fmh-quota-track"><span class="fmh-quota-fill${low ? ' fmh-quota-fill-low' : ''}" style="width:${pct}%"></span></span>
-    </div>
-  `;
+    `;
+    wrap.appendChild(quotaLine);
+  }
+
+  container.appendChild(wrap);
+
+  wrap.querySelector('.fmh-refresh-btn').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'กำลัง refresh...';
+    try {
+      await api(`/api/reports/${refreshKey}/refresh`, { method: 'POST' });
+      await onRefreshed();
+    } catch (err) {
+      alert(err.message || 'Refresh ไม่สำเร็จ');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  });
 }
 
 function showScreen(name) {
@@ -363,7 +405,7 @@ function buildFmhReport(report, config) {
       const { data, meta } = await api(`${config.path}?${params.toString()}`);
       currentData = data;
       statusWrap.innerHTML = '';
-      renderFmhQuota(quotaWrap, meta && meta.quota);
+      renderFmhStatusBar(quotaWrap, meta || {}, report.report_key, load);
       renderTable();
     } catch (err) {
       currentData = [];
@@ -611,7 +653,7 @@ function buildPurchaseAnalysisDashboard() {
     try {
       const { data, meta } = await api(`/api/reports/purchase-analysis?${params.toString()}`);
       statusWrap.innerHTML = '';
-      renderFmhQuota(quotaWrap, meta && meta.quota);
+      renderFmhStatusBar(quotaWrap, meta || {}, 'purchase-analysis', load);
       renderBody(data || []);
     } catch (err) {
       if (err.message && err.message.includes('FMH API key not configured')) {
@@ -838,7 +880,7 @@ function buildMenuIngredientImpactDashboard() {
     try {
       const { data, meta } = await api('/api/reports/menu-costing');
       statusWrap.innerHTML = '';
-      renderFmhQuota(quotaWrap, meta && meta.quota);
+      renderFmhStatusBar(quotaWrap, meta || {}, 'menu-costing', load);
       renderBody(data || []);
     } catch (err) {
       if (err.message && err.message.includes('FMH API key not configured')) {

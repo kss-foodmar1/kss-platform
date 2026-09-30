@@ -1,42 +1,74 @@
-// Serves report data. For this demo, price_change is MOCK data shaped
-// exactly like the real FMH purchase_price_history catalog response
-// (verified live via Swagger UI on v10-core-be.foodmarkethub.com). Swapping
-// this for the real FMH call later means replacing generateMockPriceChange()
-// with an authenticated POST to
-// https://v10-core-be.foodmarkethub.com/v1/public/reports/catalog/purchase_price_history
-// — the response shape below already matches, so the frontend does not
-// need to change.
+// Serves report data. price_change is still MOCK data shaped exactly like
+// the real FMH purchase_price_history catalog response.
+//
+// Every other report below is backed by real FMH data, but — unlike the
+// early version of this file — NOT fetched live from FMH on every page view.
+// FMH's monthly row quota gets burned fast once more than one person opens
+// these tabs, so reports are synced into fmh_report_cache once a day (cron in
+// server.js) plus on-demand via the /refresh endpoint below, and every GET
+// here just reads that cache. See lib/fmhCache.js for the sync logic.
 const express = require('express');
 const { requireAuth } = require('../middleware/auth');
-const { callReport } = require('../lib/fmh');
+const pool = require('../db/pool');
+const { getApiKey } = require('../lib/fmh');
+const { FMH_REPORTS, getCached, syncOne } = require('../lib/fmhCache');
 
 const router = express.Router();
 
-// Shared handler for the 3 real-FMH reports below: builds a date_range filter
-// from ?start&end (when the report supports one), calls FMH, and returns the
-// same {data, pagination, meta} shape the frontend already expects.
-function makeFmhReportHandler(reportKey, cardKey, { supportsDateRange = true } = {}) {
+// Per-report field to filter the cached (90-day) rows by, when the frontend
+// sends ?start&end — lets the date-range picker still narrow results without
+// any FMH call. Reports with no per-row date field (cogs is pre-aggregated by
+// FMH server-side, menu_and_ingredients has no date_range support at all)
+// just ignore start/end and return the full cached window.
+const DATE_FIELDS = {
+  'sales-by-branch': 'requested_delivery_date',
+  'purchase-analysis': 'order_date',
+};
+
+// A manual refresh is allowed at most this often per report, so an "open to
+// everyone" refresh button can't burn through the monthly quota the way
+// unrestricted live-on-every-view calls did.
+const REFRESH_COOLDOWN_MS = 30 * 60 * 1000;
+
+function makeCachedReportHandler(cacheKey) {
   return async (req, res) => {
-    const { start, end } = req.query;
-    const filters = {};
-    if (supportsDateRange && start && end) {
-      // Confirmed via FMH's own docs (llms.txt): {"filters":{"date_range":
-      // {"start":"YYYY-MM-DD","end":"YYYY-MM-DD"}}} — NOT start_date/end_date.
-      filters.date_range = { start, end };
-    }
     try {
-      const result = await callReport(reportKey, cardKey, { filters });
+      const cached = await getCached(cacheKey);
+      if (!cached) {
+        // Distinguish "key not set up yet" from "just hasn't synced yet" so
+        // the frontend can point the admin at the right fix.
+        try {
+          await getApiKey();
+        } catch (err) {
+          if (err.code === 'FMH_KEY_MISSING') {
+            return res.status(409).json({ error: err.message, code: err.code });
+          }
+          throw err;
+        }
+        return res.status(409).json({
+          error: 'ยังไม่มีข้อมูล sync — ระบบจะ sync รอบแรกให้อัตโนมัติเร็ว ๆ นี้ หรือกด Refresh ด่วนได้เลย',
+          code: 'FMH_NOT_SYNCED',
+        });
+      }
+
+      let data = cached.data;
+      const dateField = DATE_FIELDS[cacheKey];
+      const { start, end } = req.query;
+      if (dateField && start && end) {
+        data = data.filter((r) => {
+          const d = r[dateField];
+          return d && d >= start && d <= end;
+        });
+      }
+
       res.json({
-        data: result.data || [],
-        pagination: result.pagination || { limit: 500, offset: 0, returned: (result.data || []).length },
-        meta: { mock: false, quota: result.quota || null },
+        data,
+        pagination: { limit: data.length, offset: 0, returned: data.length },
+        meta: { mock: false, quota: cached.quota, synced_at: cached.syncedAt },
       });
     } catch (err) {
-      if (err.code === 'FMH_KEY_MISSING') {
-        return res.status(409).json({ error: err.message, code: err.code });
-      }
-      console.error(`FMH report ${reportKey} failed:`, err.message, err.details || '');
-      res.status(502).json({ error: `FMH API error: ${err.message}`, code: err.code || 'FMH_API_ERROR' });
+      console.error(`Serving cached FMH report "${cacheKey}" failed:`, err.message);
+      res.status(500).json({ error: 'โหลดข้อมูลไม่สำเร็จ' });
     }
   };
 }
@@ -123,24 +155,61 @@ router.get('/price-change/suppliers', requireAuth, async (req, res) => {
   res.json({ suppliers: SUPPLIERS });
 });
 
-// ---------- Real FMH-backed reports ----------
+// ---------- Real FMH-backed reports (served from the daily cache) ----------
 // cogs: Central Kitchen COGS — menu sales/cost/margin across outlets.
-router.get('/cogs', requireAuth, makeFmhReportHandler('cogs', 'cogs_table'));
+router.get('/cogs', requireAuth, makeCachedReportHandler('cogs'));
 
 // menu_and_ingredients: recipe (BOM) composition and implied cost per menu item.
-// No date_range filter on this report per FMH's catalog.
-router.get(
-  '/menu-costing',
-  requireAuth,
-  makeFmhReportHandler('menu_and_ingredients', 'recipe_table', { supportsDateRange: false })
-);
+router.get('/menu-costing', requireAuth, makeCachedReportHandler('menu-costing'));
 
 // order_items_by_branch: outlet ordering patterns (used here as "Sales by Branch"
 // — FMH has no province/geographic breakdown, only branch/department).
-router.get('/sales-by-branch', requireAuth, makeFmhReportHandler('order_items_by_branch', 'oibb_table'));
+router.get('/sales-by-branch', requireAuth, makeCachedReportHandler('sales-by-branch'));
 
-// purchase_analysis: PO/GRN/Invoice comparison — real FMH data (confirmed
-// working via Swagger with no card_key needed for this report).
-router.get('/purchase-analysis', requireAuth, makeFmhReportHandler('purchase_analysis', null));
+// purchase_analysis: PO/GRN/Invoice comparison.
+router.get('/purchase-analysis', requireAuth, makeCachedReportHandler('purchase-analysis'));
+
+// On-demand refresh — open to any logged-in user (not just admins), but only
+// for a report whose dashboard tab they're actually allowed to see, and rate
+// limited per report so it can't be used to burn through the monthly quota.
+router.post('/:cacheKey/refresh', requireAuth, async (req, res) => {
+  const { cacheKey } = req.params;
+  const cfg = FMH_REPORTS[cacheKey];
+  if (!cfg) return res.status(404).json({ error: 'ไม่รู้จักรายงานนี้' });
+
+  if (req.user.role !== 'admin') {
+    const [[access]] = await pool.query(
+      `SELECT 1 FROM user_dashboard_access uda
+       JOIN dashboards d ON d.id = uda.dashboard_id
+       WHERE uda.user_id = ? AND d.dashboard_key = ?`,
+      [req.user.id, cfg.dashboardKey]
+    );
+    if (!access) return res.status(403).json({ error: 'ไม่มีสิทธิ์เข้าถึง dashboard นี้' });
+  }
+
+  const [[row]] = await pool.query(`SELECT synced_at FROM fmh_report_cache WHERE cache_key = ?`, [cacheKey]);
+  if (row) {
+    const elapsedMs = Date.now() - new Date(row.synced_at).getTime();
+    if (elapsedMs < REFRESH_COOLDOWN_MS) {
+      const waitMin = Math.ceil((REFRESH_COOLDOWN_MS - elapsedMs) / 60000);
+      return res.status(429).json({
+        error: `เพิ่งอัปเดตไปเมื่อครู่ รออีก ${waitMin} นาทีถึงจะ refresh ใหม่ได้`,
+        code: 'REFRESH_COOLDOWN',
+        retry_after_seconds: Math.ceil((REFRESH_COOLDOWN_MS - elapsedMs) / 1000),
+      });
+    }
+  }
+
+  try {
+    const { data, quota } = await syncOne(cacheKey);
+    res.json({ ok: true, synced_at: new Date().toISOString(), rows: data.length, quota });
+  } catch (err) {
+    if (err.code === 'FMH_KEY_MISSING') {
+      return res.status(409).json({ error: err.message, code: err.code });
+    }
+    console.error(`Manual refresh failed for "${cacheKey}":`, err.message);
+    res.status(502).json({ error: `FMH API error: ${err.message}`, code: err.code || 'FMH_API_ERROR' });
+  }
+});
 
 module.exports = router;

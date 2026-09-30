@@ -341,6 +341,24 @@ table.report-table tr:hover td { background: #fbf9f2; }
   .panels-3col { grid-template-columns: 1fr; }
 }
 
+.fmh-status-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.fmh-sync-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: #6b7268;
+}
+.fmh-refresh-btn {
+  flex: 0 0 auto;
+}
 .fmh-quota {
   display: flex;
   align-items: center;
@@ -348,7 +366,7 @@ table.report-table tr:hover td { background: #fbf9f2; }
   flex-wrap: wrap;
   font-size: 12px;
   color: #6b7268;
-  margin-bottom: 12px;
+  margin-bottom: 0;
 }
 .fmh-quota-track {
   flex: 0 0 120px;
