@@ -46,7 +46,7 @@ async function main() {
   // FMH API key set in Settings — see lib/fmh.js).
   const newDashboards = [
     { key: 'cogs', name: 'COGS Analysis', reportKey: 'cogs', reportName: 'Central Kitchen COGS' },
-    { key: 'menu_costing', name: 'Menu Costing Analysis', reportKey: 'menu-costing', reportName: 'Menu and Ingredients' },
+    { key: 'menu_costing', name: 'Menu Costing Analysis', reportKey: 'cogs-visual', reportName: 'Menu & COGS Dashboard' },
     { key: 'sales_by_branch', name: 'Sales by Branch', reportKey: 'sales-by-branch', reportName: 'Order Items by Branch' },
   ];
 
@@ -66,6 +66,11 @@ async function main() {
       [row.id, d.reportKey, d.reportName]
     );
   }
+
+  // Cleanup: an earlier seed created a 'menu-costing' report (raw ingredient
+  // table). It's been replaced by 'cogs-visual' (KPI dashboard) — remove the
+  // stale row so it doesn't show up twice under the same dashboard tab.
+  await pool.query(`DELETE FROM reports WHERE report_key = 'menu-costing'`);
 
   console.log('Seed complete.');
   console.log(`Admin login: admin@kinsupplyandservice.com / ${adminPassword}`);

@@ -139,6 +139,8 @@ function renderReportBlock(wrap, report) {
 
   if (report.report_key === 'price_change') {
     block.appendChild(buildPriceChangeReport(report));
+  } else if (report.report_key === 'cogs-visual') {
+    block.appendChild(buildCogsDashboard());
   } else if (FMH_ENDPOINTS[report.report_key]) {
     block.appendChild(buildFmhReport(report, FMH_ENDPOINTS[report.report_key]));
   } else {
@@ -381,6 +383,152 @@ function buildFmhReport(report, config) {
   filters.querySelector('.fmh-reload').addEventListener('click', load);
   filters.querySelector('.fmh-export').addEventListener('click', () => exportToExcel(currentData));
 
+  load();
+  return container;
+}
+
+// ---------- COGS dashboard (Menu Costing Analysis tab) ----------
+// Same underlying FMH 'cogs' report as the COGS Analysis tab, but summarized
+// as KPI cards + lowest-margin list + by-branch breakdown, matching the
+// look of the standalone menucogs app.
+function buildCogsDashboard() {
+  const container = document.createElement('div');
+
+  const filters = document.createElement('div');
+  filters.className = 'filters-row';
+  filters.innerHTML = `
+    <input type="date" class="cd-start" />
+    <input type="date" class="cd-end" />
+    <button class="btn small cd-reload">โหลดข้อมูล</button>
+  `;
+  const today = new Date();
+  const monthAgo = new Date(Date.now() - 30 * 86400000);
+  filters.querySelector('.cd-end').value = today.toISOString().slice(0, 10);
+  filters.querySelector('.cd-start').value = monthAgo.toISOString().slice(0, 10);
+  container.appendChild(filters);
+
+  const statusWrap = document.createElement('div');
+  container.appendChild(statusWrap);
+
+  const bodyWrap = document.createElement('div');
+  container.appendChild(bodyWrap);
+
+  function fmtCurrency(n) {
+    return '฿' + Number(n || 0).toLocaleString('th-TH', { maximumFractionDigits: 0 });
+  }
+  function marginClass(pct) {
+    if (pct < 0) return 'margin-fill-danger';
+    if (pct < 20) return 'margin-fill-warning';
+    return 'margin-fill-success';
+  }
+
+  async function load() {
+    bodyWrap.innerHTML = '';
+    statusWrap.innerHTML = '<p style="color:#6b7268;">กำลังโหลดข้อมูลจาก FMH...</p>';
+    const params = new URLSearchParams({
+      start: filters.querySelector('.cd-start').value,
+      end: filters.querySelector('.cd-end').value,
+    });
+    try {
+      const { data } = await api(`/api/reports/cogs?${params.toString()}`);
+      statusWrap.innerHTML = '';
+      renderBody(data || []);
+    } catch (err) {
+      if (err.message && err.message.includes('FMH API key not configured')) {
+        statusWrap.innerHTML =
+          '<div class="error-msg">ยังไม่ได้ตั้งค่า FMH API Key — ไปที่เมนู ⚙️ ตั้งค่า → แท็บ "FMH API" ก่อนใช้งานรายงานนี้</div>';
+      } else {
+        statusWrap.innerHTML = `<div class="error-msg">โหลดข้อมูลไม่สำเร็จ: ${err.message}</div>`;
+      }
+    }
+  }
+
+  function renderBody(rows) {
+    bodyWrap.innerHTML = '';
+    if (!rows.length) {
+      bodyWrap.innerHTML = '<p style="color:#6b7268;">ไม่พบข้อมูลตามเงื่อนไขที่เลือก</p>';
+      return;
+    }
+
+    const totalSales = rows.reduce((s, r) => s + Number(r.total_sales || 0), 0);
+    const totalCogs = rows.reduce((s, r) => s + Number(r.total_cost || 0), 0);
+    const grossProfit = rows.reduce((s, r) => s + Number(r.gross_profit || 0), 0);
+    const grossMarginPct = totalSales ? (grossProfit / totalSales) * 100 : 0;
+
+    const kpiRow = document.createElement('div');
+    kpiRow.className = 'kpi-row';
+    kpiRow.innerHTML = `
+      <div class="kpi-card"><div class="kpi-label">Total sales</div><div class="kpi-value">${fmtCurrency(totalSales)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Total COGS</div><div class="kpi-value">${fmtCurrency(totalCogs)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Gross profit</div><div class="kpi-value">${fmtCurrency(grossProfit)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Gross margin</div><div class="kpi-value">${grossMarginPct.toFixed(1)}%</div></div>
+    `;
+    bodyWrap.appendChild(kpiRow);
+
+    const panels = document.createElement('div');
+    panels.className = 'cogs-panels';
+
+    // Lowest-margin menu items
+    const byMenu = {};
+    rows.forEach((r) => {
+      const key = r.menu_name || r.sku || 'ไม่ระบุ';
+      if (!byMenu[key]) byMenu[key] = { sales: 0, profit: 0 };
+      byMenu[key].sales += Number(r.total_sales || 0);
+      byMenu[key].profit += Number(r.gross_profit || 0);
+    });
+    const menuList = Object.entries(byMenu)
+      .map(([name, v]) => ({ name, pct: v.sales ? (v.profit / v.sales) * 100 : 0 }))
+      .sort((a, b) => a.pct - b.pct)
+      .slice(0, 10);
+
+    const menuPanel = document.createElement('div');
+    menuPanel.className = 'panel-card';
+    menuPanel.innerHTML = '<h3>Lowest-margin menu items</h3>';
+    menuList.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'margin-item-row';
+      const widthPct = Math.min(100, Math.max(4, Math.abs(item.pct)));
+      row.innerHTML = `
+        <span class="margin-name">${item.name}</span>
+        <span class="margin-bar-track"><span class="margin-bar-fill ${marginClass(item.pct)}" style="width:${widthPct}%"></span></span>
+        <span class="margin-pct">${item.pct.toFixed(1)}%</span>
+      `;
+      menuPanel.appendChild(row);
+    });
+    panels.appendChild(menuPanel);
+
+    // Gross margin by branch
+    const byBranch = {};
+    rows.forEach((r) => {
+      const key = r.branch_name || 'ไม่ระบุสาขา';
+      if (!byBranch[key]) byBranch[key] = { sales: 0, profit: 0 };
+      byBranch[key].sales += Number(r.total_sales || 0);
+      byBranch[key].profit += Number(r.gross_profit || 0);
+    });
+    const branchList = Object.entries(byBranch)
+      .map(([name, v]) => ({ name, pct: v.sales ? (v.profit / v.sales) * 100 : 0 }))
+      .sort((a, b) => b.pct - a.pct);
+
+    const branchPanel = document.createElement('div');
+    branchPanel.className = 'panel-card';
+    branchPanel.innerHTML = '<h3>Gross margin by branch</h3>';
+    branchList.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'margin-item-row';
+      const widthPct = Math.min(100, Math.max(4, Math.abs(item.pct)));
+      row.innerHTML = `
+        <span class="margin-name">${item.name}</span>
+        <span class="margin-bar-track"><span class="margin-bar-fill ${marginClass(item.pct)}" style="width:${widthPct}%"></span></span>
+        <span class="margin-pct">${item.pct.toFixed(1)}%</span>
+      `;
+      branchPanel.appendChild(row);
+    });
+    panels.appendChild(branchPanel);
+
+    bodyWrap.appendChild(panels);
+  }
+
+  filters.querySelector('.cd-reload').addEventListener('click', load);
   load();
   return container;
 }
