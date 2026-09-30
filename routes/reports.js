@@ -20,10 +20,9 @@ function makeFmhReportHandler(reportKey, cardKey, { supportsDateRange = true } =
     const { start, end } = req.query;
     const filters = {};
     if (supportsDateRange && start && end) {
-      // FMH's date_range filter binds directly to start_date/end_date keys
-      // at the top level of `filters` (not nested under a date_range key).
-      filters.start_date = start;
-      filters.end_date = end;
+      // Confirmed via FMH's own docs (llms.txt): {"filters":{"date_range":
+      // {"start":"YYYY-MM-DD","end":"YYYY-MM-DD"}}} — NOT start_date/end_date.
+      filters.date_range = { start, end };
     }
     try {
       const result = await callReport(reportKey, cardKey, { filters });
