@@ -56,6 +56,20 @@ router.post('/:id/reset-password', requireAuth, requireAdmin, async (req, res) =
   res.json({ ok: true });
 });
 
+// Admin can change another user's role/level (admin <-> client).
+router.patch('/:id/role', requireAuth, requireAdmin, async (req, res) => {
+  const { role } = req.body || {};
+  if (role !== 'admin' && role !== 'client') {
+    return res.status(400).json({ error: 'role must be "admin" or "client"' });
+  }
+  if (Number(req.params.id) === req.user.id) {
+    return res.status(400).json({ error: 'Cannot change your own role' });
+  }
+  const [result] = await pool.query(`UPDATE users SET role = ? WHERE id = ?`, [role, req.params.id]);
+  if (result.affectedRows === 0) return res.status(404).json({ error: 'User not found' });
+  res.json({ ok: true, role });
+});
+
 router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
   if (Number(req.params.id) === req.user.id) {
     return res.status(400).json({ error: 'Cannot delete your own account' });

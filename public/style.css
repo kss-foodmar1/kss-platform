@@ -425,6 +425,13 @@ table.report-table tr:hover td { background: #fbf9f2; }
   border-bottom: 1px solid #f0ece0;
 }
 .user-row .meta { font-size: 13px; color: #6b7268; }
+.user-role-select {
+  padding: 6px 10px;
+  border-radius: var(--pill-radius);
+  border: 1.5px solid #e8e2cf;
+  background: var(--cream);
+}
+.user-role-select:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .modal-close-row {
   display: flex;

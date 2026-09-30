@@ -1159,6 +1159,7 @@ async function loadUserList() {
   const { users } = await api('/api/users');
   const listEl = el('user-list');
   listEl.innerHTML = '';
+  const isSelf = (u) => state.user && u.id === state.user.id;
   users.forEach((u) => {
     const row = document.createElement('div');
     row.className = 'user-row';
@@ -1167,9 +1168,28 @@ async function loadUserList() {
         <div><strong>${u.display_name}</strong> <span class="badge ${u.role === 'admin' ? 'up' : 'down'}">${u.role}</span></div>
         <div class="meta">${u.email}${u.must_change_password ? ' · รอเปลี่ยนรหัสผ่านครั้งแรก' : ''}</div>
       </div>
-      <button class="btn small danger" data-id="${u.id}">ลบ</button>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <select class="user-role-select" data-id="${u.id}" ${isSelf(u) ? 'disabled title="เปลี่ยนสิทธิ์ตัวเองไม่ได้"' : ''}>
+          <option value="client" ${u.role === 'client' ? 'selected' : ''}>Client</option>
+          <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
+        </select>
+        <button class="btn small danger" data-id="${u.id}" ${isSelf(u) ? 'disabled title="ลบตัวเองไม่ได้"' : ''}>ลบ</button>
+      </div>
     `;
-    row.querySelector('button').addEventListener('click', async () => {
+    row.querySelector('.user-role-select').addEventListener('change', async (e) => {
+      const newRole = e.target.value;
+      try {
+        await api(`/api/users/${u.id}/role`, {
+          method: 'PATCH',
+          body: JSON.stringify({ role: newRole }),
+        });
+        loadUserList();
+      } catch (err) {
+        alert(`เปลี่ยนสิทธิ์ไม่สำเร็จ: ${err.message}`);
+        e.target.value = u.role;
+      }
+    });
+    row.querySelector('button.danger').addEventListener('click', async () => {
       if (!confirm(`ลบผู้ใช้งาน ${u.email}?`)) return;
       await api(`/api/users/${u.id}`, { method: 'DELETE' });
       loadUserList();
