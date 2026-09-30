@@ -940,6 +940,94 @@ function buildMenuIngredientImpactDashboard() {
     }
     pctInput.addEventListener('input', renderSensitivityList);
     renderSensitivityList();
+
+    // ---- Menu view: cost breakdown & sensitivity for one menu at a time ----
+    const byMenu = {};
+    rows.forEach((r) => {
+      const menuKey = r.menu_name || r.menu_code || 'ไม่ระบุเมนู';
+      const ingKey = r.ingredient_name || r.ingredient_code || 'ไม่ระบุวัตถุดิบ';
+      const cost = Number(r.total_cost || 0);
+      if (!byMenu[menuKey]) byMenu[menuKey] = { totalCost: 0, ingredients: {} };
+      byMenu[menuKey].totalCost += cost;
+      byMenu[menuKey].ingredients[ingKey] = (byMenu[menuKey].ingredients[ingKey] || 0) + cost;
+    });
+    const menuList = Object.entries(byMenu)
+      .map(([name, v]) => ({ name, totalCost: v.totalCost, ingredients: v.ingredients }))
+      .sort((a, b) => b.totalCost - a.totalCost);
+
+    const menuViewCard = document.createElement('div');
+    menuViewCard.className = 'panel-card';
+    menuViewCard.style.marginTop = '16px';
+    menuViewCard.innerHTML = `
+      <h3>มุมมองรายเมนู — วัตถุดิบไหนคุมต้นทุนเมนูนี้</h3>
+      <p class="helper-text" style="margin-top:-4px;">
+        เลือกเมนู เพื่อดูว่าวัตถุดิบตัวไหนเป็นสัดส่วนต้นทุนมากที่สุดของเมนูนั้น และถ้าราคาวัตถุดิบตัวนั้นขยับ X% ต้นทุนเมนูนี้จะขยับเท่าไหร่
+      </p>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;margin-bottom:4px;">
+        <div class="field" style="max-width:320px;flex:1;min-width:220px;">
+          <label for="mi-menu-select">เลือกเมนู (เรียงตามต้นทุนรวมมากไปน้อย)</label>
+          <select id="mi-menu-select"></select>
+        </div>
+        <div class="field" style="max-width:180px;">
+          <label for="mi-menu-pct-input">วัตถุดิบเปลี่ยนราคา (X%)</label>
+          <input id="mi-menu-pct-input" type="number" value="10" step="1">
+        </div>
+      </div>
+      <div id="mi-menu-summary" style="margin:6px 0 14px;font-size:13px;color:#6b7268;"></div>
+      <div id="mi-menu-ingredient-list"></div>
+    `;
+    bodyWrap.appendChild(menuViewCard);
+
+    const menuSelect = menuViewCard.querySelector('#mi-menu-select');
+    const menuPctInput = menuViewCard.querySelector('#mi-menu-pct-input');
+    const menuSummaryEl = menuViewCard.querySelector('#mi-menu-summary');
+    const menuIngListEl = menuViewCard.querySelector('#mi-menu-ingredient-list');
+
+    menuList.forEach((m) => {
+      const opt = document.createElement('option');
+      opt.value = m.name;
+      opt.textContent = `${m.name} — ${fmtCurrency(m.totalCost)}`;
+      menuSelect.appendChild(opt);
+    });
+
+    function renderMenuView() {
+      const selected = menuList.find((m) => m.name === menuSelect.value) || menuList[0];
+      if (!selected) {
+        menuSummaryEl.textContent = 'ไม่มีข้อมูลเมนู';
+        menuIngListEl.innerHTML = '';
+        return;
+      }
+      const x = Number(menuPctInput.value) || 0;
+      const ingCount = Object.keys(selected.ingredients).length;
+      menuSummaryEl.textContent = `ต้นทุนรวมเมนูนี้: ${fmtCurrency(selected.totalCost)} · ใช้วัตถุดิบทั้งหมด ${ingCount} รายการ`;
+
+      const ingList = Object.entries(selected.ingredients)
+        .map(([name, cost]) => ({
+          name,
+          cost,
+          sharePct: selected.totalCost ? (cost / selected.totalCost) * 100 : 0,
+        }))
+        .sort((a, b) => b.cost - a.cost)
+        .slice(0, 10);
+      const maxCost = Math.max(1, ...ingList.map((i) => i.cost));
+
+      menuIngListEl.innerHTML = '';
+      ingList.forEach((item) => {
+        const y = (item.sharePct / 100) * x;
+        const row = document.createElement('div');
+        row.className = 'margin-item-row';
+        const widthPct = Math.min(100, Math.max(4, (item.cost / maxCost) * 100));
+        row.innerHTML = `
+          <span class="margin-name">${item.name} <span style="color:#6b7268;font-weight:400;">(${item.sharePct.toFixed(1)}% ของต้นทุนเมนู)</span></span>
+          <span class="margin-bar-track"><span class="margin-bar-fill margin-fill-warning" style="width:${widthPct}%"></span></span>
+          <span class="margin-pct">${x >= 0 ? '+' : ''}${y.toFixed(1)}%</span>
+        `;
+        menuIngListEl.appendChild(row);
+      });
+    }
+    menuSelect.addEventListener('change', renderMenuView);
+    menuPctInput.addEventListener('input', renderMenuView);
+    if (menuList.length) renderMenuView();
   }
 
   filters.querySelector('.mi-reload').addEventListener('click', load);
