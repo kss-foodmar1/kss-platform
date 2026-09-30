@@ -1,0 +1,297 @@
+:root {
+  --cream: #F3EEDF;
+  --ink: #1B2B22;
+  --chili: #BE4229;
+  --brass: #A9812F;
+  --white: #FFFFFF;
+  --card-radius: 16px;
+  --pill-radius: 999px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: 'Plus Jakarta Sans', 'Kanit', sans-serif;
+  background: var(--cream);
+  color: var(--ink);
+}
+
+button, input, select {
+  font-family: inherit;
+  font-size: 14px;
+}
+
+a { color: var(--chili); }
+
+.hidden { display: none !important; }
+
+/* ---------- Login ---------- */
+.login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.login-card {
+  background: var(--white);
+  border-radius: var(--card-radius);
+  padding: 40px 32px;
+  width: 100%;
+  max-width: 380px;
+  box-shadow: 0 10px 40px rgba(27, 43, 34, 0.12);
+}
+
+.login-card h1 {
+  font-size: 22px;
+  margin: 0 0 4px;
+}
+
+.login-card p.sub {
+  margin: 0 0 24px;
+  color: #6b7268;
+  font-size: 14px;
+}
+
+.field {
+  margin-bottom: 16px;
+}
+
+.field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.field input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid #dfd8c4;
+  border-radius: 10px;
+  background: var(--cream);
+  color: var(--ink);
+}
+
+.field input:focus-visible {
+  outline: 2px solid var(--chili);
+  outline-offset: 1px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 20px;
+  border-radius: var(--pill-radius);
+  border: none;
+  background: var(--ink);
+  color: var(--white);
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform .15s ease, background .15s ease;
+}
+.btn:hover { transform: translateY(-1px); background: #14211a; }
+.btn:focus-visible { outline: 2px solid var(--chili); outline-offset: 2px; }
+.btn.primary { background: var(--chili); }
+.btn.primary:hover { background: #a53820; }
+.btn.ghost { background: transparent; color: var(--ink); border: 1.5px solid #dfd8c4; }
+.btn.block { width: 100%; }
+.btn.small { padding: 6px 14px; font-size: 13px; }
+.btn.danger { background: #fff; color: var(--chili); border: 1.5px solid var(--chili); }
+
+.error-msg {
+  background: #fbe4de;
+  color: var(--chili);
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+/* ---------- App shell ---------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 24px;
+  background: var(--white);
+  border-bottom: 1px solid #e8e2cf;
+}
+
+.topbar .brand {
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: .2px;
+}
+.topbar .brand span { color: var(--chili); }
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--pill-radius);
+  border: 1.5px solid #e8e2cf;
+  background: var(--white);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+}
+.icon-btn:hover { background: var(--cream); }
+.icon-btn:focus-visible { outline: 2px solid var(--chili); outline-offset: 2px; }
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 12px 24px 0;
+  overflow-x: auto;
+}
+
+.tab {
+  padding: 10px 18px;
+  border-radius: var(--pill-radius) var(--pill-radius) 0 0;
+  background: transparent;
+  border: none;
+  font-weight: 600;
+  color: #6b7268;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab.active {
+  background: var(--white);
+  color: var(--ink);
+}
+.tab:focus-visible { outline: 2px solid var(--chili); outline-offset: -2px; }
+
+.tab-panel-wrap {
+  background: var(--white);
+  min-height: calc(100vh - 130px);
+  padding: 24px;
+}
+
+.report-block {
+  margin-bottom: 32px;
+}
+
+.report-block h2 {
+  font-size: 17px;
+  margin: 0 0 12px;
+}
+
+.filters-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.filters-row input, .filters-row select {
+  padding: 8px 12px;
+  border-radius: var(--pill-radius);
+  border: 1.5px solid #e8e2cf;
+  background: var(--cream);
+}
+
+table.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+table.report-table th {
+  text-align: left;
+  padding: 10px 12px;
+  background: var(--cream);
+  cursor: pointer;
+  user-select: none;
+  border-radius: 8px 8px 0 0;
+  white-space: nowrap;
+}
+table.report-table th:focus-visible { outline: 2px solid var(--chili); outline-offset: -2px; }
+
+table.report-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid #f0ece0;
+}
+
+table.report-table tr:hover td { background: #fbf9f2; }
+
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: var(--pill-radius);
+  font-size: 12px;
+  font-weight: 600;
+}
+.badge.up { background: #fbe4de; color: var(--chili); }
+.badge.down { background: #e3f0e6; color: #2f6b3f; }
+
+/* ---------- Modal ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(27, 43, 34, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 50;
+}
+
+.modal-card {
+  background: var(--white);
+  border-radius: var(--card-radius);
+  padding: 28px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-card h2 {
+  margin-top: 0;
+}
+
+.modal-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+.modal-tabs button {
+  padding: 6px 14px;
+  border-radius: var(--pill-radius);
+  border: 1.5px solid #e8e2cf;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+.modal-tabs button.active { background: var(--ink); color: var(--white); border-color: var(--ink); }
+
+.user-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid #f0ece0;
+}
+.user-row .meta { font-size: 13px; color: #6b7268; }
+
+.modal-close-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.helper-text { font-size: 12px; color: #6b7268; margin-top: -8px; margin-bottom: 12px; }

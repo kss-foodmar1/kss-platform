@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KSS Dashboard</title>
+<meta name="description" content="KSS Platform — internal dashboard hub">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%23BE4229%22/><text x=%2250%22 y=%2265%22 font-size=%2255%22 text-anchor=%22middle%22 fill=%22white%22 font-family=%22sans-serif%22>K</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Kanit:wght@600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- LOGIN SCREEN -->
+<div id="login-screen" class="login-screen">
+  <div class="login-card">
+    <h1>KSS Dashboard</h1>
+    <p class="sub">เข้าสู่ระบบเพื่อดูรายงานของคุณ</p>
+    <div id="login-error" class="error-msg hidden"></div>
+    <form id="login-form">
+      <div class="field">
+        <label for="login-email">อีเมล</label>
+        <input id="login-email" type="email" required autocomplete="username">
+      </div>
+      <div class="field">
+        <label for="login-password">รหัสผ่าน</label>
+        <input id="login-password" type="password" required autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn primary block">เข้าสู่ระบบ</button>
+    </form>
+  </div>
+</div>
+
+<!-- FORCE CHANGE PASSWORD SCREEN -->
+<div id="force-change-screen" class="login-screen hidden">
+  <div class="login-card">
+    <h1>ตั้งรหัสผ่านใหม่</h1>
+    <p class="sub">กรุณาตั้งรหัสผ่านใหม่ก่อนใช้งานครั้งแรก</p>
+    <div id="force-change-error" class="error-msg hidden"></div>
+    <form id="force-change-form">
+      <div class="field">
+        <label for="force-new-password">รหัสผ่านใหม่ (อย่างน้อย 8 ตัวอักษร)</label>
+        <input id="force-new-password" type="password" required minlength="8" autocomplete="new-password">
+      </div>
+      <button type="submit" class="btn primary block">บันทึกรหัสผ่านใหม่</button>
+    </form>
+  </div>
+</div>
+
+<!-- APP SHELL -->
+<div id="app-shell" class="hidden">
+  <div class="topbar">
+    <div class="brand">KSS <span>Dashboard</span></div>
+    <div class="topbar-actions">
+      <span id="user-display-name" style="font-size:13px;color:#6b7268;margin-right:8px;"></span>
+      <button id="open-password-btn" class="icon-btn" title="เปลี่ยนรหัสผ่าน" aria-label="เปลี่ยนรหัสผ่าน">🔑</button>
+      <button id="open-settings-btn" class="icon-btn hidden" title="ตั้งค่า" aria-label="ตั้งค่า">⚙️</button>
+      <button id="logout-btn" class="icon-btn" title="ออกจากระบบ" aria-label="ออกจากระบบ">⏻</button>
+    </div>
+  </div>
+
+  <div id="tabs" class="tabs" role="tablist"></div>
+  <div id="tab-panel-wrap" class="tab-panel-wrap"></div>
+</div>
+
+<!-- SETTINGS MODAL (admin only) -->
+<div id="settings-modal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <h2>ตั้งค่า</h2>
+    <div class="modal-tabs">
+      <button data-panel="users" class="active">ผู้ใช้งาน</button>
+    </div>
+
+    <div id="settings-users-panel">
+      <div id="user-list"></div>
+      <hr style="border:none;border-top:1px solid #f0ece0;margin:16px 0;">
+      <h3 style="font-size:14px;margin-bottom:10px;">เพิ่มผู้ใช้งานใหม่</h3>
+      <div id="add-user-error" class="error-msg hidden"></div>
+      <form id="add-user-form">
+        <div class="field">
+          <label for="new-user-name">ชื่อที่แสดง</label>
+          <input id="new-user-name" required>
+        </div>
+        <div class="field">
+          <label for="new-user-email">อีเมล</label>
+          <input id="new-user-email" type="email" required>
+        </div>
+        <div class="field">
+          <label for="new-user-password">รหัสผ่านชั่วคราว</label>
+          <input id="new-user-password" type="password" required minlength="8">
+        </div>
+        <div class="field">
+          <label for="new-user-role">สิทธิ์</label>
+          <select id="new-user-role">
+            <option value="client">Client</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <button type="submit" class="btn primary">เพิ่มผู้ใช้งาน</button>
+      </form>
+    </div>
+
+    <div class="modal-close-row">
+      <button class="btn ghost" id="close-settings-btn">ปิด</button>
+    </div>
+  </div>
+</div>
+
+<!-- CHANGE PASSWORD MODAL -->
+<div id="password-modal" class="modal-overlay hidden">
+  <div class="modal-card" style="max-width:380px;">
+    <h2>เปลี่ยนรหัสผ่าน</h2>
+    <div id="password-modal-error" class="error-msg hidden"></div>
+    <form id="password-modal-form">
+      <div class="field">
+        <label for="current-password">รหัสผ่านปัจจุบัน</label>
+        <input id="current-password" type="password" required autocomplete="current-password">
+      </div>
+      <div class="field">
+        <label for="new-password">รหัสผ่านใหม่ (อย่างน้อย 8 ตัวอักษร)</label>
+        <input id="new-password" type="password" required minlength="8" autocomplete="new-password">
+      </div>
+      <div class="modal-close-row">
+        <button type="button" class="btn ghost" id="close-password-btn">ยกเลิก</button>
+        <button type="submit" class="btn primary">บันทึก</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "name": "kss-platform",
+  "version": "1.0.0",
+  "description": "KSS Platform - shared dashboard backend (auth + tabbed dashboards + reports)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node db/migrate.js && node db/seed.js && node server.js",
+    "seed": "node db/seed.js",
+    "migrate": "node db/migrate.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.11.0"
+  }
+}
