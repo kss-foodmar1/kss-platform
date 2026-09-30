@@ -433,6 +433,22 @@ table.report-table tr:hover td { background: #fbf9f2; }
 }
 .user-role-select:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.user-row-wrap { border-bottom: 1px solid #f0ece0; }
+.user-row-wrap .user-row { border-bottom: none; }
+.user-tabs-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 4px 0 14px;
+}
+.user-tab-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .modal-close-row {
   display: flex;
   justify-content: flex-end;

@@ -32,6 +32,18 @@ CREATE TABLE IF NOT EXISTS reports (
   FOREIGN KEY (dashboard_id) REFERENCES dashboards(id)
 );
 
+-- Which dashboards (tabs) a given user is allowed to see. Admins always see
+-- every active dashboard regardless of this table (enforced in routes/
+-- dashboards.js) — this only restricts client accounts, so each client can
+-- have a different number of tabs.
+CREATE TABLE IF NOT EXISTS user_dashboard_access (
+  user_id INT NOT NULL,
+  dashboard_id INT NOT NULL,
+  PRIMARY KEY (user_id, dashboard_id),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (dashboard_id) REFERENCES dashboards(id) ON DELETE CASCADE
+);
+
 -- Key/value store for platform-wide settings — currently just the FMH API key.
 -- Value is stored encrypted (AES-256-GCM via ENCRYPTION_KEY); see lib/crypto.js.
 CREATE TABLE IF NOT EXISTS app_settings (

@@ -110,6 +110,7 @@ el('logout-btn').addEventListener('click', async () => {
 async function enterApp() {
   el('user-display-name').textContent = state.user.display_name;
   el('open-settings-btn').classList.toggle('hidden', state.user.role !== 'admin');
+  el('open-manage-users-btn').classList.toggle('hidden', state.user.role !== 'admin');
   showScreen('app');
 
   const { dashboards } = await api('/api/dashboards');
@@ -1104,23 +1105,19 @@ el('password-modal-form').addEventListener('submit', async (e) => {
   }
 });
 
-// ---------- Settings modal (admin) ----------
+// ---------- Settings modal (admin) — FMH API key only ----------
 el('open-settings-btn').addEventListener('click', async () => {
   el('settings-modal').classList.remove('hidden');
-  await loadUserList();
+  await loadFmhKeyStatus();
 });
 el('close-settings-btn').addEventListener('click', () => el('settings-modal').classList.add('hidden'));
 
-// ---------- Settings modal: tab switching ----------
-document.querySelectorAll('.modal-tabs button[data-panel]').forEach((btn) => {
-  btn.addEventListener('click', async () => {
-    document.querySelectorAll('.modal-tabs button[data-panel]').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    el('settings-users-panel').classList.toggle('hidden', btn.dataset.panel !== 'users');
-    el('settings-fmh-panel').classList.toggle('hidden', btn.dataset.panel !== 'fmh');
-    if (btn.dataset.panel === 'fmh') await loadFmhKeyStatus();
-  });
+// ---------- Manage Users modal (admin) — separate menu from Settings ----------
+el('open-manage-users-btn').addEventListener('click', async () => {
+  el('manage-users-modal').classList.remove('hidden');
+  await loadUserList();
 });
+el('close-manage-users-btn').addEventListener('click', () => el('manage-users-modal').classList.add('hidden'));
 
 // ---------- Settings modal: FMH API key ----------
 async function loadFmhKeyStatus() {
@@ -1156,11 +1153,18 @@ el('fmh-key-form').addEventListener('submit', async (e) => {
 });
 
 async function loadUserList() {
-  const { users } = await api('/api/users');
+  const [{ users }, { dashboards: allDashboards }] = await Promise.all([
+    api('/api/users'),
+    api('/api/dashboards/admin/all'),
+  ]);
   const listEl = el('user-list');
   listEl.innerHTML = '';
   const isSelf = (u) => state.user && u.id === state.user.id;
+
   users.forEach((u) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'user-row-wrap';
+
     const row = document.createElement('div');
     row.className = 'user-row';
     row.innerHTML = `
@@ -1173,6 +1177,7 @@ async function loadUserList() {
           <option value="client" ${u.role === 'client' ? 'selected' : ''}>Client</option>
           <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>Admin</option>
         </select>
+        <button class="btn small ghost user-tabs-toggle" data-id="${u.id}">Dashboard ▾</button>
         <button class="btn small danger" data-id="${u.id}" ${isSelf(u) ? 'disabled title="ลบตัวเองไม่ได้"' : ''}>ลบ</button>
       </div>
     `;
@@ -1194,7 +1199,51 @@ async function loadUserList() {
       await api(`/api/users/${u.id}`, { method: 'DELETE' });
       loadUserList();
     });
-    listEl.appendChild(row);
+
+    // ---- Per-user dashboard (tab) access ----
+    const tabsPanel = document.createElement('div');
+    tabsPanel.className = 'user-tabs-panel hidden';
+
+    if (u.role === 'admin') {
+      tabsPanel.innerHTML = '<p class="helper-text" style="margin:8px 0 0;">Admin เห็นทุกแท็บเสมอ ไม่ต้องกำหนด</p>';
+    } else if (!allDashboards.length) {
+      tabsPanel.innerHTML = '<p class="helper-text" style="margin:8px 0 0;">ยังไม่มี dashboard ในระบบ</p>';
+    } else {
+      allDashboards.forEach((d) => {
+        const label = document.createElement('label');
+        label.className = 'user-tab-checkbox';
+        label.innerHTML = `<input type="checkbox" value="${d.id}"> ${d.display_name}${d.active ? '' : ' (ปิดใช้งาน)'}`;
+        tabsPanel.appendChild(label);
+      });
+    }
+
+    let loadedAccess = false;
+    row.querySelector('.user-tabs-toggle').addEventListener('click', async () => {
+      const willShow = tabsPanel.classList.contains('hidden');
+      tabsPanel.classList.toggle('hidden');
+      if (willShow && u.role !== 'admin' && !loadedAccess) {
+        loadedAccess = true;
+        const { dashboard_ids } = await api(`/api/users/${u.id}/dashboard-access`);
+        tabsPanel.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+          cb.checked = dashboard_ids.includes(Number(cb.value));
+        });
+        tabsPanel.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+          cb.addEventListener('change', async () => {
+            const checkedIds = Array.from(tabsPanel.querySelectorAll('input[type="checkbox"]:checked')).map((c) =>
+              Number(c.value)
+            );
+            await api(`/api/users/${u.id}/dashboard-access`, {
+              method: 'PUT',
+              body: JSON.stringify({ dashboard_ids: checkedIds }),
+            });
+          });
+        });
+      }
+    });
+
+    wrap.appendChild(row);
+    wrap.appendChild(tabsPanel);
+    listEl.appendChild(wrap);
   });
 }
 

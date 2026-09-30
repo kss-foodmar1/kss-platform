@@ -70,6 +70,42 @@ router.patch('/:id/role', requireAuth, requireAdmin, async (req, res) => {
   res.json({ ok: true, role });
 });
 
+// Get which dashboard tabs a user currently has (Manage Users screen).
+router.get('/:id/dashboard-access', requireAuth, requireAdmin, async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT dashboard_id FROM user_dashboard_access WHERE user_id = ?`,
+    [req.params.id]
+  );
+  res.json({ dashboard_ids: rows.map((r) => r.dashboard_id) });
+});
+
+// Replace which dashboard tabs a user can see — lets each client have a
+// different set/number of tabs. Admins ignore this table (always see all).
+router.put('/:id/dashboard-access', requireAuth, requireAdmin, async (req, res) => {
+  const { dashboard_ids } = req.body || {};
+  if (!Array.isArray(dashboard_ids)) {
+    return res.status(400).json({ error: 'dashboard_ids must be an array' });
+  }
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query(`DELETE FROM user_dashboard_access WHERE user_id = ?`, [req.params.id]);
+    for (const dashboardId of dashboard_ids) {
+      await conn.query(
+        `INSERT IGNORE INTO user_dashboard_access (user_id, dashboard_id) VALUES (?, ?)`,
+        [req.params.id, dashboardId]
+      );
+    }
+    await conn.commit();
+    res.json({ ok: true, dashboard_ids });
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+});
+
 router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
   if (Number(req.params.id) === req.user.id) {
     return res.status(400).json({ error: 'Cannot delete your own account' });

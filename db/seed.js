@@ -82,6 +82,22 @@ async function main() {
   // (menu_and_ingredients report — ingredient cost impact & price sensitivity).
   await pool.query(`DELETE FROM reports WHERE report_key = 'cogs-visual'`);
 
+  // Give the two seeded accounts access to every dashboard tab by default,
+  // so nothing regresses now that per-user tab access exists. Admins ignore
+  // this table entirely (they always see everything) — this only matters
+  // for the demo client account. New users created later start with none,
+  // and an admin picks their tabs from Manage Users.
+  const [[demoUser]] = await pool.query(
+    `SELECT id FROM users WHERE email = 'demo@kinsupplyandservice.com'`
+  );
+  const [allDashboards] = await pool.query(`SELECT id FROM dashboards`);
+  for (const d of allDashboards) {
+    await pool.query(
+      `INSERT IGNORE INTO user_dashboard_access (user_id, dashboard_id) VALUES (?, ?)`,
+      [demoUser.id, d.id]
+    );
+  }
+
   console.log('Seed complete.');
   console.log(`Admin login: admin@kinsupplyandservice.com / ${adminPassword}`);
   console.log(`Demo login:  demo@kinsupplyandservice.com / ${demoPassword} (must change password on first login)`);
