@@ -347,7 +347,7 @@ class DashboardView {
             ? `<div class="range-control" role="group" aria-label="ช่วงวันที่">
                  <button type="button" class="range-chip" data-days="7">7 วัน</button>
                  <button type="button" class="range-chip active" data-days="30">30 วัน</button>
-                 <button type="button" class="range-chip" data-days="90">90 วัน</button>
+                 <button type="button" class="range-chip" data-days="80">80 วัน</button>
                  <input type="date" class="range-start" value="${this.range.start}" aria-label="วันที่เริ่ม">
                  <span class="muted">–</span>
                  <input type="date" class="range-end" value="${this.range.end}" aria-label="วันที่สิ้นสุด">
