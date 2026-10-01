@@ -181,8 +181,10 @@ async function dropLegacyReportsTable() {
   if (!t) return;
   const [[{ n }]] = await pool.query(`SELECT COUNT(*) AS n FROM dashboards WHERE company_id IS NULL`);
   if (n) return;
-  await pool.query(`DROP TABLE reports`);
-  console.log('  dropped legacy reports table');
+  // Renamed, not dropped: keeps the old per-report data recoverable.
+  await pool.query(`DROP TABLE IF EXISTS reports_legacy_backup`);
+  await pool.query(`RENAME TABLE reports TO reports_legacy_backup`);
+  console.log('  renamed legacy reports table -> reports_legacy_backup');
 }
 
 async function main() {
