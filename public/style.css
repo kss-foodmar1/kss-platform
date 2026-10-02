@@ -320,3 +320,23 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
 .bar-track { position: relative; }
 .bar-target { position: absolute; top: -2px; bottom: -2px; width: 0; border-left: 1px dashed var(--ink-3, #8a877f); z-index: 1; pointer-events: none; }
 .bar-fill { position: relative; }
+
+/* ---------- treemap ---------- */
+.treemap { display: flex; gap: 3px; height: 240px; }
+.treemap-col { display: flex; flex-direction: column; gap: 3px; }
+.treemap-tile { position: relative; border-radius: 5px; padding: 8px 10px; overflow: hidden;
+  display: flex; flex-direction: column; justify-content: flex-start; gap: 2px; color: #fff; min-width: 0; }
+.treemap-tile.on-light { color: #141310; }
+.treemap-name { font-size: 12px; font-weight: 600; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.treemap-val { font-size: 11px; opacity: .85; font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { .treemap { height: 300px; } }
+
+/* ---------- range plot ---------- */
+.range-list { display: flex; flex-direction: column; gap: 10px; }
+.range-row { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(120px, 2.4fr) auto; gap: 10px; align-items: center; }
+.range-track { position: relative; height: 4px; border-radius: 2px; background: #e4e2da; }
+.range-dot { position: absolute; top: 50%; border-radius: 50%; transform: translate(-50%, -50%); }
+.range-end { width: 7px; height: 7px; background: #c3c2b7; }
+.range-now { width: 12px; height: 12px; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.08); }
+.range-now.low { background: #2a78d6; }
+.range-now.high { background: #BE4229; }

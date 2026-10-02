@@ -854,6 +854,267 @@ function renderMenuBreakdown(body, rows, cfg) {
   draw();
 }
 
+// A single-hue sequential ramp, light to dark. Used wherever slices or tiles
+// encode magnitude rather than identity, so the reader sees "more" as "darker"
+// instead of having to decode a rainbow.
+const SEQ_RAMP = ['#184f95', '#2a78d6', '#5598e7', '#9ec5f4', '#cde2fb'];
+const seqColor = (i, n) => SEQ_RAMP[Math.min(SEQ_RAMP.length - 1, Math.floor((i / Math.max(1, n - 1)) * (SEQ_RAMP.length - 1)))];
+
+// Shared shaping for the renderers that rank grouped rows.
+function rankedItems(rows, cfg, fallbackTop) {
+  const groups = groupRows(rows, rowFields(cfg));
+  let items = [...groups].map(([name, rs]) => ({ name: String(name), value: evalMetric(cfg.value, rs), rows: rs }));
+  items = items.filter((i) => Number.isFinite(i.value));
+  items.sort(cfg.sort === 'asc' ? (a, b) => a.value - b.value : (a, b) => b.value - a.value);
+  return { items: items.slice(0, cfg.top_n || fallbackTop), total: groups.size };
+}
+
+// ---- donut: part-to-whole for a small set of named states ----
+// Only used where the parts genuinely sum to a meaningful whole (order status,
+// stock value by category); a ranked bar is better for anything else.
+function renderDonut(body, rows, cfg) {
+  const { items } = rankedItems(rows, cfg, 6);
+  if (!items.length) return;
+  const sum = items.reduce((a, i) => a + i.value, 0);
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-wrap';
+  wrap.innerHTML = '<canvas></canvas>';
+  body.appendChild(wrap);
+  const colors = items.map((it, i) => (cfg.colors && cfg.colors[it.name]) || seqColor(i, items.length));
+  const chart = new Chart(wrap.querySelector('canvas'), {
+    type: 'doughnut',
+    data: { labels: items.map((i) => i.name), datasets: [{ data: items.map((i) => i.value), backgroundColor: colors, borderColor: '#fff', borderWidth: 2 }] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '58%',
+      plugins: {
+        legend: { position: 'right', labels: { usePointStyle: true, boxWidth: 8, color: '#1B2B22' } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => ` ${ctx.label}: ${fmtValue(ctx.parsed, cfg.format)} (${sum ? ((ctx.parsed / sum) * 100).toFixed(0) : 0}%)`,
+          },
+        },
+      },
+    },
+  });
+  activeCharts.push(chart);
+}
+
+// ---- pareto: ranked bars plus a cumulative share line ----
+// The one place a second y-axis is justified: the line is a percentage of the
+// same total the bars sum to, so the two scales describe one quantity.
+function renderPareto(body, rows, cfg) {
+  const { items } = rankedItems(rows, cfg, 12);
+  if (!items.length) return;
+  const total = items.reduce((a, i) => a + i.value, 0) || 1;
+  let run = 0;
+  const cum = items.map((i) => { run += i.value; return (run / total) * 100; });
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-wrap';
+  wrap.innerHTML = '<canvas></canvas>';
+  body.appendChild(wrap);
+  const chart = new Chart(wrap.querySelector('canvas'), {
+    data: {
+      labels: items.map((i) => i.name),
+      datasets: [
+        { type: 'bar', label: cfg.bar_label || 'มูลค่า', data: items.map((i) => i.value), backgroundColor: '#2a78d6', borderRadius: 3, order: 2 },
+        { type: 'line', label: 'สะสม %', data: cum, yAxisID: 'y2', borderColor: '#A9812F', backgroundColor: '#A9812F', borderWidth: 2, pointRadius: 3, tension: 0.2, order: 1 },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: '#1B2B22' } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => (ctx.dataset.yAxisID === 'y2' ? ` สะสม ${ctx.parsed.y.toFixed(0)}%` : ` ${fmtValue(ctx.parsed.y, cfg.format)}`),
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#6b7268', maxRotation: 50, minRotation: 0, autoSkip: false } },
+        y: { grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
+        y2: { position: 'right', min: 0, max: 100, grid: { display: false }, border: { display: false }, ticks: { color: '#A9812F', callback: (v) => v + '%' } },
+      },
+    },
+  });
+  activeCharts.push(chart);
+}
+
+// ---- scatter with quadrant lines ----
+// The cut-offs are computed from the data on screen, never hard-coded: the
+// menu-engineering rule is (100 / item count) x 0.70, which changes the moment
+// the reader filters the list.
+const quadrantLines = {
+  id: 'quadrantLines',
+  afterDatasetsDraw(chart, args, opts) {
+    const { ctx, chartArea, scales } = chart;
+    if (!opts || opts.x == null) return;
+    ctx.save();
+    ctx.strokeStyle = '#b9b6ab';
+    ctx.setLineDash([4, 3]);
+    ctx.lineWidth = 1;
+    const px = scales.x.getPixelForValue(opts.x);
+    const py = scales.y.getPixelForValue(opts.y);
+    ctx.beginPath(); ctx.moveTo(px, chartArea.top); ctx.lineTo(px, chartArea.bottom); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(chartArea.left, py); ctx.lineTo(chartArea.right, py); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#8a877f';
+    ctx.font = '600 10px system-ui, sans-serif';
+    (opts.labels || []).forEach((t, i) => {
+      const lx = [px + 5, chartArea.left + 5, px + 5, chartArea.left + 5][i];
+      const ly = [chartArea.top + 12, chartArea.top + 12, chartArea.bottom - 5, chartArea.bottom - 5][i];
+      ctx.fillText(t, lx, ly);
+    });
+    ctx.restore();
+  },
+};
+
+function renderScatter(body, rows, cfg) {
+  const groups = groupRows(rows, rowFields(cfg));
+  let pts = [...groups]
+    .map(([name, rs]) => ({ name: String(name), x: evalMetric(cfg.x, rs), y: evalMetric(cfg.y, rs) }))
+    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+  if (!pts.length) return;
+
+  // A "share of the menu" axis is a share of what is actually plotted, so it is
+  // computed here rather than per group — and it moves when the reader filters.
+  ['x', 'y'].forEach((axis) => {
+    if (!cfg[axis + '_share']) return;
+    const tot = pts.reduce((a, p) => a + p[axis], 0);
+    if (tot) pts = pts.map((p) => ({ ...p, [axis]: (p[axis] / tot) * 100 }));
+  });
+
+  // "share" cut-offs are a share of the plotted set, so they must be computed here.
+  const cut = (spec, axis) => {
+    if (spec == null) return null;
+    if (typeof spec === 'number') return spec;
+    if (spec.op === 'mean') return pts.reduce((a, p) => a + p[axis], 0) / pts.length;
+    if (spec.op === 'share_rule') return (100 / pts.length) * (spec.factor || 0.7);
+    return null;
+  };
+  const qx = cut(cfg.qx, 'x');
+  const qy = cut(cfg.qy, 'y');
+
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-wrap';
+  wrap.innerHTML = '<canvas></canvas>';
+  body.appendChild(wrap);
+  const colorFor = (p) =>
+    qx == null ? '#2a78d6' : p.x >= qx && p.y >= qy ? '#0ca30c' : p.x < qx && p.y < qy ? '#BE4229' : '#2a78d6';
+  const chart = new Chart(wrap.querySelector('canvas'), {
+    type: 'scatter',
+    data: { datasets: [{ data: pts, backgroundColor: pts.map(colorFor), pointRadius: 6, pointHoverRadius: 9, borderColor: '#fff', borderWidth: 1.5 }] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        quadrantLines: { x: qx, y: qy, labels: cfg.quadrant_labels },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const p = ctx.raw;
+              return ` ${p.name} · ${cfg.x_label || 'x'} ${fmtValue(p.x, cfg.x_format)} · ${cfg.y_label || 'y'} ${fmtValue(p.y, cfg.y_format)}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { title: { display: !!cfg.x_label, text: cfg.x_label, color: '#6b7268' }, grid: { color: '#f7f5ee' }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.x_format) } },
+        y: { title: { display: !!cfg.y_label, text: cfg.y_label, color: '#6b7268' }, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.y_format) } },
+      },
+    },
+    plugins: [quadrantLines],
+  });
+  activeCharts.push(chart);
+}
+
+// ---- treemap: area as share of a whole, for many small categories ----
+// Built as nested flex rows rather than pulled in as a charting plugin; the
+// layout is a simple slice-and-dice, which is honest about area and keeps the
+// labels selectable.
+function renderTreemap(body, rows, cfg) {
+  const { items } = rankedItems(rows, cfg, 10);
+  if (!items.length) return;
+  const total = items.reduce((a, i) => a + i.value, 0) || 1;
+  const wrap = document.createElement('div');
+  wrap.className = 'treemap';
+  // One tall tile for the largest, the rest stacked beside it: the common
+  // shape for "one or two things dominate", which is what this chart is for.
+  const [first, ...rest] = items;
+  const restTotal = rest.reduce((a, i) => a + i.value, 0) || 1;
+  const tile = (it, i, pctOfParent, vertical) => {
+    const share = (it.value / total) * 100;
+    const el = document.createElement('div');
+    el.className = 'treemap-tile';
+    el.style[vertical ? 'height' : 'width'] = `${pctOfParent}%`;
+    el.style.background = seqColor(i, items.length);
+    el.title = `${it.name}: ${fmtValue(it.value, cfg.format)} (${share.toFixed(1)}%)`;
+    el.innerHTML = `<span class="treemap-name">${esc(it.name)}</span><span class="treemap-val">${esc(fmtValue(it.value, cfg.format))} · ${share.toFixed(0)}%</span>`;
+    if (i >= 3) el.classList.add('on-light');
+    return el;
+  };
+  wrap.appendChild(tile(first, 0, (first.value / total) * 100, false));
+  if (rest.length) {
+    const col = document.createElement('div');
+    col.className = 'treemap-col';
+    col.style.width = `${100 - (first.value / total) * 100}%`;
+    rest.forEach((it, i) => col.appendChild(tile(it, i + 1, (it.value / restTotal) * 100, true)));
+    wrap.appendChild(col);
+  }
+  body.appendChild(wrap);
+}
+
+// ---- range plot: where the latest value sits inside its own min–max ----
+// Each row is scaled to its own range, because the question is "is this price
+// near the cheap end or the dear end for THIS item", not how items compare.
+function renderRange(body, rows, cfg) {
+  const groups = groupRows(rows, rowFields(cfg));
+  let items = [...groups]
+    .map(([name, rs]) => ({
+      name: String(name),
+      min: evalMetric(cfg.min, rs),
+      max: evalMetric(cfg.max, rs),
+      last: evalMetric(cfg.last, rs),
+    }))
+    .filter((i) => Number.isFinite(i.min) && Number.isFinite(i.max));
+  items.sort((a, b) => (b.max - b.min) - (a.max - a.min));
+  items = items.slice(0, cfg.top_n || 10);
+  if (!items.length) return;
+
+  const list = document.createElement('div');
+  list.className = 'range-list';
+  items.forEach((it) => {
+    const span = it.max - it.min;
+    const t = span > 0 && Number.isFinite(it.last) ? (it.last - it.min) / span : 0;
+    const pct = Math.max(0, Math.min(100, t * 100));
+    const high = t > 0.5;
+    const hasNow = Number.isFinite(it.last);
+    const row = document.createElement('div');
+    row.className = 'range-row';
+    row.title = `${it.name}: ต่ำสุด ${fmtValue(it.min, cfg.format)} · สูงสุด ${fmtValue(it.max, cfg.format)}` +
+      (hasNow ? ` · ${cfg.marker_label || 'ล่าสุด'} ${fmtValue(it.last, cfg.format)}` : '');
+    row.innerHTML = `
+      <span class="bar-name">${esc(it.name)}</span>
+      <span class="range-track">
+        <span class="range-dot range-end" style="left:0"></span>
+        <span class="range-dot range-end" style="left:100%"></span>
+        ${hasNow ? `<span class="range-dot range-now ${high ? 'high' : 'low'}" style="left:${pct}%"></span>` : ''}
+      </span>
+      <span class="bar-value">${esc(fmtValue(hasNow ? it.last : it.max, cfg.format))}</span>`;
+    list.appendChild(row);
+  });
+  body.appendChild(list);
+  body.insertAdjacentHTML(
+    'beforeend',
+    `<p class="widget-foot">${esc(cfg.foot || 'แถบคือช่วงราคาที่เคยซื้อของรายการนั้นเอง จุดเข้มคือราคาล่าสุด')}</p>`
+  );
+}
+
 const RENDERERS = {
   kpi: renderKpi,
   bar: renderBar,
@@ -861,6 +1122,11 @@ const RENDERERS = {
   table: renderTable,
   sensitivity: renderSensitivity,
   menu_breakdown: renderMenuBreakdown,
+  donut: renderDonut,
+  pareto: renderPareto,
+  scatter: renderScatter,
+  treemap: renderTreemap,
+  range: renderRange,
 };
 
 // ---------- change password ----------
