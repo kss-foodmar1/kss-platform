@@ -443,7 +443,7 @@ async function renderFmhDiagnostics(main) {
       btn.textContent = 'กำลังถาม FMH…';
       out.innerHTML = '';
       try {
-        const { result } = await api('/api/admin/fmh-probe', { method: 'POST', body: { company_id: companyId, probe: key } });
+        const { result } = await api('/api/admin/fmh-probe', { method: 'POST', body: JSON.stringify({ company_id: companyId, probe: key }) });
         out.innerHTML = fmhProbeView(result, key);
       } catch (e) {
         out.innerHTML = `<p class="probe-bad">${esc(e.message || 'เรียกไม่สำเร็จ')}</p>`;

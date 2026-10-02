@@ -40,6 +40,12 @@ app.get('*', (req, res, next) => {
 });
 
 app.use((err, req, res, next) => {
+  // A body express could not parse is the caller's mistake, not ours. Saying
+  // "Server error" for it sends whoever is debugging to the wrong place.
+  if (err && err.type === 'entity.parse.failed') {
+    console.error('Malformed JSON body on', req.method, req.originalUrl);
+    return res.status(400).json({ error: 'ส่งข้อมูลมาในรูปแบบที่อ่านไม่ได้' });
+  }
   console.error(err);
   res.status(500).json({ error: 'Server error' });
 });
