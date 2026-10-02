@@ -3,6 +3,7 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const cron = require('node-cron');
 const path = require('path');
+const fs = require('fs');
 
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
@@ -14,13 +15,56 @@ const pool = require('./db/pool');
 
 const app = express();
 
+// Cache busting for the app shell.
+//
+// "no-cache, must-revalidate" asks the browser to revalidate, and twice now it
+// has served a stale app.js anyway while the new server code was already
+// running — which produces the worst kind of bug report, because the symptom
+// (a 500, then "[object Object]") points at the new server code rather than at
+// a months-old script still in the browser's memory cache.
+//
+// So the asset URLs change instead of asking nicely: every deploy gets a new
+// stamp, index.html is rewritten to reference /app.js?v=<stamp>, and a URL the
+// browser has never seen cannot be served from cache. The stamp is the newest
+// mtime among the shell files, so it changes exactly when they do and stays
+// stable across restarts that changed nothing.
+const SHELL_FILES = ['app.js', 'admin.js', 'style.css', 'index.html'];
+const ASSET_VERSION = (() => {
+  try {
+    const newest = SHELL_FILES.reduce((max, f) => {
+      const t = fs.statSync(path.join(__dirname, 'public', f)).mtimeMs;
+      return t > max ? t : max;
+    }, 0);
+    return Math.floor(newest).toString(36);
+  } catch {
+    return Date.now().toString(36); // can't stat: fall back to per-boot
+  }
+})();
+
+const SHELL_HTML = (() => {
+  const raw = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+  return raw.replace(/(src|href)="\/(app\.js|admin\.js|style\.css)"/g, `$1="/$2?v=${ASSET_VERSION}"`);
+})();
+
+function sendShell(res) {
+  res.set('Cache-Control', 'no-cache, must-revalidate');
+  res.type('html').send(SHELL_HTML);
+}
+
 app.use(express.json());
 app.use(cookieParser());
-// no-cache on the HTML/JS/CSS app shell so a browser refresh always picks up
-// the latest deploy — stale cached index.html/app.js was a recurring confusion.
+
+// The shell is served from memory with versioned asset URLs, so it never comes
+// from the static handler.
+app.get(['/', '/index.html'], (req, res) => sendShell(res));
+
 app.use(
   express.static(path.join(__dirname, 'public'), {
-    setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache, must-revalidate'),
+    setHeaders: (res, filePath) => {
+      // A versioned URL can be cached hard; anything else must revalidate.
+      const versioned = SHELL_FILES.some((f) => filePath.endsWith(path.sep + f));
+      res.setHeader('Cache-Control', versioned ? 'no-cache, must-revalidate' : 'public, max-age=300');
+    },
   })
 );
 
@@ -35,8 +79,7 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 // SPA fallback: any non-API route serves the app shell.
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) return next();
-  res.set('Cache-Control', 'no-cache, must-revalidate');
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  sendShell(res);
 });
 
 app.use((err, req, res, next) => {
