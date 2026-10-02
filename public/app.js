@@ -130,6 +130,16 @@ function evalMetric(m, rows) {
       return 0;
   }
 }
+// A widget's "group_by" is the grouping FMH applied server-side when it is a
+// string ('supplier', 'menu'); the fields the renderer groups rows by are
+// `group_by_field`. Where no server-side grouping is used, `group_by` is itself
+// that field list, which is how every widget written before grouping existed
+// still reads correctly.
+function rowFields(cfg) {
+  if (cfg.group_by_field) return cfg.group_by_field;
+  return Array.isArray(cfg.group_by) ? cfg.group_by : null;
+}
+
 function groupRows(rows, groupBy) {
   const groups = new Map();
   rows.forEach((r) => {
@@ -547,13 +557,23 @@ function renderKpi(body, rows, cfg) {
 function barColor(value, cfg) {
   if (cfg.color_mode === 'signed') return value < 0 ? 'var(--chili)' : 'var(--series-blue)';
   if (cfg.color_mode === 'margin') return value < 0 ? 'var(--chili)' : value < 20 ? 'var(--brass)' : 'var(--status-good)';
+  // A target makes "good" directional: food cost is better low, margin better
+  // high, so the widget says which way it reads rather than the renderer
+  // guessing from the number's sign.
+  if (cfg.threshold != null) {
+    const lowerIsBetter = cfg.lower_is_better !== false;
+    const miss = lowerIsBetter ? value > cfg.threshold : value < cfg.threshold;
+    if (!miss) return 'var(--status-good)';
+    const far = lowerIsBetter ? value > cfg.threshold * 1.15 : value < cfg.threshold * 0.85;
+    return far ? 'var(--chili)' : 'var(--brass)';
+  }
   return cfg.color || 'var(--series-blue)';
 }
 
 // Ranked horizontal bars as HTML rows (name · bar · value): every value is
 // printed, long names truncate with a tooltip, and it stays readable on phones.
 function renderBar(body, rows, cfg) {
-  const groups = groupRows(rows, cfg.group_by);
+  const groups = groupRows(rows, rowFields(cfg));
   let items = [...groups].map(([name, rs]) => ({
     name: String(name),
     value: evalMetric(cfg.value, rs),
@@ -578,11 +598,21 @@ function renderBar(body, rows, cfg) {
     const valueText = fmtValue(item.value, cfg.format);
     const row = document.createElement('div');
     row.className = 'bar-row';
-    row.title = `${label}: ${valueText}`;
+    let mark = '';
+    let targetLine = '';
+    if (cfg.threshold != null) {
+      const lowerIsBetter = cfg.lower_is_better !== false;
+      const miss = lowerIsBetter ? item.value > cfg.threshold : item.value < cfg.threshold;
+      // Colour alone should never carry the verdict.
+      mark = miss ? ' ▼' : ' ✓';
+      const tPct = Math.min(100, (Math.abs(cfg.threshold) / maxAbs) * 100);
+      targetLine = `<span class="bar-target" style="left:${tPct}%" title="เป้า ${esc(fmtValue(cfg.threshold, cfg.format))}"></span>`;
+    }
+    row.title = `${label}: ${valueText}${cfg.threshold != null ? ` · เป้า ${fmtValue(cfg.threshold, cfg.format)}` : ''}`;
     row.innerHTML = `
       <span class="bar-name">${esc(label)}</span>
-      <span class="bar-track"><span class="bar-fill" style="width:${width}%;background:${barColor(item.value, cfg)}"></span></span>
-      <span class="bar-value">${esc(valueText)}</span>`;
+      <span class="bar-track">${targetLine}<span class="bar-fill" style="width:${width}%;background:${barColor(item.value, cfg)}"></span></span>
+      <span class="bar-value">${esc(valueText + mark)}</span>`;
     list.appendChild(row);
   });
   body.appendChild(list);
