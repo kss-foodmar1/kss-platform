@@ -331,12 +331,128 @@ function renderAdminMain() {
   if (sel.type === 'company') return renderCompanyDetail(main, sel.id);
   if (sel.type === 'new-company') return renderNewCompany(main);
   if (sel.type === 'catalog') return renderCatalog(main);
+  if (sel.type === 'fmh') return renderFmhDiagnostics(main);
   if (sel.type === 'staff') {
     main.innerHTML = `<h1 class="admin-h1">ทีม KSS</h1>
       <p class="muted">บัญชีทีม KSS เห็นทุกบริษัทและใช้ Admin Console ได้</p>
       <section class="admin-card"><div class="staff-users"></div></section>`;
     return renderUserManager(main.querySelector('.staff-users'), { kss: true });
   }
+}
+
+// ---------- FMH Diagnostics ----------
+// Settles questions about what the FMH API actually does, using a client's own
+// key. Each probe is read-only but spends a little of their monthly row quota,
+// so nothing runs until the button is pressed.
+const PROBE_LIST = [
+  { k: 'catalog', n: 'รายงานทั้งหมดที่บัญชีนี้เรียกได้',
+    d: 'ดึง catalog มาดูว่ามีกี่รายงาน รายงานไหนจัดกลุ่มฝั่ง server ได้ และตัวไหนมีตัวกรองสถานะ ไม่กินโควตาแถว' },
+  { k: 'statuses_purchase', n: 'ยอดสั่งซื้อรวมใบที่ยกเลิกอยู่หรือไม่',
+    d: 'เทียบยอดเมื่อไม่ส่งตัวกรองสถานะ กับเมื่อนับเฉพาะใบที่ยืนยันแล้ว ถ้าต่างกันแปลว่าตัวเลขที่ลูกค้าเห็นสูงเกินจริง' },
+  { k: 'statuses_orders', n: 'คำสั่งซื้อรายสาขารวมใบที่ยกเลิกหรือไม่',
+    d: 'ทดสอบเดียวกันกับรายงาน order_items_by_branch' },
+  { k: 'date_filter', n: 'ตัวกรองวันที่รับรูปแบบไหนบ้าง',
+    d: 'ลองส่ง date_range สี่แบบ เพื่อดูว่าแบบที่แอปใช้อยู่ถูกต้องไหม และเลือกฟิลด์วันที่ฝั่ง server ได้หรือเปล่า' },
+  { k: 'group_by', n: 'จัดกลุ่มฝั่ง server ประหยัดโควตาได้แค่ไหน',
+    d: 'เทียบจำนวนแถวระหว่างดึงแบบรายการกับจัดกลุ่มตามสาขา ซัพพลายเออร์ หมวด และสินค้า' },
+];
+
+function fmhProbeView(r, key) {
+  if (r.error) return `<p class="probe-bad">${esc(r.error)}</p>${r.detail ? `<pre>${esc(r.detail)}</pre>` : ''}`;
+  if (key === 'catalog') {
+    const g = r.reports.filter((x) => x.groupBy.length > 1).length;
+    const st = r.reports.filter((x) => x.hasStatuses).length;
+    return `<p><b>${r.count} รายงาน</b> · จัดกลุ่มฝั่ง server ได้ ${g} รายงาน · มีตัวกรองสถานะ ${st} รายงาน
+        ${r.apiVersion ? ` · API version ${esc(r.apiVersion)}` : ''}</p>
+      ${r.deprecation ? `<p class="probe-bad">FMH ส่ง deprecation header มาแล้ว: ${esc(r.deprecation)}${r.sunset ? ` · ปิดใช้ ${esc(r.sunset)}` : ''}</p>` : ''}
+      <table class="probe-table"><thead><tr><th>report</th><th>scope</th><th>cards</th><th>group_by</th><th>statuses</th></tr></thead><tbody>
+      ${r.reports.map((x) => `<tr><td><code>${esc(x.key)}</code><br><span class="muted">${esc(x.name)}</span></td>
+        <td>${esc(x.scope || '')}</td><td>${x.cards}</td>
+        <td>${x.groupBy.length ? x.groupBy.map((v) => `<code>${esc(v)}</code>`).join(' ') : '—'}</td>
+        <td>${x.hasStatuses ? 'มี' : '—'}</td></tr>`).join('')}
+      </tbody></table>`;
+  }
+  if (key === 'statuses_purchase' || key === 'statuses_orders') {
+    const fmt = (m) => (m ? `${m.total.toLocaleString('th-TH', { maximumFractionDigits: 0 })} <span class="muted">(${esc(m.field)})</span>` : '—');
+    const bad = r.overstatedPct && Math.abs(r.overstatedPct) >= 0.1;
+    return `<p class="${bad ? 'probe-bad' : 'probe-good'}">${esc(r.verdict || '')}</p>
+      <table class="probe-table"><thead><tr><th></th><th>แถว</th><th>มูลค่ารวม</th><th>จำนวนรวม</th></tr></thead><tbody>
+        <tr><td>ไม่ส่งตัวกรองสถานะ (แบบที่แอปทำอยู่)</td><td>${r.noFilter.rows}</td><td>${fmt(r.noFilter.money)}</td><td>${fmt(r.noFilter.qty)}</td></tr>
+        <tr><td>นับเฉพาะใบที่ยืนยันแล้ว</td><td>${r.committed.rows}</td><td>${fmt(r.committed.money)}</td><td>${fmt(r.committed.qty)}</td></tr>
+      </tbody></table>
+      <p class="muted">ช่วงที่ทดสอบ ${esc(r.window.start)} ถึง ${esc(r.window.end)} · จัดกลุ่มตาม ${esc(r.groupBy || 'รายการ')}
+      ${r.quota ? ` · โควตาเหลือ ${Number(r.quota.rows_remaining || 0).toLocaleString('th-TH')} แถว` : ''}</p>
+      ${r.sampleRow ? `<pre>${esc(JSON.stringify(r.sampleRow, null, 1))}</pre>` : ''}`;
+  }
+  if (key === 'date_filter') {
+    return `<table class="probe-table"><thead><tr><th>รูปแบบที่ส่ง</th><th>ผล</th><th>แถว</th><th>ข้อความจาก FMH</th></tr></thead><tbody>
+      ${r.results.map((x) => `<tr><td>${esc(x.name)}</td>
+        <td class="${x.ok ? 'probe-good' : 'probe-bad'}">${x.ok ? 'ผ่าน' : 'HTTP ' + x.status}</td>
+        <td>${x.rows ?? '—'}</td><td class="muted">${esc(x.message)}</td></tr>`).join('')}
+    </tbody></table>`;
+  }
+  if (key === 'group_by') {
+    return `${r.saving ? `<p class="probe-good">${esc(r.saving)}</p>` : ''}
+      <table class="probe-table"><thead><tr><th>group_by</th><th>ผล</th><th>แถวที่ได้</th><th>ฟิลด์ที่คืนมา</th></tr></thead><tbody>
+      ${r.results.map((x) => `<tr><td><code>${esc(x.group)}</code></td>
+        <td class="${x.ok ? 'probe-good' : 'probe-bad'}">${x.ok ? 'ผ่าน' : 'HTTP ' + x.status}</td>
+        <td>${x.rows ?? '—'}</td>
+        <td class="muted">${x.fields.length ? x.fields.map((f) => `<code>${esc(f)}</code>`).join(' ') : esc(x.message)}</td></tr>`).join('')}
+    </tbody></table>
+      <p class="muted">ช่วงที่ทดสอบ ${esc(r.window.start)} ถึง ${esc(r.window.end)} · นับเฉพาะใบที่ยืนยันแล้ว</p>`;
+  }
+  return `<pre>${esc(JSON.stringify(r, null, 1))}</pre>`;
+}
+
+async function renderFmhDiagnostics(main) {
+  if (!adminState.companies) {
+    main.innerHTML = '<h1 class="admin-h1">FMH Diagnostics</h1><p class="muted">กำลังโหลดรายชื่อบริษัท…</p>';
+    try {
+      const { companies } = await api('/api/admin/companies');
+      adminState.companies = companies;
+    } catch {
+      adminState.companies = [];
+    }
+  }
+  const companies = (adminState.companies || []).filter((c) => c.fmh_configured);
+  main.innerHTML = `<h1 class="admin-h1">FMH Diagnostics</h1>
+    <p class="muted">ถาม FMH ตรง ๆ ว่า API ทำอะไรได้บ้าง โดยใช้ key ของลูกค้ารายที่เลือก ทุกการทดสอบเป็นการอ่านอย่างเดียว
+      ไม่แก้ข้อมูลใด ๆ แต่ใช้โควตาแถวรายเดือนของลูกค้าเล็กน้อย จึงต้องกดเองทีละรายการ</p>
+    ${companies.length
+      ? `<section class="admin-card">
+          <div class="field"><label>บริษัทที่จะใช้ทดสอบ</label>
+            <select id="probe-company">${companies.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
+          </div>
+        </section>
+        <div class="probe-list">${PROBE_LIST.map((p) => `<section class="admin-card probe" data-probe="${p.k}">
+            <div class="probe-head">
+              <div><h3>${esc(p.n)}</h3><p class="muted">${esc(p.d)}</p></div>
+              <button type="button" class="btn small probe-run">รันทดสอบ</button>
+            </div>
+            <div class="probe-out"></div>
+          </section>`).join('')}</div>`
+      : `<section class="admin-card"><p class="muted">ยังไม่มีบริษัทที่ตั้งค่า FMH API key ไว้ ตั้งค่าก่อนจึงจะทดสอบได้</p></section>`}`;
+
+  main.querySelectorAll('.probe-run').forEach((btn) =>
+    btn.addEventListener('click', async () => {
+      const card = btn.closest('.probe');
+      const key = card.dataset.probe;
+      const out = card.querySelector('.probe-out');
+      const companyId = Number(el('probe-company').value);
+      btn.disabled = true;
+      btn.textContent = 'กำลังถาม FMH…';
+      out.innerHTML = '';
+      try {
+        const { result } = await api('/api/admin/fmh-probe', { method: 'POST', body: { company_id: companyId, probe: key } });
+        out.innerHTML = fmhProbeView(result, key);
+      } catch (e) {
+        out.innerHTML = `<p class="probe-bad">${esc(e.message || 'เรียกไม่สำเร็จ')}</p>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'รันอีกครั้ง';
+      }
+    })
+  );
 }
 
 function tierStatusSelects(company = {}) {

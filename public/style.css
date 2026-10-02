@@ -290,3 +290,23 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
 
 .catalog-table td { font-size: 13px; }
 .inactive-row td { opacity: .55; }
+
+/* ---------- FMH Diagnostics ---------- */
+.probe-list { display: flex; flex-direction: column; gap: 14px; }
+.probe-head { display: flex; align-items: flex-start; gap: 16px; justify-content: space-between; }
+.probe-head h3 { margin: 0 0 3px; font-size: 15px; }
+.probe-head p { margin: 0; font-size: 13px; max-width: 62ch; }
+.probe-head .btn { flex: none; }
+.probe-out:not(:empty) { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line, #e4e2da); }
+.probe-out pre { font-size: 12px; overflow-x: auto; background: rgba(127,127,127,.08); padding: 10px; border-radius: 6px; }
+.probe-good { color: #0a7a0a; font-weight: 600; }
+.probe-bad { color: #c0392b; font-weight: 600; }
+.probe-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+.probe-table th { text-align: left; font-weight: 600; font-size: 11px; letter-spacing: .05em; text-transform: uppercase;
+  opacity: .6; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line, #e4e2da); }
+.probe-table td { padding: 7px 10px 7px 0; border-bottom: 1px solid rgba(127,127,127,.14); vertical-align: top; }
+.probe-table code { font-size: 11.5px; background: rgba(127,127,127,.12); padding: 1px 4px; border-radius: 3px; }
+@media (max-width: 640px) {
+  .probe-head { flex-direction: column; gap: 10px; }
+  .probe-table { display: block; overflow-x: auto; }
+}

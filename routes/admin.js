@@ -6,6 +6,8 @@
 //   widgets              place catalog templates on a dashboard, override
 //                        title/config, reorder, remove
 //   widget templates     the Widget Catalog itself (CRUD)
+//   fmh diagnostics      read-only probes against a client's FMH account, to
+//                        settle what the API actually does rather than assume
 // Users and the FMH key are handled by routes/users.js and routes/settings.js,
 // which accept a company_id from KSS staff.
 const express = require('express');
@@ -14,6 +16,7 @@ const { requireAuth, requireSuperadmin } = require('../middleware/auth');
 const { wrap } = require('../lib/access');
 const { FMH_REPORTS, syncCompany, syncOne, getSyncStatus, getCached } = require('../lib/fmhCache');
 const { CHART_TYPES, listWidgets } = require('../lib/widgetCatalog');
+const probe = require('../lib/fmhProbe');
 
 const router = express.Router();
 router.use(requireAuth, requireSuperadmin);
@@ -356,6 +359,38 @@ router.patch(
     );
     if (!r.affectedRows) return res.status(404).json({ error: 'Template not found' });
     res.json({ ok: true });
+  })
+);
+
+// ---------- FMH diagnostics ----------
+// Read-only probes. They cost a little of the company's FMH row quota, so each
+// one is requested explicitly rather than run on page load.
+const PROBES = {
+  catalog: (id) => probe.probeCatalog(id),
+  statuses_purchase: (id) =>
+    probe.probeStatuses(id, { reportKey: 'purchase_analysis', cardKey: 'purchase_analysis_table', groupBy: 'branch' }),
+  statuses_orders: (id) =>
+    probe.probeStatuses(id, { reportKey: 'order_items_by_branch', cardKey: 'oibb_table', groupBy: 'branch' }),
+  date_filter: (id) => probe.probeDateFilter(id),
+  group_by: (id) => probe.probeGroupBy(id),
+};
+
+router.post(
+  '/fmh-probe',
+  wrap(async (req, res) => {
+    const companyId = Number(req.body?.company_id);
+    const name = String(req.body?.probe || '');
+    if (!companyId) return bad(res, 'ต้องระบุ company_id');
+    if (!PROBES[name]) return bad(res, `ไม่รู้จัก probe "${name}"`);
+    const [[c]] = await pool.query(`SELECT fmh_api_key_enc FROM companies WHERE id = ?`, [companyId]);
+    if (!c) return res.status(404).json({ error: 'ไม่พบบริษัทนี้' });
+    if (!c.fmh_api_key_enc) return bad(res, 'บริษัทนี้ยังไม่ได้ตั้งค่า FMH API key');
+    try {
+      const result = await PROBES[name](companyId);
+      res.json({ probe: name, company_id: companyId, result });
+    } catch (err) {
+      res.status(502).json({ error: `เรียก FMH ไม่สำเร็จ: ${err.message}` });
+    }
   })
 );
 
