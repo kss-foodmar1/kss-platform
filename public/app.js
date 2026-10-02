@@ -110,6 +110,19 @@ function evalMetric(m, rows) {
       return rows.reduce((s, r) => s + num(pick(r, m.field)), 0);
     case 'count':
       return rows.length;
+    // min/max/avg ignore rows where the field is missing, so one blank line
+    // can't drag an average down or make a minimum read as zero.
+    case 'min':
+    case 'max':
+    case 'avg': {
+      const vals = rows
+        .map((r) => pick(r, m.field))
+        .filter((v) => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v)))
+        .map(Number);
+      if (!vals.length) return 0;
+      if (m.op === 'avg') return vals.reduce((a, b) => a + b, 0) / vals.length;
+      return vals.reduce((a, b) => (m.op === 'min' ? Math.min(a, b) : Math.max(a, b)));
+    }
     case 'count_distinct':
       return new Set(rows.map((r) => pick(r, m.field)).filter((v) => v !== undefined && v !== null && v !== '')).size;
     case 'div': {
@@ -130,6 +143,86 @@ function evalMetric(m, rows) {
       return 0;
   }
 }
+// ---------- the row layer ----------
+// evalMetric aggregates ACROSS rows. Itemized widgets need the other axis:
+// arithmetic WITHIN a row, so a widget can say "invoice total minus GRN total"
+// and then keep only the lines where that is not zero. Three-way match, short
+// deliveries, lead times and the data-quality checks are all that same shape,
+// so it is one small evaluator rather than a flag per widget.
+//
+// An expression is a number, a field name, {field}, {const}, or {op, a, b}.
+function evalRow(expr, row) {
+  if (expr === null || expr === undefined) return 0;
+  if (typeof expr === 'number') return expr;
+  if (typeof expr === 'string') return num(row[expr]);
+  if (expr.const !== undefined) return expr.const;
+  if (expr.field !== undefined) return num(pick(row, expr.field));
+  const a = () => evalRow(expr.a, row);
+  const b = () => evalRow(expr.b, row);
+  switch (expr.op) {
+    case 'add': return a() + b();
+    case 'sub': return a() - b();
+    case 'mul': return a() * b();
+    case 'div': { const d = b(); return d ? a() / d : 0; }
+    case 'pct_of': { const d = b(); return d ? (a() / d) * 100 : 0; }
+    case 'abs': return Math.abs(a());
+    // Whole days between two date fields, later minus earlier. Returns null
+    // when either end is missing, so "not delivered yet" never reads as 0 days.
+    case 'days': {
+      const x = dateOnly(pick(row, expr.from)), y = dateOnly(pick(row, expr.to));
+      if (!x || !y) return null;
+      return Math.round((Date.parse(y) - Date.parse(x)) / 86400000);
+    }
+    default: return 0;
+  }
+}
+
+function dateOnly(v) {
+  if (!v) return null;
+  const s = String(v).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
+const isBlank = (v) => v === null || v === undefined || String(v).trim() === '';
+
+// A predicate over one row. Numeric comparisons run through evalRow, so either
+// side can be a field, a constant or arithmetic.
+function rowMatches(rule, row) {
+  if (!rule) return true;
+  switch (rule.op) {
+    case 'and': return (rule.rules || []).every((r) => rowMatches(r, row));
+    case 'or': return (rule.rules || []).some((r) => rowMatches(r, row));
+    case 'not': return !rowMatches(rule.rule, row);
+    case 'blank': return isBlank(pick(row, rule.field));
+    case 'present': return !isBlank(pick(row, rule.field));
+    // Values that should agree but don't. The tolerance is what keeps rounding
+    // noise out of an exception list nobody would then trust.
+    case 'differs': return Math.abs(evalRow(rule.a, row) - evalRow(rule.b, row)) > (rule.tolerance ?? 0.01);
+    case 'gt': return evalRow(rule.a, row) > evalRow(rule.b, row);
+    case 'gte': return evalRow(rule.a, row) >= evalRow(rule.b, row);
+    case 'lt': return evalRow(rule.a, row) < evalRow(rule.b, row);
+    case 'lte': return evalRow(rule.a, row) <= evalRow(rule.b, row);
+    case 'matches': return new RegExp(rule.pattern).test(String(pick(row, rule.field) ?? ''));
+    default: return true;
+  }
+}
+
+// Adds the widget's derived columns, then keeps the rows its filter selects.
+// Returns a new array; the cached rows other widgets read stay untouched.
+function applyRowLayer(rows, cfg) {
+  if (!rows) return [];
+  const derived = cfg.derived || [];
+  let out = derived.length
+    ? rows.map((r) => {
+        const copy = { ...r };
+        derived.forEach((d) => { copy[d.field] = evalRow(d.expr, r); });
+        return copy;
+      })
+    : rows;
+  if (cfg.row_filter) out = out.filter((r) => rowMatches(cfg.row_filter, r));
+  return out;
+}
+
 // A widget's "group_by" is the grouping FMH applied server-side when it is a
 // string ('supplier', 'menu'); the fields the renderer groups rows by are
 // `group_by_field`. Where no server-side grouping is used, `group_by` is itself
@@ -482,6 +575,19 @@ class DashboardView {
          </div>`
       );
     }
+    // A pull that hit the page cap holds only part of the period. Say which
+    // ones, because every widget reading them is drawing an incomplete picture.
+    const clipped = Object.entries(this.results)
+      .filter(([, r]) => r && r.meta && r.meta.quota && r.meta.quota.truncated)
+      .map(([k]) => k);
+    if (clipped.length) {
+      bar.insertAdjacentHTML(
+        'beforeend',
+        `<div class="error-msg" style="margin:4px 0 0;">ข้อมูลบางรายงานถูกตัดที่ ${Number(
+          this.results[clipped[0]].meta.quota.row_cap || 0
+        ).toLocaleString('th-TH')} แถว (${clipped.map(esc).join(', ')}) — ตัวเลขที่เห็นยังไม่ครบทั้งช่วง ควรแคบช่วงวันลง</div>`
+      );
+    }
     if (keyMissing) bar.insertAdjacentHTML('beforeend', `<div class="error-msg" style="margin:4px 0 0;">${esc(keyMissingMessage())}</div>`);
     this.statusEl.appendChild(bar);
 
@@ -517,9 +623,22 @@ class DashboardView {
         body.innerHTML = `<p class="muted">${esc(res.code === 'FMH_KEY_MISSING' ? 'ยังไม่มีข้อมูล' : res.error)}</p>`;
         return;
       }
-      const rows = this.rowsFor(key);
+      const cfg = widget.config || {};
+      const raw = this.rowsFor(key);
+      const rows = applyRowLayer(raw, cfg);
       if (!rows.length) {
-        body.innerHTML = '<p class="muted">ไม่พบข้อมูลในช่วงวันที่เลือก</p>';
+        // Three different situations used to share one sentence, and it named
+        // the date range even for sources that carry no date — which sent me
+        // looking at the range picker when the pull itself was empty.
+        const filtered = raw.length && !rows.length;
+        const dated = !!(this.sources[key] && this.sources[key].date_field) && this.hasDateSource;
+        body.innerHTML = `<p class="muted">${esc(
+          filtered
+            ? cfg.empty_message || 'ไม่พบรายการที่เข้าเงื่อนไขของ widget นี้'
+            : dated
+              ? 'ไม่พบข้อมูลในช่วงวันที่เลือก'
+              : 'รายงานนี้ไม่มีข้อมูลสำหรับบริษัทนี้'
+        )}</p>`;
         return;
       }
       const renderer = RENDERERS[widget.chart_type];
@@ -528,7 +647,7 @@ class DashboardView {
         return;
       }
       try {
-        renderer(body, rows, widget.config || {});
+        renderer(body, rows, cfg);
       } catch (err) {
         console.error('Widget render failed', widget, err);
         body.innerHTML = `<p class="muted">แสดงผล widget นี้ไม่สำเร็จ (${esc(err.message)})</p>`;
