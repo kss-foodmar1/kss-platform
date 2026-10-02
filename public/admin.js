@@ -389,7 +389,7 @@ function fmhProbeView(r, key) {
   if (key === 'join_keys') {
     return `${r.pairs.map((p) => {
       if (p.error) return `<div class="probe-pair"><b>${esc(p.name)}</b><p class="probe-bad">${esc(p.error)}</p></div>`;
-      const cls = p.pct >= 90 ? 'probe-good' : p.pct >= 50 ? '' : 'probe-bad';
+      const cls = p.sharesNamespace === false ? 'probe-bad' : p.pct >= 95 ? 'probe-good' : '';
       return `<div class="probe-pair">
         <b>${esc(p.name)}</b>
         <p class="${cls}">${p.pct != null ? `ตรงกัน ${p.pct}%` : ''} — ${esc(p.verdict || '')}</p>
@@ -397,7 +397,7 @@ function fmhProbeView(r, key) {
           <tr><td>${esc(p.a)}</td><td><code>${esc(p.field)}</code></td><td>${p.aRows ?? '—'} แถว</td><td>${p.aCodes ?? '—'} รหัสไม่ซ้ำ</td><td>${p.aHasField === false ? '<span class="probe-bad">ไม่มีฟิลด์นี้</span>' : ''}</td></tr>
           <tr><td>${esc(p.b)}</td><td><code>${esc(p.bField)}</code></td><td>${p.bRows ?? '—'} แถว</td><td>${p.bCodes ?? '—'} รหัสไม่ซ้ำ</td><td>${p.bHasField === false ? '<span class="probe-bad">ไม่มีฟิลด์นี้</span>' : ''}</td></tr>
         </tbody></table>
-        ${p.missed && p.missed.length ? `<p class="muted">ตัวอย่างรหัสที่หาคู่ไม่เจอ: ${p.missed.map((m) => `<code>${esc(m)}</code>`).join(' ')}</p>` : ''}
+        ${p.missed && p.missed.length ? `<p class="muted">อยู่เฉพาะใน <code>${esc(p.smallSide || '')}</code>: ${p.missed.map((m) => `<code>${esc(m.code)}</code>${m.name ? ` ${esc(m.name)}` : ''}`).join(' · ')}</p>` : ''}
       </div>`;
     }).join('')}
     <p class="muted">ช่วงที่ทดสอบ ${esc(r.window.start)} ถึง ${esc(r.window.end)} · อ่านแบบจัดกลุ่มตามสินค้า จึงกินโควตาหลักสิบแถว</p>`;
