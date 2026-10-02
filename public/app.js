@@ -143,6 +143,85 @@ function evalMetric(m, rows) {
       return 0;
   }
 }
+// ---------- the pivot ----------
+// Up to here a widget reads one report. The numbers that only KSS can produce
+// need two: CK sales sit in the COGS report, CK purchases in purchase
+// analysis, and the margin that matters is the one between them. FMH will not
+// compute that, because no single report spans both.
+//
+// So the dashboard does it, the way someone would in a spreadsheet: bucket
+// each report by a shared key (a month, a product code), total the columns
+// that matter inside each bucket, and line the buckets up side by side. The
+// result is an ordinary row array, which means every renderer, the row layer
+// and the CSV export all work on it unchanged.
+//
+// The join is an outer join on purpose: a month with purchases but no sales is
+// exactly the kind of thing worth seeing, and an inner join would hide it.
+function bucketOf(value, bucket) {
+  const d = dateOnly(value);
+  if (!d) return null;
+  // The first of the month rather than "2026-09": still one bucket per month,
+  // but a real date, so it sorts right and the line renderer can plot it.
+  if (bucket === 'month') return d.slice(0, 7) + '-01';
+  if (bucket === 'week') {
+    const t = new Date(d + 'T00:00:00Z');
+    const dow = (t.getUTCDay() + 6) % 7; // Monday = 0
+    t.setUTCDate(t.getUTCDate() - dow);
+    return t.toISOString().slice(0, 10);
+  }
+  return d;
+}
+
+// The join key for one row, as a string. `spec` is a field name, an array of
+// fallback field names, or { field, bucket } for dates.
+function keyOf(row, spec) {
+  if (!spec) return null;
+  if (spec.bucket) {
+    const v = bucketOf(pick(row, spec.field), spec.bucket);
+    return v;
+  }
+  const v = pick(row, spec.field || spec);
+  return v === undefined || v === null || v === '' ? null : String(v).trim();
+}
+
+function pivotRows(rowsByAlias, cfg) {
+  const spec = cfg.pivot;
+  if (!spec) return null;
+  const aliases = Object.keys(spec.key);
+
+  // One bucket per key value, per alias.
+  const buckets = new Map(); // key -> { [alias]: rows[] }
+  aliases.forEach((alias) => {
+    (rowsByAlias[alias] || []).forEach((row) => {
+      const k = keyOf(row, spec.key[alias]);
+      if (k === null) return; // a row with no key cannot be lined up with anything
+      if (!buckets.has(k)) buckets.set(k, {});
+      (buckets.get(k)[alias] ||= []).push(row);
+    });
+  });
+
+  const out = [...buckets.entries()].map(([key, byAlias]) => {
+    const row = { [spec.key_field || 'key']: key };
+    (spec.columns || []).forEach((c) => {
+      const side = byAlias[c.from] || [];
+      // `first` carries a label across (a product name next to its code);
+      // everything else is an aggregate over that side's rows.
+      if (c.first) {
+        const hit = side.find((r) => !isBlank(pick(r, c.first)));
+        row[c.field] = hit ? pick(hit, c.first) : '';
+      } else {
+        row[c.field] = evalMetric(c.metric, side);
+      }
+    });
+    // Keeping the per-side row counts makes a thin month obvious instead of
+    // letting it read as a real number built from two lines of data.
+    aliases.forEach((a) => { row[`${a}_rows`] = (byAlias[a] || []).length; });
+    return row;
+  });
+  out.sort((a, b) => String(a[spec.key_field || 'key']).localeCompare(String(b[spec.key_field || 'key'])));
+  return out;
+}
+
 // ---------- the row layer ----------
 // evalMetric aggregates ACROSS rows. Itemized widgets need the other axis:
 // arithmetic WITHIN a row, so a widget can say "invoice total minus GRN total"
@@ -624,14 +703,34 @@ class DashboardView {
         return;
       }
       const cfg = widget.config || {};
-      const raw = this.rowsFor(key);
+      // A pivot widget's rows are computed here from several pulls; everything
+      // after this line treats them like any other rows.
+      let raw;
+      if (widget.pulls && cfg.pivot) {
+        const missing = widget.pulls.filter((p) => {
+          const r = this.results[p.key];
+          return !r || r.error;
+        });
+        if (missing.length) {
+          const first = this.results[missing[0].key];
+          body.innerHTML = `<p class="muted">${esc(
+            (first && first.error) || 'ยังไม่มีข้อมูลของรายงานที่ widget นี้ต้องใช้'
+          )}</p>`;
+          return;
+        }
+        const byAlias = {};
+        widget.pulls.forEach((p) => { byAlias[p.as] = this.rowsFor(p.key) || []; });
+        raw = pivotRows(byAlias, cfg) || [];
+      } else {
+        raw = this.rowsFor(key);
+      }
       const rows = applyRowLayer(raw, cfg);
       if (!rows.length) {
         // Three different situations used to share one sentence, and it named
         // the date range even for sources that carry no date — which sent me
         // looking at the range picker when the pull itself was empty.
         const filtered = raw.length && !rows.length;
-        const dated = !!(this.sources[key] && this.sources[key].date_field) && this.hasDateSource;
+        const dated = !widget.pulls && !!(this.sources[key] && this.sources[key].date_field) && this.hasDateSource;
         body.innerHTML = `<p class="muted">${esc(
           filtered
             ? cfg.empty_message || 'ไม่พบรายการที่เข้าเงื่อนไขของ widget นี้'

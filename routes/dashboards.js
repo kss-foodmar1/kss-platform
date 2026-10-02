@@ -13,7 +13,7 @@ const express = require('express');
 const pool = require('../db/pool');
 const { requireAuth } = require('../middleware/auth');
 const { wrap, isSuperadmin, resolveCompanyId, getDashboardForUser } = require('../lib/access');
-const { FMH_REPORTS, getCached, syncOne, cacheKeyFor } = require('../lib/fmhCache');
+const { FMH_REPORTS, getCached, syncOne, cacheKeyFor, pullsForWidget } = require('../lib/fmhCache');
 const { listWidgets } = require('../lib/widgetCatalog');
 
 const router = express.Router();
@@ -57,20 +57,35 @@ router.get(
     if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
     const widgets = await listWidgets(dashboard.id);
     const sources = {};
-    widgets.forEach((w) => {
-      const cfg = FMH_REPORTS[w.report_source];
-      // A widget reading a server-side grouping pulls from its own cache entry,
-      // so the client fetches per (source, grouping), not per source.
-      const grouping = cfg && cfg.groupings.includes(w.config.group_by) ? w.config.group_by : null;
-      w.grouping = grouping;
-      sources[cacheKeyFor(w.report_source, grouping)] = {
-        source: w.report_source,
-        grouping,
-        label: cfg ? cfg.label : w.report_source,
+    const describe = (p) => {
+      const cfg = FMH_REPORTS[p.source];
+      sources[cacheKeyFor(p.source, p.grouping)] = {
+        source: p.source,
+        grouping: p.grouping,
+        label: cfg ? cfg.label : p.source,
         // Grouped rows are already aggregated over the window, so there is no
         // per-row date left for the range picker to filter on.
-        date_field: grouping ? null : cfg ? cfg.dateField : null,
+        date_field: p.grouping ? null : cfg ? cfg.dateField : null,
       };
+    };
+    widgets.forEach((w) => {
+      const pulls = pullsForWidget(w.report_source, w.config);
+      pulls.forEach(describe);
+      // A widget reading a server-side grouping pulls from its own cache entry,
+      // so the client fetches per (source, grouping), not per source. A pivot
+      // widget reads several, and names them by the aliases its config gave.
+      const own = pulls.find((p) => p.source === w.report_source) || pulls[0] || {};
+      w.grouping = own.grouping || null;
+      // Resolved from each declared source, not by indexing into `pulls` —
+      // that list is de-duplicated, so two aliases on the same pull would have
+      // shifted every alias after them onto the wrong data.
+      w.pulls = (w.config.sources || []).length
+        ? w.config.sources.map((sc) => {
+            const c = FMH_REPORTS[sc.source];
+            const g = c && sc.group_by && c.groupings.includes(sc.group_by) ? sc.group_by : null;
+            return { as: sc.as, key: cacheKeyFor(sc.source, g) };
+          })
+        : null;
     });
     res.json({ dashboard, widgets, sources });
   })
@@ -88,13 +103,15 @@ router.get(
     if (req.query.group && !grouping) return res.status(400).json({ error: 'ไม่รู้จักการจัดกลุ่มนี้' });
 
     // Only sources this dashboard actually shows — access to one dashboard
-    // doesn't open up every report the company has cached.
-    const [[used]] = await pool.query(
-      `SELECT 1 AS ok FROM dashboard_widgets w JOIN widget_templates t ON t.id = w.widget_template_id
-       WHERE w.dashboard_id = ? AND t.report_source = ? LIMIT 1`,
-      [dashboard.id, source]
+    // doesn't open up every report the company has cached. A pivot widget's
+    // second source counts as shown, which a check against report_source alone
+    // would have missed, so the allowed set is built the same way the sync
+    // builds its pull list.
+    const allowed = new Set();
+    (await listWidgets(dashboard.id)).forEach((w) =>
+      pullsForWidget(w.report_source, w.config).forEach((p) => allowed.add(p.source))
     );
-    if (!used) return res.status(404).json({ error: 'dashboard นี้ไม่ได้ใช้รายงานนี้' });
+    if (!allowed.has(source)) return res.status(404).json({ error: 'dashboard นี้ไม่ได้ใช้รายงานนี้' });
 
     const cached = await getCached(dashboard.company_id, source, grouping);
     if (!cached) {

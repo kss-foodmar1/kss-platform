@@ -14,7 +14,7 @@ const express = require('express');
 const pool = require('../db/pool');
 const { requireAuth, requireSuperadmin } = require('../middleware/auth');
 const { wrap } = require('../lib/access');
-const { FMH_REPORTS, syncCompany, syncOne, getSyncStatus, getCached } = require('../lib/fmhCache');
+const { FMH_REPORTS, syncCompany, syncOne, getSyncStatus, getCached, pullsForWidget } = require('../lib/fmhCache');
 const { CHART_TYPES, listWidgets } = require('../lib/widgetCatalog');
 const probe = require('../lib/fmhProbe');
 
@@ -230,16 +230,16 @@ router.post(
       `INSERT INTO dashboard_widgets (dashboard_id, widget_template_id, position) VALUES (?, ?, ?)`,
       [dash.id, tpl.id, next]
     );
-    // A template that reads a server-side grouping needs that grouping warmed,
-    // not the itemized pull it would otherwise never look at.
-    let grouping = null;
+    // Warm exactly what this template reads: the grouping it asks for rather
+    // than the itemized pull it would never look at, and every source if it is
+    // a pivot widget.
+    let cfg = {};
     try {
-      const g = JSON.parse(tpl.default_config_json || '{}').group_by;
-      if (g && (FMH_REPORTS[tpl.report_source]?.groupings || []).includes(g)) grouping = g;
+      cfg = JSON.parse(tpl.default_config_json || '{}');
     } catch {
       /* unreadable config just means itemized */
     }
-    warmSource(dash.company_id, tpl.report_source, grouping);
+    pullsForWidget(tpl.report_source, cfg).forEach((p) => warmSource(dash.company_id, p.source, p.grouping));
     res.status(201).json({ id: r.insertId });
   })
 );

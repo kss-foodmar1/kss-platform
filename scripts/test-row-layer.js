@@ -15,7 +15,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const src = fs.readFileSync(require('path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
-const want = ['pick', 'evalMetric', 'evalRow', 'dateOnly', 'rowMatches', 'applyRowLayer', 'groupRows', 'rowFields'];
+const want = ['pick', 'evalMetric', 'evalRow', 'dateOnly', 'rowMatches', 'applyRowLayer', 'groupRows', 'rowFields', 'bucketOf', 'keyOf', 'pivotRows'];
 let code = 'const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };\n';
 code += 'const isBlank = (v) => v === null || v === undefined || String(v).trim() === "";\n';
 for (const name of want) {
@@ -124,6 +124,48 @@ check('split_orders ว่างเมื่อไม่มีใบแตกส
 // DO vs GRN: PO-6 only (3 vs 2)
 const dg = apply('ita_do_vs_grn');
 check('do_vs_grn', dg.map((r) => [r.po_number, r.qty_gap]), [['PO-6', -1]]);
+
+
+// ---------- the pivot ----------
+// CK sales live in the COGS report, CK purchases in purchase analysis. Two
+// months, with the September purchases deliberately higher than September's
+// recipe cost — which is the whole point of showing both margins.
+const salesRows = [
+  { period: '2026-09-01', sales: 10000, cogs: 6000, gross_profit: 4000 },
+  { period: '2026-10-01', sales: 8000, cogs: 4800, gross_profit: 3200 },
+];
+const purchaseRows = [
+  { order_date: '2026-09-03', total: 4000, product_code: 'PRK-001', product_name: 'หมู', category_name: 'เนื้อสัตว์', supplier: 'A' },
+  { order_date: '2026-09-20', total: 3000, product_code: 'CH01', product_name: 'ชีส', category_name: 'นม', supplier: 'B' },
+  { order_date: '2026-10-05', total: 4200, product_code: 'PRK-001', product_name: 'หมู', category_name: 'เนื้อสัตว์', supplier: 'A' },
+];
+const recipeRows = [
+  { ingredient_code: 'PRK-001', ingredient_name: 'หมู', total_cost: 50 },
+];
+
+{
+  const cfg = T('ck_margin_table');
+  const piv = H.pivotRows({ sales: salesRows, purchase: purchaseRows }, cfg);
+  check('pivot ทำหนึ่งแถวต่อเดือน', piv.map((r) => r.period), ['2026-09-01', '2026-10-01']);
+  check('pivot รวมยอดซื้อเดือน ก.ย. จากสองบรรทัด', [piv[0].purchase_value, piv[0].purchase_rows], [7000, 2]);
+  const withDerived = H.applyRowLayer(piv, cfg);
+  // ก.ย.: ขาย 10,000 ซื้อจริง 7,000 -> GM สด 30% ; ตามสูตร 6,000 -> 40% ; ช่องว่าง 10 จุด
+  check('GM จ่ายจริงเดือน ก.ย.', Math.round(withDerived[0].gm_cash_pct * 100) / 100, 30);
+  check('GM ตามสูตรเดือน ก.ย.', Math.round(withDerived[0].gm_recipe_pct * 100) / 100, 40);
+  check('ช่องว่างเดือน ก.ย.', Math.round(withDerived[0].gap_pct * 100) / 100, 10);
+  // ต.ค.: ขาย 8,000 ซื้อ 4,200 -> 47.5% ; ตามสูตร 4,800 -> 40%  (ซื้อน้อยกว่าที่ขาย = กินของเก่า)
+  check('GM จ่ายจริงเดือน ต.ค. สูงกว่าตามสูตร', Math.round(withDerived[1].gm_cash_pct * 100) / 100, 47.5);
+}
+{
+  const cfg = T('bought_not_in_recipe');
+  const piv = H.pivotRows({ purchase: purchaseRows, recipe: recipeRows }, cfg);
+  const rows = H.applyRowLayer(piv, cfg);
+  check('ของที่ซื้อแต่ไม่มีในสูตร', rows.map((r) => [r.product_code, r.spend]), [['CH01', 3000]]);
+  check('ชื่อสินค้าถูกดึงข้ามมาด้วย', rows[0].product_name, 'ชีส');
+  check('หมูไม่ถูกเตือน เพราะอยู่ในสูตร', piv.find((r) => r.product_code === 'PRK-001').recipe_rows, 1);
+}
+check('bucketOf รายเดือนคืนวันที่จริง', H.bucketOf('2026-09-20T10:00:00Z', 'month'), '2026-09-01');
+check('bucketOf รายสัปดาห์คืนวันจันทร์', H.bucketOf('2026-10-02', 'week'), '2026-09-28');
 
 console.log(fails ? `\n${fails} ข้อไม่ผ่าน` : '\nผ่านทั้งหมด');
 process.exit(fails ? 1 : 0);
