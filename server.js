@@ -9,7 +9,7 @@ const userRoutes = require('./routes/users');
 const dashboardRoutes = require('./routes/dashboards');
 const settingsRoutes = require('./routes/settings');
 const adminRoutes = require('./routes/admin');
-const { syncAllCompanies, syncCompany, sourcesUsedByCompany } = require('./lib/fmhCache');
+const { syncAllCompanies, syncCompany, pullsUsedByCompany, cacheKeyFor } = require('./lib/fmhCache');
 const pool = require('./db/pool');
 
 const app = express();
@@ -82,12 +82,12 @@ async function syncMissingOnBoot() {
       `SELECT id, name FROM companies WHERE fmh_api_key_enc IS NOT NULL AND status <> 'suspended'`
     );
     for (const c of companies) {
-      const used = await sourcesUsedByCompany(c.id);
+      const used = await pullsUsedByCompany(c.id);
       const [cached] = await pool.query(`SELECT cache_key FROM fmh_report_cache WHERE company_id = ?`, [c.id]);
       const have = new Set(cached.map((r) => r.cache_key));
-      const missing = used.filter((s) => !have.has(s));
+      const missing = used.filter((p) => !have.has(cacheKeyFor(p.source, p.grouping)));
       if (!missing.length) continue;
-      console.log(`Boot sync for company ${c.id} (${c.name}): ${missing.join(', ')}`);
+      console.log(`Boot sync for company ${c.id} (${c.name}): ${missing.map((p) => cacheKeyFor(p.source, p.grouping)).join(', ')}`);
       logSync(`${c.id}:${c.name}`, await syncCompany(c.id, missing));
     }
   } catch (err) {

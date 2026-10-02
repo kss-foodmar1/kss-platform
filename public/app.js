@@ -405,13 +405,13 @@ class DashboardView {
   }
 
   async load() {
-    const sources = Object.keys(this.sources);
     await Promise.all(
-      sources.map(async (source) => {
+      Object.entries(this.sources).map(async ([key, info]) => {
+        const qs = info.grouping ? `?group=${encodeURIComponent(info.grouping)}` : '';
         try {
-          this.results[source] = await api(`/api/dashboards/${this.dashboard.id}/data/${source}`);
+          this.results[key] = await api(`/api/dashboards/${this.dashboard.id}/data/${info.source || key}${qs}`);
         } catch (err) {
-          this.results[source] = { error: err.message, code: err.code };
+          this.results[key] = { error: err.message, code: err.code };
         }
       })
     );
@@ -420,10 +420,15 @@ class DashboardView {
     this.renderWidgets();
   }
 
-  rowsFor(source) {
-    const r = this.results[source];
+  // Widgets address data by the same key the server cached it under.
+  keyFor(widget) {
+    return widget.grouping ? `${widget.report_source}|${widget.grouping}` : widget.report_source;
+  }
+
+  rowsFor(key) {
+    const r = this.results[key];
     if (!r || r.error) return null;
-    const dateField = this.sources[source] && this.sources[source].date_field;
+    const dateField = this.sources[key] && this.sources[key].date_field;
     if (!dateField || !this.hasDateSource) return r.data;
     const { start, end } = this.range;
     return r.data.filter((row) => {
@@ -495,13 +500,14 @@ class DashboardView {
     destroyCharts();
     (this.cards || []).forEach(({ widget, body }) => {
       body.innerHTML = '';
-      const res = this.results[widget.report_source];
+      const key = this.keyFor(widget);
+      const res = this.results[key];
       if (!res) return;
       if (res.error) {
         body.innerHTML = `<p class="muted">${esc(res.code === 'FMH_KEY_MISSING' ? 'ยังไม่มีข้อมูล' : res.error)}</p>`;
         return;
       }
-      const rows = this.rowsFor(widget.report_source);
+      const rows = this.rowsFor(key);
       if (!rows.length) {
         body.innerHTML = '<p class="muted">ไม่พบข้อมูลในช่วงวันที่เลือก</p>';
         return;

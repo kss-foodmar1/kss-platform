@@ -40,17 +40,18 @@ async function companyExists(id) {
 
 // If a company has a key but no cached data for a source (e.g. a widget
 // using a new source was just added), fetch it in the background.
-async function warmSource(companyId, source) {
+async function warmSource(companyId, source, grouping = null) {
   const [[c]] = await pool.query(`SELECT fmh_api_key_enc FROM companies WHERE id = ?`, [companyId]);
   if (!c || !c.fmh_api_key_enc || !FMH_REPORTS[source]) return;
-  if (await getCached(companyId, source)) return;
-  syncOne(companyId, source).catch((err) => console.error(`Warm sync failed (${companyId}/${source}):`, err.message));
+  if (await getCached(companyId, source, grouping)) return;
+  const key = grouping ? `${source}|${grouping}` : source;
+  syncOne(companyId, source, grouping).catch((err) => console.error(`Warm sync failed (${companyId}/${key}):`, err.message));
 }
 
 // ---------- meta ----------
 router.get('/meta', (req, res) => {
   const sources = {};
-  Object.entries(FMH_REPORTS).forEach(([k, v]) => (sources[k] = { label: v.label, date_field: v.dateField }));
+  Object.entries(FMH_REPORTS).forEach(([k, v]) => (sources[k] = { label: v.label, date_field: v.dateField, groupings: v.groupings }));
   res.json({ report_sources: sources, chart_types: CHART_TYPES, statuses: STATUSES, tiers: TIERS });
 });
 
@@ -216,9 +217,10 @@ router.post(
   wrap(async (req, res) => {
     const [[dash]] = await pool.query(`SELECT id, company_id FROM dashboards WHERE id = ?`, [req.params.id]);
     if (!dash) return res.status(404).json({ error: 'Dashboard not found' });
-    const [[tpl]] = await pool.query(`SELECT id, report_source FROM widget_templates WHERE id = ? AND active = TRUE`, [
-      req.body && req.body.template_id,
-    ]);
+    const [[tpl]] = await pool.query(
+      `SELECT id, report_source, default_config_json FROM widget_templates WHERE id = ? AND active = TRUE`,
+      [req.body && req.body.template_id]
+    );
     if (!tpl) return bad(res, 'Unknown or inactive widget template');
     const [[{ next }]] = await pool.query(
       `SELECT COALESCE(MAX(position), 0) + 1 AS next FROM dashboard_widgets WHERE dashboard_id = ?`,
@@ -228,7 +230,16 @@ router.post(
       `INSERT INTO dashboard_widgets (dashboard_id, widget_template_id, position) VALUES (?, ?, ?)`,
       [dash.id, tpl.id, next]
     );
-    warmSource(dash.company_id, tpl.report_source);
+    // A template that reads a server-side grouping needs that grouping warmed,
+    // not the itemized pull it would otherwise never look at.
+    let grouping = null;
+    try {
+      const g = JSON.parse(tpl.default_config_json || '{}').group_by;
+      if (g && (FMH_REPORTS[tpl.report_source]?.groupings || []).includes(g)) grouping = g;
+    } catch {
+      /* unreadable config just means itemized */
+    }
+    warmSource(dash.company_id, tpl.report_source, grouping);
     res.status(201).json({ id: r.insertId });
   })
 );
