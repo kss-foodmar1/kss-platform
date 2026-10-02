@@ -382,6 +382,7 @@ const PROBES = {
     probe.probeStatuses(id, { reportKey: 'purchase_analysis', cardKey: 'purchase_analysis_table', groupBy: 'branch' }),
   statuses_orders: (id) =>
     probe.probeStatuses(id, { reportKey: 'order_items_by_branch', cardKey: 'oibb_table', groupBy: 'branch' }),
+  join_keys: (id) => probe.probeJoinKeys(id),
   date_filter: (id) => probe.probeDateFilter(id),
   group_by: (id) => probe.probeGroupBy(id),
 };

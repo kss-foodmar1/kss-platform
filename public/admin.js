@@ -351,6 +351,8 @@ const PROBE_LIST = [
     d: 'เทียบยอดเมื่อไม่ส่งตัวกรองสถานะ กับเมื่อนับเฉพาะใบที่ยืนยันแล้ว ถ้าต่างกันแปลว่าตัวเลขที่ลูกค้าเห็นสูงเกินจริง' },
   { k: 'statuses_orders', n: 'คำสั่งซื้อรายสาขารวมใบที่ยกเลิกหรือไม่',
     d: 'ทดสอบเดียวกันกับรายงาน order_items_by_branch' },
+  { k: 'join_keys', n: 'รหัสสินค้าสองฝั่งตรงกันจริงไหม',
+    d: 'เทียบ product_code ระหว่างฝั่งซื้อ ฝั่งขาย สาขาเบิก และสูตร ชื่อฟิลด์ตรงกันไม่ได้แปลว่าค่าตรงกัน ถ้ารหัสคนละชุด widget ที่ต่อหลายรายงานจะได้ข้อมูลไม่ครบโดยไม่มีใครรู้' },
   { k: 'date_filter', n: 'ตัวกรองวันที่รับรูปแบบไหนบ้าง',
     d: 'ลองส่ง date_range สี่แบบ เพื่อดูว่าแบบที่แอปใช้อยู่ถูกต้องไหม และเลือกฟิลด์วันที่ฝั่ง server ได้หรือเปล่า' },
   { k: 'group_by', n: 'จัดกลุ่มฝั่ง server ประหยัดโควตาได้แค่ไหน',
@@ -383,6 +385,22 @@ function fmhProbeView(r, key) {
       <p class="muted">ช่วงที่ทดสอบ ${esc(r.window.start)} ถึง ${esc(r.window.end)} · จัดกลุ่มตาม ${esc(r.groupBy || 'รายการ')}
       ${r.quota ? ` · โควตาเหลือ ${Number(r.quota.rows_remaining || 0).toLocaleString('th-TH')} แถว` : ''}</p>
       ${r.sampleRow ? `<pre>${esc(JSON.stringify(r.sampleRow, null, 1))}</pre>` : ''}`;
+  }
+  if (key === 'join_keys') {
+    return `${r.pairs.map((p) => {
+      if (p.error) return `<div class="probe-pair"><b>${esc(p.name)}</b><p class="probe-bad">${esc(p.error)}</p></div>`;
+      const cls = p.pct >= 90 ? 'probe-good' : p.pct >= 50 ? '' : 'probe-bad';
+      return `<div class="probe-pair">
+        <b>${esc(p.name)}</b>
+        <p class="${cls}">${p.pct != null ? `ตรงกัน ${p.pct}%` : ''} — ${esc(p.verdict || '')}</p>
+        <table class="probe-table"><tbody>
+          <tr><td>${esc(p.a)}</td><td><code>${esc(p.field)}</code></td><td>${p.aRows ?? '—'} แถว</td><td>${p.aCodes ?? '—'} รหัสไม่ซ้ำ</td><td>${p.aHasField === false ? '<span class="probe-bad">ไม่มีฟิลด์นี้</span>' : ''}</td></tr>
+          <tr><td>${esc(p.b)}</td><td><code>${esc(p.bField)}</code></td><td>${p.bRows ?? '—'} แถว</td><td>${p.bCodes ?? '—'} รหัสไม่ซ้ำ</td><td>${p.bHasField === false ? '<span class="probe-bad">ไม่มีฟิลด์นี้</span>' : ''}</td></tr>
+        </tbody></table>
+        ${p.missed && p.missed.length ? `<p class="muted">ตัวอย่างรหัสที่หาคู่ไม่เจอ: ${p.missed.map((m) => `<code>${esc(m)}</code>`).join(' ')}</p>` : ''}
+      </div>`;
+    }).join('')}
+    <p class="muted">ช่วงที่ทดสอบ ${esc(r.window.start)} ถึง ${esc(r.window.end)} · อ่านแบบจัดกลุ่มตามสินค้า จึงกินโควตาหลักสิบแถว</p>`;
   }
   if (key === 'date_filter') {
     return `<table class="probe-table"><thead><tr><th>รูปแบบที่ส่ง</th><th>ผล</th><th>แถว</th><th>ข้อความจาก FMH</th></tr></thead><tbody>

@@ -310,3 +310,8 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
   .probe-head { flex-direction: column; gap: 10px; }
   .probe-table { display: block; overflow-x: auto; }
 }
+.probe-pair { padding: 12px 0; border-bottom: 1px solid rgba(127,127,127,.14); }
+.probe-pair:last-child { border-bottom: 0; }
+.probe-pair > b { font-size: 13.5px; }
+.probe-pair > p { margin: 3px 0 0; font-size: 13px; }
+.probe-pair .probe-table td:first-child { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; }
