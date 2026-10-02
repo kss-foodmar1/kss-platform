@@ -378,6 +378,7 @@ router.patch(
 // one is requested explicitly rather than run on page load.
 const PROBES = {
   catalog: (id) => probe.probeCatalog(id),
+  sources: (id) => probe.probeSources(id),
   statuses_purchase: (id) =>
     probe.probeStatuses(id, { reportKey: 'purchase_analysis', cardKey: 'purchase_analysis_table', groupBy: 'branch' }),
   statuses_orders: (id) =>

@@ -345,6 +345,8 @@ function renderAdminMain() {
 // key. Each probe is read-only but spends a little of their monthly row quota,
 // so nothing runs until the button is pressed.
 const PROBE_LIST = [
+  { k: 'sources', n: 'ชุดข้อมูลไหนมีจริง ชุดไหนว่าง',
+    d: 'ไล่ทุก (source, grouping) ที่แอปใช้ โดยส่ง request ชุดเดียวกับที่ sync ส่งจริง ขอแค่แถวเดียวต่อ pull — ใช้ตอบว่า widget ที่ขึ้นว่าไม่พบข้อมูล เป็นเพราะบัญชีนี้ไม่มีข้อมูล หรือแอปเรียกผิด' },
   { k: 'catalog', n: 'รายงานทั้งหมดที่บัญชีนี้เรียกได้',
     d: 'ดึง catalog มาดูว่ามีกี่รายงาน รายงานไหนจัดกลุ่มฝั่ง server ได้ และตัวไหนมีตัวกรองสถานะ ไม่กินโควตาแถว' },
   { k: 'statuses_purchase', n: 'ยอดสั่งซื้อรวมใบที่ยกเลิกอยู่หรือไม่',
@@ -373,6 +375,22 @@ function fmhProbeView(r, key) {
         <td>${x.groupBy.length ? x.groupBy.map((v) => `<code>${esc(v)}</code>`).join(' ') : '—'}</td>
         <td>${x.hasStatuses ? 'มี' : '—'}</td></tr>`).join('')}
       </tbody></table>`;
+  }
+  if (key === 'sources') {
+    const c = r.counts || {};
+    const cls = c.failed ? 'probe-bad' : c.empty ? '' : 'probe-good';
+    const row = (x) => `<tr><td><code>${esc(x.key)}</code><br><span class="muted">${esc(x.label || '')}</span></td>
+        <td class="muted"><code>${esc(x.reportKey)}</code> / <code>${esc(x.cardKey)}</code></td>
+        <td class="${x.ok ? (x.hasRows ? 'probe-good' : 'probe-bad') : 'probe-bad'}">${x.ok ? (x.hasRows ? 'มีข้อมูล' : 'ว่าง') : 'HTTP ' + x.status}</td>
+        <td class="muted">${x.sentDateRange ? 'ช่วงวัน' : '—'}${x.sentStatuses ? ' · สถานะ' : ''}</td>
+        <td class="muted">${x.message ? esc(x.message) : x.fields.length ? x.fields.slice(0, 6).map((f) => `<code>${esc(f)}</code>`).join(' ') : '—'}</td></tr>`;
+    const problems = r.results.filter((x) => !x.ok || x.hasRows === false);
+    const fine = r.results.filter((x) => x.ok && x.hasRows === true);
+    return `<p class="${cls}">${esc(r.verdict || '')}</p>
+      <p>${c.total} pull · มีข้อมูล ${c.live} · ว่าง ${c.empty} · เรียกไม่สำเร็จ ${c.failed}</p>
+      ${problems.length ? `<p><b>ที่ต้องดู</b></p><table class="probe-table"><thead><tr><th>pull</th><th>report / card</th><th>ผล</th><th>filter ที่ส่ง</th><th>ฟิลด์ / ข้อความ</th></tr></thead><tbody>${problems.map(row).join('')}</tbody></table>` : ''}
+      ${fine.length ? `<details><summary>pull ที่ปกติ (${fine.length})</summary><table class="probe-table"><tbody>${fine.map(row).join('')}</tbody></table></details>` : ''}
+      <p class="muted">ช่วงที่ทดสอบ ${esc(r.window.start)} ถึง ${esc(r.window.end)} · ขอแค่ 1 แถวต่อ pull</p>`;
   }
   if (key === 'statuses_purchase' || key === 'statuses_orders') {
     const fmt = (m) => (m ? `${m.total.toLocaleString('th-TH', { maximumFractionDigits: 0 })} <span class="muted">(${esc(m.field)})</span>` : '—');
