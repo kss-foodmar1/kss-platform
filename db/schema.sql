@@ -16,7 +16,35 @@ CREATE TABLE IF NOT EXISTS companies (
   plan_tier ENUM('starter','growth','enterprise') NOT NULL DEFAULT 'starter',
   fmh_api_key_enc TEXT NULL,
   fmh_key_updated_at TIMESTAMP NULL,
+  subscription_ends_at DATE NULL,
+  suspended_reason VARCHAR(20) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) DEFAULT CHARSET=utf8mb4;
+
+-- Payment requests KSS issues to a company (annual subscription / renewal).
+-- The amount is typed by KSS staff per request — no price is built into code.
+-- A request is paid by PromptPay QR through Omise (charge_id) or marked paid
+-- by hand (bank transfer). Paying extends companies.subscription_ends_at.
+CREATE TABLE IF NOT EXISTS payments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  company_id INT NOT NULL,
+  token VARCHAR(64) NOT NULL UNIQUE,
+  description VARCHAR(255) NOT NULL,
+  amount_satang INT NOT NULL,
+  period_months INT NOT NULL DEFAULT 12,
+  status ENUM('pending','paid','cancelled') NOT NULL DEFAULT 'pending',
+  charge_id VARCHAR(64) NULL,
+  charge_expires_at DATETIME NULL,
+  qr_url TEXT NULL,
+  paid_at DATETIME NULL,
+  paid_via ENUM('omise','manual') NULL,
+  manual_note VARCHAR(255) NULL,
+  extended_from DATE NULL,
+  extended_to DATE NULL,
+  created_by INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_payments_company (company_id),
+  INDEX idx_payments_charge (charge_id)
 ) DEFAULT CHARSET=utf8mb4;
 
 -- kss_superadmin = KSS staff (company_id NULL, sees every company + Admin Console)

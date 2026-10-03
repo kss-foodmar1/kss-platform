@@ -10,6 +10,8 @@ const userRoutes = require('./routes/users');
 const dashboardRoutes = require('./routes/dashboards');
 const settingsRoutes = require('./routes/settings');
 const adminRoutes = require('./routes/admin');
+const billingRoutes = require('./routes/billing');
+const billing = require('./lib/billing');
 const { syncAllCompanies, syncCompany, pullsUsedByCompany, cacheKeyFor } = require('./lib/fmhCache');
 const pool = require('./db/pool');
 
@@ -51,7 +53,8 @@ function sendShell(res) {
   res.type('html').send(SHELL_HTML);
 }
 
-app.use(express.json());
+// Keep the raw bytes of webhook bodies: Omise's signature is over them.
+app.use(express.json({ verify: (req, res, buf) => { if (req.originalUrl.startsWith('/api/webhooks/')) req.rawBody = buf; } }));
 app.use(cookieParser());
 
 // The shell is served from memory with versioned asset URLs, so it never comes
@@ -72,7 +75,14 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/dashboards', dashboardRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/admin/billing', billingRoutes.adminRouter);
 app.use('/api/admin', adminRoutes);
+app.use('/api/pay', billingRoutes.publicRouter);
+app.use('/api/webhooks', billingRoutes.webhookRouter);
+app.get('/pay/:token', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.sendFile(path.join(__dirname, 'public', 'pay.html'));
+});
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
@@ -111,6 +121,22 @@ cron.schedule(
       Object.entries(all).forEach(([company, results]) => logSync(company, results));
     } catch (err) {
       console.error('Daily FMH sync failed:', err.message);
+    }
+  },
+  { timezone: 'Asia/Bangkok' }
+);
+
+// Billing: every 10 minutes settle any QR that was paid but whose webhook never
+// arrived (Omise does not guarantee retries); daily 02:00 apply expiry rules.
+cron.schedule('*/10 * * * *', () => billing.reconcilePending().catch((e) => console.error('Reconcile failed:', e.message)), { timezone: 'Asia/Bangkok' });
+cron.schedule(
+  '0 2 * * *',
+  async () => {
+    try {
+      const r = await billing.enforceExpiry();
+      if (r.suspended) console.log(`Billing: suspended ${r.suspended} company(ies) past subscription + grace`);
+    } catch (e) {
+      console.error('Billing expiry check failed:', e.message);
     }
   },
   { timezone: 'Asia/Bangkok' }

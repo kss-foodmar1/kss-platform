@@ -72,6 +72,17 @@ async function upgradeUsers() {
   }
 }
 
+async function upgradeCompanies() {
+  if (!(await columnInfo('companies', 'subscription_ends_at'))) {
+    await pool.query(`ALTER TABLE companies ADD COLUMN subscription_ends_at DATE NULL`);
+    console.log('  companies: added subscription_ends_at');
+  }
+  if (!(await columnInfo('companies', 'suspended_reason'))) {
+    await pool.query(`ALTER TABLE companies ADD COLUMN suspended_reason VARCHAR(20) NULL`);
+    console.log('  companies: added suspended_reason');
+  }
+}
+
 async function upgradeDashboards() {
   if (!(await columnInfo('dashboards', 'company_id'))) {
     await pool.query(`ALTER TABLE dashboards ADD COLUMN company_id INT NULL, ADD INDEX idx_dashboards_company (company_id)`);
@@ -190,6 +201,7 @@ async function dropLegacyReportsTable() {
 async function main() {
   const n = await runSchemaFile();
   console.log(`Schema: ${n} statement(s) applied.`);
+  await upgradeCompanies();
   await upgradeUsers();
   await upgradeDashboards();
   await upgradeCache();

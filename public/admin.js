@@ -576,6 +576,11 @@ async function renderCompanyDetail(main, companyId) {
     <section class="admin-card">
       <h2>4. ผู้ใช้งาน</h2>
       <div class="company-users"></div>
+    </section>
+
+    <section class="admin-card">
+      <h2>5. การชำระเงินและอายุการใช้งาน</h2>
+      <div class="billing"></div>
     </section>`;
 
   main.querySelector('.view-dashboards').addEventListener('click', () => viewCompanyDashboards(companyId));
@@ -637,6 +642,108 @@ async function renderCompanyDetail(main, companyId) {
   refreshSyncBlock();
   renderComposer(main.querySelector('.composer'), companyId);
   renderUserManager(main.querySelector('.company-users'), { companyId });
+  renderBillingPanel(main.querySelector('.billing'), companyId);
+}
+
+// ---------- billing (stage 1): payment requests + subscription end date ----------
+const PAY_STATUS = { pending: 'รอชำระ', paid: 'ชำระแล้ว', cancelled: 'ยกเลิก' };
+const bahtFmt = (satang) => (satang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+async function renderBillingPanel(container, companyId) {
+  container.innerHTML = '<p class="muted">กำลังโหลด...</p>';
+  let info, cfg;
+  try {
+    [info, cfg] = await Promise.all([api(`/api/admin/billing/companies/${companyId}`), api('/api/admin/billing/status')]);
+  } catch (err) {
+    container.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    return;
+  }
+  const modeLine = cfg.omise_mode
+    ? `Omise: โหมด <strong>${cfg.omise_mode === 'test' ? 'ทดสอบ' : 'ใช้งานจริง'}</strong>`
+    : '<span class="error-msg" style="display:inline-block">ยังไม่ได้ตั้งค่า OMISE_SECRET_KEY — สร้าง QR ไม่ได้ (ยังบันทึกโอนเงินเองได้)</span>';
+  container.innerHTML = `
+    <p class="helper-text" style="margin-top:0;">${modeLine} · Webhook ${cfg.webhook_secret_set ? 'ตั้งค่าแล้ว' : 'ยังไม่ได้ตั้งค่า (ระบบยังตรวจสถานะเองทุก 10 นาที)'} · ระงับอัตโนมัติเมื่อหมดอายุ: ${cfg.enforce_expiry ? `เปิด (ผ่อนผัน ${cfg.grace_days} วัน)` : 'ปิด'}</p>
+    <form class="inline-form sub-form">
+      <label>ใช้งานได้ถึง <input type="date" name="subscription_ends_at" value="${esc(info.subscription_ends_at || '')}"></label>
+      <button type="submit" class="btn small">บันทึกวันหมดอายุ</button>
+      <span class="muted">${info.subscription_ends_at ? '' : 'ว่าง = ไม่มีวันหมดอายุ (ลูกค้านำร่อง)'}</span>
+    </form>
+    <div class="sub-msg"></div>
+    <h3 style="margin:20px 0 8px;font-size:15px;">ออกรายการชำระเงินใหม่</h3>
+    <form class="inline-form pay-form">
+      <input name="description" placeholder="รายละเอียด เช่น KSS Dashboard สมาชิกรายปี" required style="flex:2;min-width:220px">
+      <input name="amount_baht" type="number" step="0.01" min="20" placeholder="จำนวนเงิน (บาท)" required>
+      <input name="period_months" type="number" min="1" max="60" value="12" title="ต่ออายุกี่เดือน" style="width:90px">
+      <button type="submit" class="btn small primary">สร้างลิงก์ชำระเงิน</button>
+    </form>
+    <div class="pay-msg"></div>
+    ${
+      info.payments.length
+        ? `<table class="mini-table" style="margin-top:12px"><thead><tr><th>รายการ</th><th class="num">บาท</th><th>สถานะ</th><th>ต่ออายุถึง</th><th></th></tr></thead><tbody>${info.payments
+            .map(
+              (p) => `<tr data-id="${p.id}">
+                <td>${esc(p.description)}<br><span class="muted">${esc(fmtDateTime(p.created_at))}${p.paid_via ? ` · ${p.paid_via === 'omise' ? 'PromptPay' : 'โอนเอง: ' + esc(p.manual_note || '')}` : ''}</span></td>
+                <td class="num">${bahtFmt(p.amount_satang)}</td>
+                <td>${esc(PAY_STATUS[p.status])}</td>
+                <td>${esc(p.extended_to || '–')}</td>
+                <td>${
+                  p.status === 'pending'
+                    ? `<button type="button" class="btn small ghost copy-link" data-url="${esc(p.pay_url)}">คัดลอกลิงก์</button>
+                       ${p.has_charge ? '<button type="button" class="btn small ghost check">ตรวจสถานะ</button>' : ''}
+                       <button type="button" class="btn small ghost mark-paid">โอนแล้ว</button>
+                       <button type="button" class="btn small danger cancel">ยกเลิก</button>`
+                    : ''
+                }</td></tr>`
+            )
+            .join('')}</tbody></table>`
+        : '<p class="muted" style="margin-top:12px">ยังไม่มีรายการชำระเงิน</p>'
+    }`;
+
+  const msg = (sel, html) => (container.querySelector(sel).innerHTML = html);
+  container.querySelector('.sub-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api(`/api/admin/billing/companies/${companyId}/subscription`, { method: 'PUT', body: JSON.stringify({ subscription_ends_at: e.target.subscription_ends_at.value || null }) });
+      renderBillingPanel(container, companyId);
+    } catch (err) {
+      msg('.sub-msg', `<div class="error-msg">${esc(err.message)}</div>`);
+    }
+  });
+  container.querySelector('.pay-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const { payment } = await api(`/api/admin/billing/companies/${companyId}/payments`, { method: 'POST', body: JSON.stringify(Object.fromEntries(new FormData(e.target).entries())) });
+      await renderBillingPanel(container, companyId);
+      msg('.pay-msg', `<div class="ok-msg">สร้างแล้ว — ส่งลิงก์นี้ให้ลูกค้า: <code>${esc(payment.pay_url)}</code></div>`);
+    } catch (err) {
+      msg('.pay-msg', `<div class="error-msg">${esc(err.message)}</div>`);
+    }
+  });
+  const act = (sel, fn) =>
+    container.querySelectorAll(sel).forEach((b) =>
+      b.addEventListener('click', async () => {
+        try {
+          await fn(b, b.closest('tr').dataset.id);
+        } catch (err) {
+          msg('.pay-msg', `<div class="error-msg">${esc(err.message)}</div>`);
+        }
+      })
+    );
+  act('.copy-link', async (b) => {
+    try { await navigator.clipboard.writeText(b.dataset.url); b.textContent = 'คัดลอกแล้ว'; } catch (e) { msg('.pay-msg', `<code>${esc(b.dataset.url)}</code>`); }
+  });
+  act('.check', async (b, id) => { await api(`/api/admin/billing/payments/${id}/check`, { method: 'POST' }); renderBillingPanel(container, companyId); });
+  act('.cancel', async (b, id) => {
+    if (!confirm('ยกเลิกรายการนี้? ลิงก์ที่ส่งให้ลูกค้าจะใช้ไม่ได้อีก')) return;
+    await api(`/api/admin/billing/payments/${id}/cancel`, { method: 'POST' });
+    renderBillingPanel(container, companyId);
+  });
+  act('.mark-paid', async (b, id) => {
+    const note = prompt('บันทึกว่าลูกค้าโอนเงินแล้ว — ใส่หมายเหตุ (วันที่โอน/เลขอ้างอิง) การกดนี้จะต่ออายุบริษัททันที');
+    if (!note) return;
+    await api(`/api/admin/billing/payments/${id}/mark-paid`, { method: 'POST', body: JSON.stringify({ note }) });
+    renderBillingPanel(container, companyId);
+  });
 }
 
 // ---------- dashboard composer ----------

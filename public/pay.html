@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>ชำระเงิน — KSS</title>
+<style>
+  :root { --bg:#f3eedf; --card:#fbf8ef; --ink:#1b2b22; --muted:#5a675e; --line:#ddd5bf; --accent:#8a6720; --good:#2e7d4f; --bad:#be4229; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#16211b; --card:#1f2d25; --ink:#f3eedf; --muted:#a9b3a8; --line:#34493b; --accent:#d2a94f; --good:#6cc08c; --bad:#e8836c; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:'Noto Sans Thai',system-ui,sans-serif; display:flex; justify-content:center; padding:24px 16px; }
+  main { width:100%; max-width:440px; }
+  .brand { font-size:13px; letter-spacing:.12em; text-transform:uppercase; color:var(--accent); font-weight:600; margin:8px 0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:24px; }
+  h1 { font-size:20px; margin:0 0 4px; text-wrap:balance; }
+  .muted { color:var(--muted); font-size:14px; margin:0; }
+  .amount { font-size:36px; font-weight:700; margin:20px 0 4px; font-variant-numeric:tabular-nums; }
+  .qr { display:block; width:100%; max-width:280px; margin:16px auto 8px; background:#fff; border-radius:12px; padding:12px; }
+  button { font:inherit; width:100%; padding:14px; border-radius:12px; border:0; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; margin-top:16px; }
+  button:disabled { opacity:.6; cursor:default; }
+  .ok { color:var(--good); font-weight:600; } .err { color:var(--bad); }
+  small { color:var(--muted); display:block; text-align:center; margin-top:8px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">Kin Supply and Service</div>
+  <div class="card" id="box"><p class="muted">กำลังโหลด...</p></div>
+</main>
+<script>
+const token = location.pathname.split('/').pop();
+const box = document.getElementById('box');
+const baht = (s) => (s / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const thDate = (iso) => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('th-TH', { year:'numeric', month:'long', day:'numeric' }) : '';
+let timer = null;
+
+function head(p) {
+  return `<h1>${esc(p.description)}</h1><p class="muted">${esc(p.company_name)}</p><div class="amount">฿${baht(p.amount_satang)}</div>`;
+}
+function render(p, msg) {
+  clearTimeout(timer);
+  if (p.status === 'paid') {
+    box.innerHTML = `${head(p)}<p class="ok">ชำระเงินเรียบร้อยแล้ว ขอบคุณครับ</p>${p.extended_to ? `<p class="muted">ใช้งานได้ถึง ${esc(thDate(p.extended_to))}</p>` : ''}<p class="muted" style="margin-top:12px">KSS จะออกใบกำกับภาษีให้ตามข้อมูลบริษัทที่แจ้งไว้</p>`;
+    return;
+  }
+  if (p.status === 'cancelled') { box.innerHTML = `${head(p)}<p class="err">รายการนี้ถูกยกเลิกแล้ว กรุณาติดต่อ KSS</p>`; return; }
+  if (p.qr_url) {
+    box.innerHTML = `${head(p)}<img class="qr" src="${esc(p.qr_url)}" alt="QR PromptPay"><small>สแกนด้วยแอปธนาคารเพื่อชำระเงิน หน้านี้จะอัปเดตเองเมื่อชำระสำเร็จ</small>${msg ? `<p class="err">${esc(msg)}</p>` : ''}`;
+    timer = setTimeout(poll, 4000);
+    return;
+  }
+  box.innerHTML = `${head(p)}<button id="go">ชำระด้วย PromptPay QR</button>${msg ? `<p class="err">${esc(msg)}</p>` : ''}`;
+  document.getElementById('go').onclick = async (e) => {
+    e.target.disabled = true; e.target.textContent = 'กำลังสร้าง QR...';
+    try { render(await call('POST', '/qr')); } catch (err) { render(p, err.message); }
+  };
+}
+async function call(method, suffix = '') {
+  const r = await fetch(`/api/pay/${token}${suffix}`, { method });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'เกิดข้อผิดพลาด');
+  return j;
+}
+async function poll() { try { const p = await call('GET'); if (p.status === 'pending' && p.qr_url) timer = setTimeout(poll, 4000); else render(p); } catch (e) { timer = setTimeout(poll, 8000); } }
+call('GET').then((p) => render(p)).catch((e) => { box.innerHTML = `<p class="err">${esc(e.message)}</p>`; });
+</script>
+</body>
+</html>
