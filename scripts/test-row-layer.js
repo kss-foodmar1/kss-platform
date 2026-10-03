@@ -11,11 +11,13 @@
 // It already earned its keep once: the three-way-match template was selecting
 // lines that were merely not received yet, which would have buried the real
 // mismatches under rows where nothing was wrong.
+// Run in Thailand's clock: the date bugs this catches only show east of UTC.
+process.env.TZ = 'Asia/Bangkok';
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const src = fs.readFileSync(require('path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
-const want = ['pick', 'evalMetric', 'evalRow', 'dateOnly', 'rowMatches', 'applyRowLayer', 'groupRows', 'rowFields', 'bucketOf', 'keyOf', 'pivotRows'];
+const want = ['pick', 'evalMetric', 'evalRow', 'dateOnly', 'rowMatches', 'applyRowLayer', 'groupRows', 'rowFields', 'bucketOf', 'keyOf', 'pivotRows', 'localIso', 'bucketKey'];
 let code = 'const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };\n';
 code += 'const isBlank = (v) => v === null || v === undefined || String(v).trim() === "";\n';
 for (const name of want) {
@@ -167,5 +169,26 @@ const recipeRows = [
 check('bucketOf รายเดือนคืนวันที่จริง', H.bucketOf('2026-09-20T10:00:00Z', 'month'), '2026-09-01');
 check('bucketOf รายสัปดาห์คืนวันจันทร์', H.bucketOf('2026-10-02', 'week'), '2026-09-28');
 
+
+// The line renderer's own bucketing, in Bangkok time. It used toISOString(),
+// which put every month on the line one month early for a Thai viewer.
+check('bucketKey รายเดือนไม่เลื่อนในเวลาไทย', H.bucketKey('2026-04-01', 'month'), '2026-04-01');
+check('bucketKey รายวันไม่เลื่อนในเวลาไทย', H.bucketKey('2026-04-01', 'day'), '2026-04-01');
+check('localIso ใช้ปฏิทินเครื่อง', H.localIso(new Date(2026, 9, 3, 1, 30)), '2026-10-03');
+
+// CK sales vs purchases: a month with purchases and no sales must survive the
+// join as its own bar, not vanish.
+{
+  const cfg = T('ck_sales_vs_purchase');
+  const out = H.pivotRows({
+    sales: [{ period: '2026-07-03', sales: 600 }, { period: '2026-07-20', sales: 400 }],
+    purchase: [{ order_date: '2026-07-05', total: 700 }, { order_date: '2026-08-02', total: 120 }],
+  }, cfg);
+  check('ขาย-ซื้อ CK: ได้ 2 เดือน', out.length, 2);
+  check('ขาย-ซื้อ CK: ก.ค. ยอดขาย', out[0].sales_value, 1000);
+  check('ขาย-ซื้อ CK: ก.ค. ยอดซื้อ', out[0].purchase_value, 700);
+  check('ขาย-ซื้อ CK: ส.ค. มีแต่ยอดซื้อ', [out[1].period, out[1].sales_value, out[1].purchase_value].join('|'), '2026-08-01|0|120');
+  check('ขาย-ซื้อ CK: เดือนเดียวกันลงช่องเดียวกันในกราฟ', H.bucketKey(out[0].period, cfg.bucket), '2026-07-01');
+}
 console.log(fails ? `\n${fails} ข้อไม่ผ่าน` : '\nผ่านทั้งหมด');
 process.exit(fails ? 1 : 0);

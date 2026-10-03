@@ -499,8 +499,9 @@ function keyMissingMessage() {
   return 'ระบบยังไม่ได้เชื่อมข้อมูล FMH — กรุณาติดต่อผู้ดูแลระบบของบริษัท';
 }
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
-const daysAgoIso = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
+// Local calendar, not UTC: before 07:00 in Bangkok the UTC date is still yesterday.
+const todayIso = () => localIso(new Date());
+const daysAgoIso = (n) => localIso(new Date(Date.now() - n * 86400000));
 
 class DashboardView {
   constructor(wrap, { dashboard, widgets, sources }) {
@@ -839,11 +840,18 @@ function renderBar(body, rows, cfg) {
   }
 }
 
+// YYYY-MM-DD in the viewer's own calendar. toISOString() is UTC, so in
+// Bangkok (UTC+7) a local midnight came back as the previous day and every
+// monthly chart was labelled one month early.
+function localIso(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function bucketKey(dateStr, bucket) {
   const d = new Date(String(dateStr).slice(0, 10) + 'T00:00:00');
   if (isNaN(d)) return null;
-  if (bucket === 'day') return d.toISOString().slice(0, 10);
-  if (bucket === 'month') return d.toISOString().slice(0, 7) + '-01';
+  if (bucket === 'day') return localIso(d);
+  if (bucket === 'month') return localIso(d).slice(0, 7) + '-01';
   const day = d.getDay(); // week: Monday of that week
   d.setDate(d.getDate() + ((day === 0 ? -6 : 1) - day));
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -868,24 +876,35 @@ function renderLine(body, rows, cfg) {
   wrap.innerHTML = '<canvas></canvas>';
   body.appendChild(wrap);
   const series = cfg.series || [];
+  // `mark: 'bar'` draws the same buckets as grouped bars: the honest form when
+  // the series are amounts to compare side by side (sales vs purchases), not a
+  // level to follow. A series may still set its own `mark` to ride as a line.
+  const asBar = cfg.mark === 'bar';
   const chart = new Chart(wrap.querySelector('canvas'), {
-    type: 'line',
+    type: asBar ? 'bar' : 'line',
     data: {
       labels: keys.map((k) =>
         new Date(k + 'T00:00:00').toLocaleDateString('th-TH', cfg.bucket === 'month' ? { month: 'short', year: '2-digit' } : { day: 'numeric', month: 'short' })
       ),
-      datasets: series.map((s) => ({
-        label: s.label,
-        data: keys.map((k) => evalMetric(s.value, buckets.get(k))),
-        borderColor: s.color,
-        backgroundColor: s.color,
-        borderWidth: 2,
-        pointRadius: 3,
-        pointHoverRadius: 6,
-        pointBorderColor: '#fff',
-        pointBorderWidth: 1.5,
-        tension: 0.25,
-      })),
+      datasets: series.map((s) => {
+        const data = keys.map((k) => evalMetric(s.value, buckets.get(k)));
+        if ((s.mark || cfg.mark) === 'bar') {
+          return { type: 'bar', label: s.label, data, backgroundColor: s.color, borderRadius: 4, maxBarThickness: 36, categoryPercentage: 0.7, barPercentage: 0.9 };
+        }
+        return {
+          type: 'line',
+          label: s.label,
+          data,
+          borderColor: s.color,
+          backgroundColor: s.color,
+          borderWidth: 2,
+          pointRadius: 3,
+          pointHoverRadius: 6,
+          pointBorderColor: '#fff',
+          pointBorderWidth: 1.5,
+          tension: 0.25,
+        };
+      }),
     },
     options: {
       responsive: true,
@@ -897,7 +916,7 @@ function renderLine(body, rows, cfg) {
       },
       scales: {
         x: { grid: { display: false }, ticks: { color: '#6b7268' } },
-        y: { grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
+        y: { beginAtZero: asBar || cfg.zero === true, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
       },
     },
   });
@@ -1154,7 +1173,7 @@ function renderPareto(body, rows, cfg) {
       },
       scales: {
         x: { grid: { display: false }, ticks: { color: '#6b7268', maxRotation: 50, minRotation: 0, autoSkip: false } },
-        y: { grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
+        y: { beginAtZero: asBar || cfg.zero === true, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
         y2: { position: 'right', min: 0, max: 100, grid: { display: false }, border: { display: false }, ticks: { color: '#A9812F', callback: (v) => v + '%' } },
       },
     },
