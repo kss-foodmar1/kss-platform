@@ -32,7 +32,7 @@ adminRouter.use(requireAuth, requireSuperadmin);
 adminRouter.get('/status', (req, res) => {
   res.json({
     omise_mode: omise.mode(),
-    webhook_secret_set: !!process.env.OMISE_WEBHOOK_SECRET,
+    webhook_secret_set: !!(process.env.OMISE_WEBHOOK_SECRET || process.env.omise_webhook_secret),
     enforce_expiry: billing.enforcing(),
     grace_days: billing.GRACE_DAYS(),
     webhook_url: `${baseUrl(req)}/api/webhooks/omise`,
