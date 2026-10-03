@@ -139,6 +139,13 @@ function evalMetric(m, rows) {
     }
     case 'diff':
       return evalMetric(m.a, rows) - evalMetric(m.b, rows);
+    // A sum over only the rows a rule keeps: "GRN value of lines received but
+    // not yet invoiced" is one segment of a stacked bar, not its own widget.
+    case 'sum_where':
+      return rows.filter((r) => rowMatches(m.where, r)).reduce((s, r) => s + num(pick(r, m.field)), 0);
+    // The rest of a whole, never below zero: a stack's remainder segment.
+    case 'floor0':
+      return Math.max(0, evalMetric(m.a, rows));
     default:
       return 0;
   }
@@ -704,6 +711,21 @@ class DashboardView {
         return;
       }
       const cfg = widget.config || {};
+      // A composite widget draws several small charts, each from its own pull.
+      if (widget.pulls && cfg.panels) {
+        const byAlias = {};
+        widget.pulls.forEach((p) => {
+          const r = this.results[p.key];
+          byAlias[p.as] = r && !r.error ? this.rowsFor(p.key) || [] : null;
+        });
+        try {
+          renderPanels(body, byAlias, cfg);
+        } catch (err) {
+          console.error('Widget render failed', widget, err);
+          body.innerHTML = `<p class="muted">แสดงผล widget นี้ไม่สำเร็จ (${esc(err.message)})</p>`;
+        }
+        return;
+      }
       // A pivot widget's rows are computed here from several pulls; everything
       // after this line treats them like any other rows.
       let raw;
@@ -1095,6 +1117,9 @@ function renderMenuBreakdown(body, rows, cfg) {
 // encode magnitude rather than identity, so the reader sees "more" as "darker"
 // instead of having to decode a rainbow.
 const SEQ_RAMP = ['#184f95', '#2a78d6', '#5598e7', '#9ec5f4', '#cde2fb'];
+// Distinct in hue AND lightness, so neighbouring slices separate in greyscale too.
+// No chili: in this app red means "needs action" (overdue, awaiting invoice).
+const CAT_COLORS = ['#2F6FB0', '#A9812F', '#2F8F4E', '#1B2B22', '#8FB4DC', '#C9A15A'];
 const seqColor = (i, n) => SEQ_RAMP[Math.min(SEQ_RAMP.length - 1, Math.floor((i / Math.max(1, n - 1)) * (SEQ_RAMP.length - 1)))];
 
 // Shared shaping for the renderers that rank grouped rows.
@@ -1110,14 +1135,26 @@ function rankedItems(rows, cfg, fallbackTop) {
 // Only used where the parts genuinely sum to a meaningful whole (order status,
 // stock value by category); a ranked bar is better for anything else.
 function renderDonut(body, rows, cfg) {
-  const { items } = rankedItems(rows, cfg, 6);
-  if (!items.length) return;
+  const top = cfg.top_n || 6;
+  const all = rankedItems(rows, { ...cfg, top_n: 1e9 }, top).items;
+  if (!all.length) return;
+  // Part-to-whole only reads true if the parts are the whole: fold everything
+  // past the top slices into one, instead of dropping it from the total.
+  const items = all.slice(0, top);
+  if (all.length > top) {
+    items.push({ other: true, name: `อื่น ๆ (${all.length - top})`, value: all.slice(top).reduce((a, i) => a + i.value, 0) });
+  }
   const sum = items.reduce((a, i) => a + i.value, 0);
   const wrap = document.createElement('div');
   wrap.className = 'chart-wrap';
   wrap.innerHTML = '<canvas></canvas>';
   body.appendChild(wrap);
-  const colors = items.map((it, i) => (cfg.colors && cfg.colors[it.name]) || seqColor(i, items.length));
+  // Slices are categories, not steps on a scale: a shaded ramp ran out of
+  // distinct shades past five and painted neighbours the same blue. The tail
+  // slice is always neutral so it never reads as a category of its own.
+  const colors = items.map((it, i) =>
+    (cfg.colors && cfg.colors[it.name]) || (it.other ? '#D6CFBC' : CAT_COLORS[i % CAT_COLORS.length])
+  );
   const chart = new Chart(wrap.querySelector('canvas'), {
     type: 'doughnut',
     data: { labels: items.map((i) => i.name), datasets: [{ data: items.map((i) => i.value), backgroundColor: colors, borderColor: '#fff', borderWidth: 2 }] },
@@ -1136,6 +1173,96 @@ function renderDonut(body, rows, cfg) {
     },
   });
   activeCharts.push(chart);
+}
+
+// ---- stack: one horizontal bar per group, split into parts of its whole ----
+// cfg.segments = [{label, color, value}]; the segments must sum to the bar's
+// whole (use floor0/diff for "the rest"), or the stack would misstate it.
+function renderStack(body, rows, cfg) {
+  const groups = groupRows(rows, rowFields(cfg));
+  const segs = cfg.segments || [];
+  let items = [...groups].map(([name, rs]) => {
+    const parts = segs.map((sg) => evalMetric(sg.value, rs));
+    return { name: String(name), parts, total: parts.reduce((a, b) => a + b, 0) };
+  });
+  items = items.filter((i) => i.total > 0).sort((a, b) => b.total - a.total);
+  const shown = items.slice(0, cfg.top_n || 8);
+  if (!shown.length) {
+    body.insertAdjacentHTML('beforeend', `<p class="muted">${esc(cfg.empty_message || 'ไม่มีรายการ')}</p>`);
+    return;
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'chart-wrap';
+  wrap.style.height = `${Math.max(160, shown.length * 34 + 60)}px`;
+  wrap.innerHTML = '<canvas></canvas>';
+  body.appendChild(wrap);
+  const chart = new Chart(wrap.querySelector('canvas'), {
+    type: 'bar',
+    data: {
+      labels: shown.map((i) => i.name),
+      datasets: segs.map((sg, k) => ({
+        label: sg.label,
+        data: shown.map((i) => i.parts[k]),
+        backgroundColor: sg.color,
+        borderColor: '#fff',
+        borderWidth: { right: 1 },
+        borderSkipped: false,
+        maxBarThickness: 22,
+      })),
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: '#1B2B22' } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => ` ${ctx.dataset.label}: ${fmtValue(ctx.parsed.x, cfg.format)}`,
+            footer: (its) => (its.length ? `รวม ${fmtValue(shown[its[0].dataIndex].total, cfg.format)}` : ''),
+          },
+        },
+      },
+      scales: {
+        x: { stacked: true, beginAtZero: true, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
+        y: { stacked: true, grid: { display: false }, ticks: { color: '#1B2B22' } },
+      },
+    },
+  });
+  activeCharts.push(chart);
+  if (items.length > shown.length) {
+    body.insertAdjacentHTML('beforeend', `<p class="widget-foot">แสดง ${shown.length} จาก ${items.length} กลุ่ม</p>`);
+  }
+}
+
+// ---- panels: one widget, several small charts, each on its own pull ----
+// cfg.panels = [{ title, note?, from: <alias>, chart: 'donut'|'stack'|..., wide?, ...that chart's config }]
+function renderPanels(body, byAlias, cfg) {
+  const grid = document.createElement('div');
+  grid.className = 'panel-grid';
+  body.appendChild(grid);
+  (cfg.panels || []).forEach((panel) => {
+    const cell = document.createElement('section');
+    cell.className = `panel${panel.wide ? ' panel-wide' : ''}`;
+    cell.innerHTML = `<h4 class="panel-title">${esc(panel.title || '')}</h4>${panel.note ? `<p class="widget-foot">${esc(panel.note)}</p>` : ''}`;
+    grid.appendChild(cell);
+    const src = byAlias[panel.from];
+    const inner = document.createElement('div');
+    cell.appendChild(inner);
+    if (src === null || src === undefined) {
+      inner.innerHTML = '<p class="muted">ยังไม่มีข้อมูลของรายงานนี้</p>';
+      return;
+    }
+    const rows = applyRowLayer(src, panel);
+    const renderer = RENDERERS[panel.chart];
+    if (!rows.length || !renderer) {
+      inner.innerHTML = `<p class="muted">${esc(renderer ? panel.empty_message || 'ไม่พบข้อมูลในช่วงนี้' : 'ไม่รู้จักประเภทกราฟ')}</p>`;
+      return;
+    }
+    renderer(inner, rows, panel);
+  });
+  if (cfg.foot) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">${esc(cfg.foot)}</p>`);
 }
 
 // ---- pareto: ranked bars plus a cumulative share line ----
@@ -1364,6 +1491,7 @@ const RENDERERS = {
   scatter: renderScatter,
   treemap: renderTreemap,
   range: renderRange,
+  stack: renderStack,
 };
 
 // ---------- change password ----------

@@ -149,11 +149,10 @@ router.post(
 
     const widgets = await listWidgets(dashboard.id);
     const pulls = new Map();
+    // Same list the sync uses: a widget that reads two reports (CK sales vs
+    // purchases) needs both refreshed, not just the one named report_source.
     widgets.forEach((w) => {
-      const cfg = FMH_REPORTS[w.report_source];
-      if (!cfg) return;
-      const grouping = cfg.groupings.includes(w.config.group_by) ? w.config.group_by : null;
-      pulls.set(cacheKeyFor(w.report_source, grouping), { source: w.report_source, grouping });
+      pullsForWidget(w.report_source, w.config).forEach((p) => pulls.set(cacheKeyFor(p.source, p.grouping), p));
     });
 
     const results = {};
