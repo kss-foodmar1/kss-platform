@@ -187,6 +187,9 @@ function bucketOf(value, bucket) {
 // fallback field names, or { field, bucket } for dates.
 function keyOf(row, spec) {
   if (!spec) return null;
+  // One bucket for everything: lines up single-row stat cards from different
+  // reports (theoretical total next to actual total).
+  if (spec.const !== undefined) return String(spec.const);
   // A composite key — invoice number AND product code — for reports that
   // only line up on the pair. Any blank part means the row has no key.
   if (spec.fields) {
@@ -272,6 +275,7 @@ function evalRow(expr, row) {
     case 'div': { const d = b(); return d ? a() / d : 0; }
     case 'pct_of': { const d = b(); return d ? (a() / d) * 100 : 0; }
     case 'abs': return Math.abs(a());
+    case 'max0': return Math.max(0, a());
     // Wilson score lower bound of a rate k/n, as a percent. Ranks suppliers by
     // the rate we can be confident of, so 1 short line out of 2 does not
     // outrank 30 out of 200. z defaults to 1.96 (95%).

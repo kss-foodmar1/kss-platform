@@ -297,5 +297,32 @@ check('รายสัปดาห์ของเดือน: วันที�
   check('สูตรล้าหลัง: ส่วนต่าง 33.3%', Math.round(out[0].gap_pct * 10) / 10, 33.3);
   check('สูตรล้าหลัง: กระทบ 2 เมนู', out[0].menus, 2);
 }
+
+// Actual vs theoretical. Pork at outlet A: recipe says 10 kg, used 12 kg,
+// variance 2 kg worth ฿200 (so ฿100/kg) → overuse ฿200; ฿50 of pork waste
+// was recorded → ฿150 unexplained. Rice at A used less than recipe.
+{
+  const cfg = T('avt_items');
+  const v = [
+    { sku: 'PRK', branch: 'A', product: 'หมู', category: 'เนื้อ', uom: 'kg', theoretical_usage: 10, actual_usage: 12, variance_qty: -2, variance_value: -200 },
+    { sku: 'RICE', branch: 'A', product: 'ข้าว', category: 'ของแห้ง', uom: 'kg', theoretical_usage: 50, actual_usage: 45, variance_qty: 5, variance_value: 150 },
+  ];
+  const w = [{ product_code: 'PRK', branch: 'A', wastage_value: 50 }, { product_code: 'PRK', branch: 'B', wastage_value: 999 }];
+  const out = H.applyRowLayer(H.pivotRows({ v, w }, cfg), cfg);
+  const pork = out.find((r) => r.line_key === 'PRK|A'), rice = out.find((r) => r.line_key === 'RICE|A');
+  check('AvT: ใช้เกินไม่ขึ้นกับเครื่องหมายของ FMH', pork.overuse_value, 200);
+  check('AvT: ของเสียสาขาอื่นไม่ถูกจับคู่', pork.waste_value, 50);
+  check('AvT: อธิบายไม่ได้', pork.unexplained, 150);
+  check('AvT: ใช้น้อยกว่าสูตรเป็นค่าลบ', rice.overuse_value, -150);
+  check('AvT: แถวของเสียที่ไม่มีส่วนต่างถูกตัดออก', out.some((r) => r.line_key === 'PRK|B'), false);
+  check('AvT: แท่งซ้อนรวมเท่าส่วนใช้เกิน', pork.explained_pos + pork.unexplained_pos, 200);
+  check('AvT: ข้าวไม่เข้าแท่งซ้อน', rice.explained_pos + rice.unexplained_pos, 0);
+}
+{
+  const cfg = T('avt_summary');
+  const out = H.pivotRows({ th: [{ theoretical_usage_value: 1000 }], ac: [{ actual_usage_value: 1080 }], w: [{ wastage_value: 30 }, { wastage_value: 20 }] }, cfg);
+  check('AvT สรุป: รวมเป็นแถวเดียว', out.length, 1);
+  check('AvT สรุป: อธิบายไม่ได้ = 80 − 50', H.evalMetric(cfg.metrics[5].value, out), 30);
+}
 console.log(fails ? `\n${fails} ข้อไม่ผ่าน` : '\nผ่านทั้งหมด');
 process.exit(fails ? 1 : 0);
