@@ -252,5 +252,50 @@ check('รายสัปดาห์ของเดือน: วันที�
   check('CN: ไก่ยังไม่ได้คืน 50', out.find((r) => r.line_key === 'I9|Y').outstanding, 50);
   check('CN: คีย์ขาดส่วนใดส่วนหนึ่งไม่ถูกจับคู่', H.keyOf({ invoice_number: 'I1' }, { fields: ['invoice_number', 'product_code'] }), null);
 }
+
+// Price change. Pork/kg: 100 → 110 → 120 (bought 10 each time; orders arrive
+// out of date order on purpose). First 100, last 120, +20%, paid 0+100+200 =
+// ฿300 above the first price. Pork/case is another product (another unit).
+// Rice: one purchase only — not a "change".
+{
+  const cfg = T('pc_movers');
+  const p = [
+    { product_code: 'PRK', uom: 'kg', product_name: 'หมู', supplier: 'A', order_date: '2026-09-20', price: 120, qty: 10, category_name: 'เนื้อ' },
+    { product_code: 'PRK', uom: 'kg', product_name: 'หมู', supplier: 'B', order_date: '2026-09-01', price: 100, qty: 10, category_name: 'เนื้อ' },
+    { product_code: 'PRK', uom: 'kg', product_name: 'หมู', supplier: 'A', order_date: '2026-09-10', price: 110, qty: 10, category_name: 'เนื้อ' },
+    { product_code: 'PRK', uom: 'case', product_name: 'หมู', supplier: 'A', order_date: '2026-09-02', price: 900, qty: 1, category_name: 'เนื้อ' },
+    { product_code: 'PRK', uom: 'case', product_name: 'หมู', supplier: 'A', order_date: '2026-09-22', price: 900, qty: 1, category_name: 'เนื้อ' },
+    { product_code: 'RICE', uom: 'kg', product_name: 'ข้าว', supplier: 'C', order_date: '2026-09-05', price: 30, qty: 50, category_name: 'ของแห้ง' },
+  ];
+  const out = H.applyRowLayer(H.pivotRows({ p }, cfg), cfg);
+  check('PC: เหลือเฉพาะหมู/kg (case ราคาไม่ขยับ, ข้าวซื้อครั้งเดียว)', out.map((r) => r.product_key).join(','), 'PRK|kg');
+  const r = out[0];
+  check('PC: ราคาแรกตามวันที่ ไม่ใช่ตามลำดับแถว', r.first_price, 100);
+  check('PC: ราคาล่าสุด', r.last_price, 120);
+  check('PC: เปลี่ยน +20%', r.change_pct, 20);
+  check('PC: จ่ายเพิ่มจริง', r.extra_paid, 300);
+  check('PC: ซัพพลายเออร์ล่าสุด', r.supplier, 'A');
+}
+
+// Stale recipe cost: recipe costs pork at 90/kg (2 lines, 0.2 kg for ฿18 and
+// 0.1 kg for ฿9 → ฿27 / 0.3 kg = 90), latest purchase 120 → recipe 33.3% low.
+{
+  const cfg = T('pc_stale_recipe_cost');
+  const p = [
+    { product_code: 'PRK', uom: 'kg', product_name: 'หมู', order_date: '2026-09-01', price: 100 },
+    { product_code: 'PRK', uom: 'kg', product_name: 'หมู', order_date: '2026-09-20', price: 120 },
+    { product_code: 'SALT', uom: 'kg', product_name: 'เกลือ', order_date: '2026-09-20', price: 20 },
+  ];
+  const r = [
+    { ingredient_code: 'PRK', menu_name: 'กะเพรา', ingredient_qty: 0.2, cost: 18, ingredient_uom: 'kg' },
+    { ingredient_code: 'PRK', menu_name: 'ผัดพริก', ingredient_qty: 0.1, cost: 9, ingredient_uom: 'kg' },
+    { ingredient_code: 'SALT', menu_name: 'กะเพรา', ingredient_qty: 0.01, cost: 0.2, ingredient_uom: 'kg' },
+  ];
+  const out = H.applyRowLayer(H.pivotRows({ p, r }, cfg), cfg);
+  check('สูตรล้าหลัง: เหลือหมูตัวเดียว (เกลือตรงราคา)', out.map((x) => x.product_code).join(','), 'PRK');
+  check('สูตรล้าหลัง: ราคาในสูตร 90/kg', Math.round(out[0].recipe_unit_cost * 100) / 100, 90);
+  check('สูตรล้าหลัง: ส่วนต่าง 33.3%', Math.round(out[0].gap_pct * 10) / 10, 33.3);
+  check('สูตรล้าหลัง: กระทบ 2 เมนู', out[0].menus, 2);
+}
 console.log(fails ? `\n${fails} ข้อไม่ผ่าน` : '\nผ่านทั้งหมด');
 process.exit(fails ? 1 : 0);

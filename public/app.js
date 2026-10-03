@@ -227,6 +227,15 @@ function pivotRows(rowsByAlias, cfg) {
       if (c.first) {
         const hit = side.find((r) => !isBlank(pick(r, c.first)));
         row[c.field] = hit ? pick(hit, c.first) : '';
+      } else if (c.latest || c.earliest) {
+        // The value on the most recent (or oldest) row by a date field: the
+        // first and last price paid in the window, the current supplier.
+        const spec = c.latest || c.earliest;
+        const dated = side
+          .filter((r) => dateOnly(pick(r, spec.by)) && !isBlank(pick(r, spec.value)))
+          .sort((x, y) => dateOnly(pick(x, spec.by)).localeCompare(dateOnly(pick(y, spec.by))));
+        const hit = c.latest ? dated[dated.length - 1] : dated[0];
+        row[c.field] = hit ? pick(hit, spec.value) : '';
       } else {
         row[c.field] = evalMetric(c.metric, side);
       }
@@ -818,6 +827,8 @@ function renderKpi(body, rows, cfg) {
 // shown next to the printed value, so color is never the only signal.
 function barColor(value, cfg) {
   if (cfg.color_mode === 'signed') return value < 0 ? 'var(--chili)' : 'var(--series-blue)';
+  // Money out: paying more is the bad direction, so it is the red one.
+  if (cfg.color_mode === 'signed_cost') return value > 0 ? 'var(--chili)' : 'var(--series-blue)';
   if (cfg.color_mode === 'margin') return value < 0 ? 'var(--chili)' : value < 20 ? 'var(--brass)' : 'var(--status-good)';
   // A target makes "good" directional: food cost is better low, margin better
   // high, so the widget says which way it reads rather than the renderer
