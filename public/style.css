@@ -358,3 +358,13 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
 .donut-legend .vl { font-variant-numeric: tabular-nums; color: #1B2B22; }
 .donut-legend .sh { width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; color: #6b7268; }
 @media (max-width: 520px) { .donut-box { grid-template-columns: 1fr; } }
+
+/* tabs_bar: period tabs with the per-group average, over a ranked list */
+.tabs-bar-head { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 10px; }
+.tabs-bar-caption { margin: 0; font-size: 13px; font-weight: 600; color: #1B2B22; }
+.tabs-bar-tabs { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; border-bottom: 1px solid #e7e1d1; width: 100%; }
+.tabs-bar-tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 6px 14px 8px; display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; color: #6b7268; font: inherit; font-size: 12px; }
+.tabs-bar-tab b { font-size: 14px; color: #4A5A50; font-variant-numeric: tabular-nums; }
+.tabs-bar-tab.active { border-bottom-color: #2F8F4E; color: #2F8F4E; }
+.tabs-bar-tab.active b { color: #1F6B38; }
+.tabs-bar-tab:focus-visible { outline: 2px solid #BE4229; outline-offset: 2px; }

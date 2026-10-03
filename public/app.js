@@ -147,6 +147,8 @@ function evalMetric(m, rows) {
         .reduce((s, r) => s + (m.expr !== undefined ? num(evalRow(m.expr, r)) : num(pick(r, m.field))), 0);
     case 'count_where':
       return rows.filter((r) => rowMatches(m.where, r)).length;
+    case 'count_distinct_where':
+      return new Set(rows.filter((r) => rowMatches(m.where, r)).map((r) => pick(r, m.field)).filter((v) => !isBlank(v))).size;
     // The rest of a whole, never below zero: a stack's remainder segment.
     case 'floor0':
       return Math.max(0, evalMetric(m.a, rows));
@@ -314,6 +316,7 @@ function rowMatches(rule, row) {
     case 'or': return (rule.rules || []).some((r) => rowMatches(r, row));
     case 'not': return !rowMatches(rule.rule, row);
     case 'blank': return isBlank(pick(row, rule.field));
+    case 'in': return (rule.values || []).includes(String(pick(row, rule.field) ?? 'ไม่ระบุ'));
     case 'present': return !isBlank(pick(row, rule.field));
     // Values that should agree but don't. The tolerance is what keeps rounding
     // noise out of an exception list nobody would then trust.
@@ -323,6 +326,11 @@ function rowMatches(rule, row) {
     case 'lt': return evalRow(rule.a, row) < evalRow(rule.b, row);
     case 'lte': return evalRow(rule.a, row) <= evalRow(rule.b, row);
     case 'matches': return new RegExp(rule.pattern).test(String(pick(row, rule.field) ?? ''));
+    // The last N days counting today (1 = today only), in the viewer's calendar.
+    case 'within_days': {
+      const d = dateOnly(pick(row, rule.field));
+      return !!d && d >= daysAgoIso((rule.days || 1) - 1) && d <= todayIso();
+    }
     default: return true;
   }
 }
@@ -950,7 +958,31 @@ function renderLine(body, rows, cfg) {
   wrap.className = 'chart-wrap';
   wrap.innerHTML = '<canvas></canvas>';
   body.appendChild(wrap);
-  const series = cfg.series || [];
+  // `series_by` makes one series per value of a field (a line per category),
+  // the largest first; the rest fold into one, so the legend stays readable.
+  let series = cfg.series || [];
+  if (cfg.series_by) {
+    const totals = new Map();
+    rows.forEach((r) => {
+      const k = String(pick(r, cfg.series_by) ?? 'ไม่ระบุ');
+      totals.set(k, (totals.get(k) || 0) + evalMetric(cfg.value, [r]));
+    });
+    const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+    const top = ranked.slice(0, cfg.top_n || 6);
+    const inTop = new Set(top);
+    series = top.map((k, i) => ({
+      label: k,
+      color: CAT_COLORS[i % CAT_COLORS.length],
+      value: { op: 'sum_where', field: cfg.value.field, where: { op: 'in', field: cfg.series_by, values: [k] } },
+    }));
+    if (ranked.length > top.length) {
+      series.push({
+        label: `อื่น ๆ (${ranked.length - top.length})`,
+        color: '#B8B09A',
+        value: { op: 'sum_where', field: cfg.value.field, where: { op: 'not', rule: { op: 'in', field: cfg.series_by, values: [...inTop] } } },
+      });
+    }
+  }
   // `mark: 'bar'` draws the same buckets as grouped bars: the honest form when
   // the series are amounts to compare side by side (sales vs purchases), not a
   // level to follow. A series may still set its own `mark` to ride as a line.
@@ -1243,6 +1275,49 @@ function renderDonut(body, rows, cfg) {
       return `<li><span class="dot" style="background:${colors[i]}"></span><span class="nm" title="${esc(it.name)}">${esc(it.name)}</span><span class="vl">${esc(fmtValue(it.value, cfg.format))}</span><span class="sh">${share}%</span></li>`;
     })
     .join('');
+}
+
+// ---- tabs_bar: a ranked bar list with period tabs above it ----
+// Each tab shows the average per group for its period (average per branch),
+// so a chain owner reads "a branch buys ฿X a week" before the ranking.
+// Tabs filter inside the rows the range picker already gave this widget.
+function renderTabsBar(body, rows, cfg) {
+  const tabs = cfg.tabs || [{ label: 'ช่วงที่เลือก' }];
+  const fieldOf = (cfg.date_fields || [])[0];
+  const slice = (t) => (t.days && fieldOf ? rows.filter((r) => rowMatches({ op: 'within_days', field: fieldOf, days: t.days }, r)) : rows);
+  const avgPer = (rs) => {
+    const groups = groupRows(rs, rowFields(cfg));
+    return groups.size ? evalMetric(cfg.value, rs) / groups.size : 0;
+  };
+  const head = document.createElement('div');
+  head.className = 'tabs-bar-head';
+  head.innerHTML = `<p class="tabs-bar-caption">${esc(cfg.caption || 'เฉลี่ยต่อรายการ')}</p><div class="tabs-bar-tabs" role="tablist"></div>`;
+  const tabRow = head.querySelector('.tabs-bar-tabs');
+  const list = document.createElement('div');
+  body.appendChild(head);
+  body.appendChild(list);
+  let active = Math.min(cfg.default_tab ?? tabs.length - 1, tabs.length - 1);
+  const draw = () => {
+    tabRow.innerHTML = '';
+    tabs.forEach((t, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `tabs-bar-tab${i === active ? ' active' : ''}`;
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', String(i === active));
+      b.innerHTML = `<span>${esc(t.label)}</span><b>${esc(fmtValue(avgPer(slice(t)), cfg.format))}</b>`;
+      b.addEventListener('click', () => { active = i; draw(); });
+      tabRow.appendChild(b);
+    });
+    list.innerHTML = '';
+    const rs = slice(tabs[active]);
+    if (!rs.length) {
+      list.innerHTML = '<p class="muted">ไม่มีรายการในช่วงนี้</p>';
+      return;
+    }
+    renderBar(list, rs, cfg);
+  };
+  draw();
 }
 
 // ---- stack: one horizontal bar per group, split into parts of its whole ----
@@ -1572,6 +1647,7 @@ const RENDERERS = {
   treemap: renderTreemap,
   range: renderRange,
   stack: renderStack,
+  tabs_bar: renderTabsBar,
 };
 
 // ---------- change password ----------
