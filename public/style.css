@@ -348,3 +348,13 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
 .panel-title { margin: 0; font-size: 14px; font-weight: 600; color: #1B2B22; }
 .panel .chart-wrap { height: 240px; }
 @media (max-width: 720px) { .panel-grid { grid-template-columns: 1fr; } }
+.panel-headline { margin: 2px 0 6px; display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 18px; font-size: 13px; color: #4A5A50; }
+.panel-headline .dot, .donut-legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; flex: none; }
+.donut-box { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: 16px; align-items: center; }
+.donut-box .donut-ring { height: 220px; }
+.donut-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; min-width: 0; }
+.donut-legend li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.donut-legend .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1B2B22; }
+.donut-legend .vl { font-variant-numeric: tabular-nums; color: #1B2B22; }
+.donut-legend .sh { width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; color: #6b7268; }
+@media (max-width: 520px) { .donut-box { grid-template-columns: 1fr; } }

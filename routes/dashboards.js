@@ -65,7 +65,7 @@ router.get(
         label: cfg ? cfg.label : p.source,
         // Grouped rows are already aggregated over the window, so there is no
         // per-row date left for the range picker to filter on.
-        date_field: p.grouping ? null : cfg ? cfg.dateField : null,
+        date_field: p.grouping ? null : cfg ? cfg.rowDateField || cfg.dateField : null,
       };
     };
     widgets.forEach((w) => {

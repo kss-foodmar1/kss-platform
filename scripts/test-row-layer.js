@@ -194,16 +194,19 @@ check('localIso ใช้ปฏิทินเครื่อง', H.localIso(ne
 // CK category mix: the stacked bar's two segments must add back to the PO
 // total, and only lines received with no invoice count as awaiting INV.
 {
-  const panel = T('ck_category_mix').panels.find((p) => p.chart === 'stack');
+  const panel = T('ck_category_mix').panels.find((p) => p.stacked);
   const lines = [
     { category_name: 'เนื้อ', po_total: 180, grn_total: 178, grn_number: 'G1', invoice_number: 'I1' }, // invoiced
     { category_name: 'เนื้อ', po_total: 120, grn_total: 118, grn_number: 'G2', invoice_number: '' },   // awaiting
     { category_name: 'เนื้อ', po_total: 30, grn_total: 0, grn_number: '', invoice_number: '' },         // not received
   ];
-  const [awaiting, rest] = panel.segments.map((sg) => H.evalMetric(sg.value, lines));
+  const [awaiting, rest] = panel.series.map((sg) => H.evalMetric(sg.value, lines));
   check('แท่งซ้อน: รอ INV นับเฉพาะใบที่รับแล้วไม่มี INV', awaiting, 118);
   check('แท่งซ้อน: สองส่วนรวมกันเท่ายอด PO', awaiting + rest, 330);
-  check('แท่งซ้อน: ส่วนที่เหลือไม่ติดลบ', H.evalMetric(panel.segments[1].value, [{ po_total: 100, grn_total: 120, grn_number: 'G', invoice_number: '' }]), 0);
+  check('แท่งซ้อน: ส่วนที่เหลือไม่ติดลบ', H.evalMetric(panel.series[1].value, [{ po_total: 100, grn_total: 120, grn_number: 'G', invoice_number: '' }]), 0);
 }
+check('รายสัปดาห์ของเดือน: วันที่ 23 ลงช่อง 22', H.bucketKey('2026-08-23', 'wom'), '2026-08-22');
+check('รายสัปดาห์ของเดือน: วันที่ 7 ลงช่อง 1', H.bucketKey('2026-08-07', 'wom'), '2026-08-01');
+check('รายสัปดาห์ของเดือน: วันที่ 8 ลงช่อง 8', H.bucketKey('2026-08-08', 'wom'), '2026-08-08');
 console.log(fails ? `\n${fails} ข้อไม่ผ่าน` : '\nผ่านทั้งหมด');
 process.exit(fails ? 1 : 0);

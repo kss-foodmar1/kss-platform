@@ -874,9 +874,26 @@ function bucketKey(dateStr, bucket) {
   if (isNaN(d)) return null;
   if (bucket === 'day') return localIso(d);
   if (bucket === 'month') return localIso(d).slice(0, 7) + '-01';
+  // Week of the month: 1-7, 8-14, 15-21, 22-end. Every bucket stays inside one
+  // month, so a month's buckets always add up to that month.
+  if (bucket === 'wom') {
+    const start = d.getDate() <= 7 ? 1 : d.getDate() <= 14 ? 8 : d.getDate() <= 21 ? 15 : 22;
+    return localIso(d).slice(0, 8) + String(start).padStart(2, '0');
+  }
   const day = d.getDay(); // week: Monday of that week
   d.setDate(d.getDate() + ((day === 0 ? -6 : 1) - day));
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function bucketLabel(k, bucket) {
+  const d = new Date(k + 'T00:00:00');
+  if (bucket === 'month') return d.toLocaleDateString('th-TH', { month: 'short', year: '2-digit' });
+  if (bucket === 'wom') {
+    const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    const end = d.getDate() === 22 ? last : d.getDate() + 6;
+    return `${d.getDate()}-${end} ${d.toLocaleDateString('th-TH', { month: 'short' })}`;
+  }
+  return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
 }
 
 function renderLine(body, rows, cfg) {
@@ -905,9 +922,7 @@ function renderLine(body, rows, cfg) {
   const chart = new Chart(wrap.querySelector('canvas'), {
     type: asBar ? 'bar' : 'line',
     data: {
-      labels: keys.map((k) =>
-        new Date(k + 'T00:00:00').toLocaleDateString('th-TH', cfg.bucket === 'month' ? { month: 'short', year: '2-digit' } : { day: 'numeric', month: 'short' })
-      ),
+      labels: keys.map((k) => bucketLabel(k, cfg.bucket)),
       datasets: series.map((s) => {
         const data = keys.map((k) => evalMetric(s.value, buckets.get(k)));
         if ((s.mark || cfg.mark) === 'bar') {
@@ -933,12 +948,17 @@ function renderLine(body, rows, cfg) {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: '#1B2B22' } },
-        tooltip: { callbacks: { label: (ctx) => ` ${ctx.dataset.label}: ${fmtValue(ctx.parsed.y, cfg.format)}` } },
+        legend: { display: cfg.legend !== false, position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: '#1B2B22' } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => ` ${ctx.dataset.label}: ${fmtValue(ctx.parsed.y, cfg.format)}`,
+            footer: (its) => (cfg.stacked && its.length > 1 ? `รวม ${fmtValue(its.reduce((a, i) => a + i.parsed.y, 0), cfg.format)}` : ''),
+          },
+        },
       },
       scales: {
-        x: { grid: { display: false }, ticks: { color: '#6b7268' } },
-        y: { beginAtZero: asBar || cfg.zero === true, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
+        x: { stacked: !!cfg.stacked, grid: { display: false }, ticks: { color: '#6b7268' } },
+        y: { stacked: !!cfg.stacked, beginAtZero: asBar || cfg.zero === true, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
       },
     },
   });
@@ -1119,7 +1139,7 @@ function renderMenuBreakdown(body, rows, cfg) {
 const SEQ_RAMP = ['#184f95', '#2a78d6', '#5598e7', '#9ec5f4', '#cde2fb'];
 // Distinct in hue AND lightness, so neighbouring slices separate in greyscale too.
 // No chili: in this app red means "needs action" (overdue, awaiting invoice).
-const CAT_COLORS = ['#2F6FB0', '#A9812F', '#2F8F4E', '#1B2B22', '#8FB4DC', '#C9A15A'];
+const CAT_COLORS = ['#2F6FB0', '#A9812F', '#2F8F4E', '#1B2B22', '#8FB4DC', '#C9A15A', '#7A6A9E'];
 const seqColor = (i, n) => SEQ_RAMP[Math.min(SEQ_RAMP.length - 1, Math.floor((i / Math.max(1, n - 1)) * (SEQ_RAMP.length - 1)))];
 
 // Shared shaping for the renderers that rank grouped rows.
@@ -1145,10 +1165,18 @@ function renderDonut(body, rows, cfg) {
     items.push({ other: true, name: `อื่น ๆ (${all.length - top})`, value: all.slice(top).reduce((a, i) => a + i.value, 0) });
   }
   const sum = items.reduce((a, i) => a + i.value, 0);
+  // Ring on the left, a legend that carries the amounts on the right: the
+  // numbers are the point, so they should not hide behind a hover.
+  const box = document.createElement('div');
+  box.className = 'donut-box';
   const wrap = document.createElement('div');
-  wrap.className = 'chart-wrap';
+  wrap.className = 'chart-wrap donut-ring';
   wrap.innerHTML = '<canvas></canvas>';
-  body.appendChild(wrap);
+  box.appendChild(wrap);
+  const legend = document.createElement('ul');
+  legend.className = 'donut-legend';
+  box.appendChild(legend);
+  body.appendChild(box);
   // Slices are categories, not steps on a scale: a shaded ramp ran out of
   // distinct shades past five and painted neighbours the same blue. The tail
   // slice is always neutral so it never reads as a category of its own.
@@ -1163,7 +1191,7 @@ function renderDonut(body, rows, cfg) {
       maintainAspectRatio: false,
       cutout: '58%',
       plugins: {
-        legend: { position: 'right', labels: { usePointStyle: true, boxWidth: 8, color: '#1B2B22' } },
+        legend: { display: false },
         tooltip: {
           callbacks: {
             label: (ctx) => ` ${ctx.label}: ${fmtValue(ctx.parsed, cfg.format)} (${sum ? ((ctx.parsed / sum) * 100).toFixed(0) : 0}%)`,
@@ -1173,6 +1201,12 @@ function renderDonut(body, rows, cfg) {
     },
   });
   activeCharts.push(chart);
+  legend.innerHTML = items
+    .map((it, i) => {
+      const share = sum ? Math.round((it.value / sum) * 100) : 0;
+      return `<li><span class="dot" style="background:${colors[i]}"></span><span class="nm" title="${esc(it.name)}">${esc(it.name)}</span><span class="vl">${esc(fmtValue(it.value, cfg.format))}</span><span class="sh">${share}%</span></li>`;
+    })
+    .join('');
 }
 
 // ---- stack: one horizontal bar per group, split into parts of its whole ----
@@ -1249,12 +1283,22 @@ function renderPanels(body, byAlias, cfg) {
     grid.appendChild(cell);
     const src = byAlias[panel.from];
     const inner = document.createElement('div');
-    cell.appendChild(inner);
     if (src === null || src === undefined) {
+      cell.appendChild(inner);
       inner.innerHTML = '<p class="muted">ยังไม่มีข้อมูลของรายงานนี้</p>';
       return;
     }
     const rows = applyRowLayer(src, panel);
+    // The totals the chart is made of, said once above it in words.
+    if (panel.headline && rows.length) {
+      const h = document.createElement('p');
+      h.className = 'panel-headline';
+      h.innerHTML = panel.headline
+        .map((m) => `<span><span class="dot" style="background:${m.color || '#6b7268'}"></span>${esc(m.label)}: <b style="color:${m.color || '#1B2B22'}">${esc(fmtValue(evalMetric(m.value, rows), m.format || panel.format))}</b></span>`)
+        .join('');
+      cell.appendChild(h);
+    }
+    cell.appendChild(inner);
     const renderer = RENDERERS[panel.chart];
     if (!rows.length || !renderer) {
       inner.innerHTML = `<p class="muted">${esc(renderer ? panel.empty_message || 'ไม่พบข้อมูลในช่วงนี้' : 'ไม่รู้จักประเภทกราฟ')}</p>`;
