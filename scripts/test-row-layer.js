@@ -208,5 +208,49 @@ check('localIso ใช้ปฏิทินเครื่อง', H.localIso(ne
 check('รายสัปดาห์ของเดือน: วันที่ 23 ลงช่อง 22', H.bucketKey('2026-08-23', 'wom'), '2026-08-22');
 check('รายสัปดาห์ของเดือน: วันที่ 7 ลงช่อง 1', H.bucketKey('2026-08-07', 'wom'), '2026-08-01');
 check('รายสัปดาห์ของเดือน: วันที่ 8 ลงช่อง 8', H.bucketKey('2026-08-08', 'wom'), '2026-08-08');
+
+// Supplier Quality. Supplier A: 3 invoiced lines, 1 short by 20% (10 → 8 at
+// ฿50 = ฿100 short), 1 within tolerance (100 → 99), 1 over (10 → 12).
+// Supplier B: 1 invoiced line, short; 1 line not invoiced yet (never counts).
+{
+  const lines = [
+    { supplier: 'A', po_number: 'P1', po_qty: 10, po_price: 50, grn_quantity: 8, invoice_quantity: 8, invoice_number: 'I1' },
+    { supplier: 'A', po_number: 'P1', po_qty: 100, po_price: 1, grn_quantity: 99, invoice_quantity: 99, invoice_number: 'I1' },
+    { supplier: 'A', po_number: 'P2', po_qty: 10, po_price: 5, grn_quantity: 12, invoice_quantity: 12, invoice_number: 'I2' },
+    { supplier: 'B', po_number: 'P3', po_qty: 4, po_price: 10, grn_quantity: 2, invoice_quantity: 2, invoice_number: 'I3' },
+    { supplier: 'B', po_number: 'P4', po_qty: 9, po_price: 10, grn_quantity: 0, invoice_quantity: 0, invoice_number: '' },
+  ];
+  const cfg = T('sq_scorecard');
+  const out = H.applyRowLayer(H.pivotRows({ p: lines }, cfg), cfg);
+  const a = out.find((r) => r.supplier === 'A'), b = out.find((r) => r.supplier === 'B');
+  check('SQ: A ปิดบิล 3 บรรทัด', a.closed_lines, 3);
+  check('SQ: A ขาด 1 (99/100 อยู่ในเกณฑ์ 2%)', a.short_lines, 1);
+  check('SQ: A ส่งเกิน 1', a.over_lines, 1);
+  check('SQ: A มูลค่าที่ขาด', a.short_value, 100);
+  check('SQ: B บรรทัดที่ยังไม่วางบิลไม่ถูกนับ', [b.closed_lines, b.short_lines].join('/'), '1/1');
+  // B is 1/1 = 100% raw but on one line; A is 1/3. Raw rate would rank B
+  // first with no evidence; the Wilson bound still does (one line, all short)
+  // but far below 100%.
+  check('SQ: คะแนนความเสี่ยงของ B ต่ำกว่าอัตราดิบมาก', b.risk < 25 && b.short_pct === 100, true);
+  check('SQ: Wilson 30/200 ชนะ 1/2', H.evalRow({ op: 'wilson_lb', a: 30, b: 200 }, {}) > H.evalRow({ op: 'wilson_lb', a: 1, b: 2 }, {}), true);
+  const ml = H.applyRowLayer(lines, T('sq_mismatch_lines'));
+  check('SQ: รายการไม่ตรง PO = ขาด 2 + เกิน 1', ml.length, 3);
+}
+
+// Overbilling vs credit notes, joined on invoice + product code.
+{
+  const cfg = T('sq_overbill_credit');
+  const p = [
+    { invoice_number: 'I9', product_code: 'X', supplier: 'S', product_name: 'หมู', grn_quantity: 8, invoice_quantity: 10, invoice_price: 100 }, // overbilled ฿200
+    { invoice_number: 'I9', product_code: 'Y', supplier: 'S', product_name: 'ไก่', grn_quantity: 5, invoice_quantity: 6, invoice_price: 50 },   // overbilled ฿50
+    { invoice_number: 'I8', product_code: 'X', supplier: 'S', product_name: 'หมู', grn_quantity: 5, invoice_quantity: 5, invoice_price: 100 },  // clean
+  ];
+  const cn = [{ invoice_number: 'I9', product_code: 'X', total: 200 }, { invoice_number: 'I8', product_code: 'X', total: 30 }];
+  const out = H.applyRowLayer(H.pivotRows({ p, cn }, cfg), cfg);
+  check('CN: เหลือ 2 บรรทัดที่เก็บเกิน', out.length, 2);
+  check('CN: หมูได้คืนครบ', out.find((r) => r.line_key === 'I9|X').outstanding, 0);
+  check('CN: ไก่ยังไม่ได้คืน 50', out.find((r) => r.line_key === 'I9|Y').outstanding, 50);
+  check('CN: คีย์ขาดส่วนใดส่วนหนึ่งไม่ถูกจับคู่', H.keyOf({ invoice_number: 'I1' }, { fields: ['invoice_number', 'product_code'] }), null);
+}
 console.log(fails ? `\n${fails} ข้อไม่ผ่าน` : '\nผ่านทั้งหมด');
 process.exit(fails ? 1 : 0);

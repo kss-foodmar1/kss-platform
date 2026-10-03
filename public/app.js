@@ -142,7 +142,11 @@ function evalMetric(m, rows) {
     // A sum over only the rows a rule keeps: "GRN value of lines received but
     // not yet invoiced" is one segment of a stacked bar, not its own widget.
     case 'sum_where':
-      return rows.filter((r) => rowMatches(m.where, r)).reduce((s, r) => s + num(pick(r, m.field)), 0);
+      return rows
+        .filter((r) => rowMatches(m.where, r))
+        .reduce((s, r) => s + (m.expr !== undefined ? num(evalRow(m.expr, r)) : num(pick(r, m.field))), 0);
+    case 'count_where':
+      return rows.filter((r) => rowMatches(m.where, r)).length;
     // The rest of a whole, never below zero: a stack's remainder segment.
     case 'floor0':
       return Math.max(0, evalMetric(m.a, rows));
@@ -183,6 +187,13 @@ function bucketOf(value, bucket) {
 // fallback field names, or { field, bucket } for dates.
 function keyOf(row, spec) {
   if (!spec) return null;
+  // A composite key — invoice number AND product code — for reports that
+  // only line up on the pair. Any blank part means the row has no key.
+  if (spec.fields) {
+    const parts = spec.fields.map((f) => pick(row, f));
+    if (parts.some((v) => v === undefined || v === null || String(v).trim() === '')) return null;
+    return parts.map((v) => String(v).trim()).join('|');
+  }
   if (spec.bucket) {
     const v = bucketOf(pick(row, spec.field), spec.bucket);
     return v;
@@ -252,6 +263,16 @@ function evalRow(expr, row) {
     case 'div': { const d = b(); return d ? a() / d : 0; }
     case 'pct_of': { const d = b(); return d ? (a() / d) * 100 : 0; }
     case 'abs': return Math.abs(a());
+    // Wilson score lower bound of a rate k/n, as a percent. Ranks suppliers by
+    // the rate we can be confident of, so 1 short line out of 2 does not
+    // outrank 30 out of 200. z defaults to 1.96 (95%).
+    case 'wilson_lb': {
+      const k = a(), n = b(), z = expr.z || 1.96;
+      if (!n) return 0;
+      const p = k / n, z2 = z * z;
+      const lb = (p + z2 / (2 * n) - z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / (1 + z2 / n);
+      return Math.max(0, lb) * 100;
+    }
     // Whole days between two date fields, later minus earlier. Returns null
     // when either end is missing, so "not delivered yet" never reads as 0 days.
     case 'days': {
@@ -967,7 +988,7 @@ function renderLine(body, rows, cfg) {
 
 function renderTable(body, rows, cfg) {
   const columns = cfg.columns && cfg.columns.length ? cfg.columns : Object.keys(rows[0]).map((field) => ({ field }));
-  let sort = null; // { field, dir }
+  let sort = cfg.sort_by ? { ...cfg.sort_by } : null; // { field, dir }
   const limit = cfg.top_n || 200;
 
   const tools = document.createElement('div');
