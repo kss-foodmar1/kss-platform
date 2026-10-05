@@ -373,3 +373,30 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
 .sync-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; }
 .warn-msg { background: #fbf0d9; color: #7a5a14; padding: 8px 12px; border-radius: 10px; font-size: 13px; margin: 6px 0 0; }
 .saved-mode-line { background: #e8efe6; border-radius: 10px; padding: 8px 12px; }
+
+/* widget picker (step 2 of the dashboard composer) */
+.link-btn { background: none; border: 0; padding: 0; color: var(--muted, #6b6b6b); font: inherit; font-size: 13px; cursor: pointer; margin-bottom: 8px; }
+.link-btn:hover { color: var(--ink); text-decoration: underline; }
+.picker-top { display: flex; flex-direction: column; gap: 10px; }
+.picked-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--ink, #1b2b22); color: #fff; border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.picker-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.picker-toolbar .picker-q { flex: 1; min-width: 200px; }
+.picker-countline { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.picker-h { font-size: 15px; margin: 18px 0 8px; }
+.picker-rows { display: flex; flex-direction: column; gap: 6px; }
+.picker-row { background: var(--white, #fff); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.picker-row.is-picked { border-color: #e8c55a; background: #fffbea; }
+.picker-row-main { display: flex; align-items: center; gap: 10px; }
+.picker-row .pos { width: 22px; text-align: right; font-size: 12px; color: var(--muted, #6b6b6b); font-variant-numeric: tabular-nums; }
+.picker-row .desc { font-size: 12px; color: var(--muted, #6b6b6b); }
+.add-row { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; font: inherit; cursor: pointer; }
+.add-row:hover { border-color: #e8c55a; }
+.ycheck { width: 28px; height: 28px; border-radius: 50%; border: 0; background: #f2c230; color: #1b2b22; font-weight: 800; font-size: 15px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex: none; }
+.ycheck.sm { width: 18px; height: 18px; font-size: 11px; cursor: default; }
+.addcheck { width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid var(--line); color: var(--muted, #6b6b6b); font-size: 18px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.add-row:hover .addcheck { border-color: #f2c230; background: #fff3c4; color: #1b2b22; }
+.picker-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 10px; background: var(--cream, #f3eedf); border-top: 1px solid var(--line); padding: 10px 0; margin-top: 16px; }
+.picker-bar .picker-msg { flex: 1; font-size: 13px; color: var(--muted, #6b6b6b); }
+@media (max-width: 720px) { .picker-row-main { flex-wrap: wrap; } }
+.picker-top .link-btn { align-self: flex-start; }
+.composer-dash-actions { align-items: center; }

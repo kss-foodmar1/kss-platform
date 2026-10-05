@@ -252,12 +252,22 @@ const CHART_LABEL = {
   table: 'Table',
   sensitivity: 'Price sensitivity',
   menu_breakdown: 'Menu breakdown',
+  donut: 'Donut',
+  pareto: 'Pareto',
+  scatter: 'Scatter',
+  treemap: 'Treemap',
+  range: 'Range (ต่ำสุด–สูงสุด)',
+  stack: 'Stacked bar',
+  panels: 'หลายกราฟในใบเดียว',
+  tabs_bar: 'Bar แยกแท็บ',
 };
 const sourceLabel = (s) => (adminState.meta && adminState.meta.report_sources[s] ? adminState.meta.report_sources[s].label : s);
 
 el('open-admin-btn').addEventListener('click', () => {
   if (el('admin-view').classList.contains('hidden')) openAdminConsole();
   else {
+    if (!leavePicker()) return;
+    pickerDirty = false;
     showDashboardView();
     loadCompanyPicker(state.viewCompanyId).then(() => loadDashboards(state.activeDashboardId));
   }
@@ -296,6 +306,8 @@ async function renderAdminCompanyList() {
     .join('');
   list.querySelectorAll('.company-item').forEach((b) =>
     b.addEventListener('click', () => {
+      if (!leavePicker()) return;
+      pickerDirty = false;
       adminState.selected = { type: 'company', id: Number(b.dataset.id) };
       renderAdminMain();
     })
@@ -306,19 +318,23 @@ async function renderAdminCompanyList() {
 function markActiveNav() {
   const sel = adminState.selected || {};
   document.querySelectorAll('#admin-view .admin-nav-item').forEach((b) => {
-    const active = b.dataset.id ? sel.type === 'company' && Number(b.dataset.id) === sel.id : b.dataset.view === sel.type;
+    const active = b.dataset.id ? (sel.type === 'company' || sel.type === 'picker') && Number(b.dataset.id) === sel.id : b.dataset.view === sel.type;
     b.classList.toggle('active', !!active);
   });
 }
 
 document.querySelectorAll('#admin-view .admin-nav-item[data-view]').forEach((b) =>
   b.addEventListener('click', () => {
+    if (!leavePicker()) return;
+    pickerDirty = false;
     adminState.selected = { type: b.dataset.view };
     renderAdminMain();
   })
 );
 
 el('admin-add-company-btn').addEventListener('click', () => {
+  if (!leavePicker()) return;
+  pickerDirty = false;
   adminState.selected = { type: 'new-company' };
   renderAdminMain();
 });
@@ -329,6 +345,7 @@ function renderAdminMain() {
   const main = el('admin-main');
   main.scrollTop = 0;
   if (sel.type === 'company') return renderCompanyDetail(main, sel.id);
+  if (sel.type === 'picker') return renderWidgetPicker(main, sel.id, sel.dashboardId);
   if (sel.type === 'new-company') return renderNewCompany(main);
   if (sel.type === 'catalog') return renderCatalog(main);
   if (sel.type === 'fmh') return renderFmhDiagnostics(main);
@@ -781,23 +798,6 @@ async function renderBillingPanel(container, companyId) {
 }
 
 // ---------- dashboard composer ----------
-function templateOptions() {
-  const byCat = {};
-  adminState.templates
-    .filter((t) => t.active)
-    .forEach((t) => {
-      (byCat[t.category] = byCat[t.category] || []).push(t);
-    });
-  return Object.entries(byCat)
-    .map(
-      ([cat, list]) =>
-        `<optgroup label="${esc(cat)}">${list
-          .map((t) => `<option value="${t.id}">${esc(t.name)} — ${esc(CHART_LABEL[t.chart_type] || t.chart_type)}</option>`)
-          .join('')}</optgroup>`
-    )
-    .join('');
-}
-
 async function renderComposer(container, companyId) {
   const { dashboards } = await api(`/api/admin/companies/${companyId}/dashboards`);
   container.innerHTML = `
@@ -825,14 +825,11 @@ async function renderComposer(container, companyId) {
           <button type="submit" class="btn small ghost">บันทึกชื่อ</button>
         </form>
         <div class="composer-dash-actions">
+          <span class="muted nowrap">${Number(d.widget_count) || 0} widget</span>
+          <button type="button" class="btn small primary pick-widgets">เลือก Widget →</button>
           <button type="button" class="btn small ghost preview-dash">ดูตัวอย่าง</button>
           <button type="button" class="btn small danger delete-dash">ลบ</button>
         </div>
-      </div>
-      <div class="widget-rows"><p class="muted">กำลังโหลด widget...</p></div>
-      <div class="inline-form add-widget-row">
-        <select class="add-widget-select" aria-label="เลือก widget จาก catalog">${templateOptions()}</select>
-        <button type="button" class="btn small primary add-widget">+ วาง widget</button>
       </div>`;
     list.appendChild(block);
 
@@ -857,13 +854,10 @@ async function renderComposer(container, companyId) {
       await renderAdminCompanyList();
       renderComposer(container, companyId);
     });
-    block.querySelector('.add-widget').addEventListener('click', async () => {
-      const templateId = Number(block.querySelector('.add-widget-select').value);
-      if (!templateId) return;
-      await api(`/api/admin/dashboards/${d.id}/widgets`, { method: 'POST', body: JSON.stringify({ template_id: templateId }) });
-      renderWidgetRows(block.querySelector('.widget-rows'), d.id);
+    block.querySelector('.pick-widgets').addEventListener('click', () => {
+      adminState.selected = { type: 'picker', id: companyId, dashboardId: d.id };
+      renderAdminMain();
     });
-    renderWidgetRows(block.querySelector('.widget-rows'), d.id);
   });
 
   container.querySelector('.new-dash-form').addEventListener('submit', async (e) => {
@@ -874,77 +868,273 @@ async function renderComposer(container, companyId) {
   });
 }
 
-async function renderWidgetRows(container, dashboardId) {
-  const { widgets } = await api(`/api/admin/dashboards/${dashboardId}/widgets`);
-  if (!widgets.length) {
-    container.innerHTML = '<p class="muted">ยังไม่มี widget — เลือกจาก catalog ด้านล่าง</p>';
+// ---------- step 2: pick widgets for one dashboard from the catalog ----------
+// Everything is staged in the browser and saved in one request, so a half-built
+// dashboard never reaches the client. Selected widgets carry a yellow check and
+// can be reordered; the rest of the catalog sits below with a + to add.
+let pickerDirty = false;
+window.addEventListener('beforeunload', (e) => {
+  if (pickerDirty) { e.preventDefault(); e.returnValue = ''; }
+});
+const leavePicker = () => !pickerDirty || confirm('มีการเปลี่ยนแปลงที่ยังไม่ได้บันทึก ออกจากหน้านี้เลยไหม?');
+
+async function renderWidgetPicker(main, companyId, dashboardId) {
+  main.innerHTML = '<p class="muted">กำลังโหลด...</p>';
+  let company, dashboards, widgets;
+  try {
+    await loadTemplates();
+    [{ company }, { dashboards }, { widgets }] = await Promise.all([
+      api(`/api/admin/companies/${companyId}`),
+      api(`/api/admin/companies/${companyId}/dashboards`),
+      api(`/api/admin/dashboards/${dashboardId}/widgets`),
+    ]);
+  } catch (err) {
+    main.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
     return;
   }
-  container.innerHTML = '';
-  widgets.forEach((w, idx) => {
-    const row = document.createElement('div');
-    row.className = 'widget-row';
-    const size = w.config.size || 'half';
-    row.innerHTML = `
-      <div class="widget-row-main">
-        <div class="order-btns">
-          <button type="button" class="icon-mini move-w" data-dir="-1" ${idx === 0 ? 'disabled' : ''} aria-label="เลื่อนขึ้น">▲</button>
-          <button type="button" class="icon-mini move-w" data-dir="1" ${idx === widgets.length - 1 ? 'disabled' : ''} aria-label="เลื่อนลง">▼</button>
+  const dash = dashboards.find((d) => d.id === dashboardId);
+  if (!dash) {
+    adminState.selected = { type: 'company', id: companyId };
+    return renderAdminMain();
+  }
+  const templates = adminState.templates.filter((t) => t.active);
+  const tplById = new Map(adminState.templates.map((t) => [t.id, t]));
+  const fromServer = (list) =>
+    list.map((w) => ({ id: w.id, template_id: w.template_id, title: w.custom_title || '', overrides: { ...w.config_overrides } }));
+  let picked = fromServer(widgets);
+  let saved = JSON.stringify(picked);
+  const filter = { q: '', cat: '', only: false };
+  const open = new Set(); // rows with settings expanded
+  pickerDirty = false;
+
+  const cats = [...new Set(templates.map((t) => t.category))].sort();
+  main.innerHTML = `
+    <div class="picker-top">
+      <button type="button" class="link-btn back-company">← ${esc(company.name)} · Dashboards</button>
+      <div class="admin-head">
+        <div>
+          <h1 class="admin-h1">เลือก Widget: ${esc(dash.display_name)}</h1>
+          <p class="muted">ติ๊กเพื่อเพิ่ม เรียงลำดับด้วย ▲▼ แล้วกดบันทึกครั้งเดียว</p>
         </div>
-        <div class="widget-row-text">
-          <strong>${esc(w.title)}</strong>
-          <span class="meta">${esc(w.custom_title ? `${w.template_name} · ` : '')}${esc(CHART_LABEL[w.chart_type] || w.chart_type)} · ${esc(sourceLabel(w.report_source))}</span>
-        </div>
-        <select class="size-select" aria-label="ความกว้าง">
-          <option value="full" ${size === 'full' ? 'selected' : ''}>เต็มแถว</option>
-          <option value="half" ${size === 'half' ? 'selected' : ''}>ครึ่งแถว</option>
-          <option value="third" ${size === 'third' ? 'selected' : ''}>1/3 แถว</option>
-        </select>
-        <button type="button" class="btn small ghost edit-w">ตั้งค่า</button>
-        <button type="button" class="icon-mini danger-mini remove-w" aria-label="ลบ widget">✕</button>
+        <span class="picked-chip"><span class="ycheck sm" aria-hidden="true">✓</span> <span class="picked-count"></span></span>
       </div>
-      <form class="widget-edit hidden">
-        <div class="field"><label>ชื่อที่แสดง (เว้นว่าง = ใช้ชื่อจาก catalog)</label><input name="title" value="${esc(w.custom_title || '')}" placeholder="${esc(w.template_name)}"></div>
-        <div class="field"><label>Config override (JSON — ค่าที่ต่างจาก template เช่น {"top_n": 5})</label>
-          <textarea name="config" rows="4" spellcheck="false">${esc(Object.keys(w.config_overrides).length ? JSON.stringify(w.config_overrides, null, 2) : '')}</textarea></div>
-        <div class="form-msg"></div>
-        <button type="submit" class="btn small primary">บันทึก widget</button>
-      </form>`;
-    container.appendChild(row);
+      <div class="picker-toolbar">
+        <input type="search" class="picker-q" placeholder="ค้นหา widget..." aria-label="ค้นหา widget">
+        <select class="picker-cat" aria-label="หมวด"><option value="">ทุกหมวด</option>${cats.map((c) => `<option>${esc(c)}</option>`).join('')}</select>
+        <label class="nowrap"><input type="checkbox" class="picker-only"> เฉพาะที่เลือก</label>
+      </div>
+      <div class="picker-countline">
+        <span class="muted picker-summary"></span>
+        <span class="nowrap">
+          <button type="button" class="btn small ghost pick-all">เลือกทั้งหมดที่แสดง</button>
+          <button type="button" class="btn small ghost pick-none">ล้างที่เลือก</button>
+        </span>
+      </div>
+    </div>
+    <div class="picker-lists"></div>
+    <div class="picker-bar">
+      <button type="button" class="btn small ghost picker-discard">ยกเลิกการเปลี่ยนแปลง</button>
+      <span class="picker-msg"></span>
+      <button type="button" class="btn small ghost picker-preview">ดูตัวอย่าง</button>
+      <button type="button" class="btn small primary picker-save">บันทึก</button>
+    </div>`;
 
-    const save = (title, overrides) =>
-      api(`/api/admin/widgets/${w.id}`, { method: 'PATCH', body: JSON.stringify({ title, config_overrides: overrides }) });
+  const lists = main.querySelector('.picker-lists');
+  const matches = (t) => {
+    if (!t) return false;
+    if (filter.cat && t.category !== filter.cat) return false;
+    if (!filter.q) return true;
+    const hay = `${t.name} ${t.description || ''} ${t.category} ${sourceLabel(t.report_source)}`.toLowerCase();
+    return hay.includes(filter.q);
+  };
+  const filtering = () => !!(filter.q || filter.cat);
+  const metaLine = (t) => `${esc(CHART_LABEL[t.chart_type] || t.chart_type)} · ${esc(sourceLabel(t.report_source))} · ${esc(t.category)}`;
+  const setDirty = () => {
+    pickerDirty = JSON.stringify(picked) !== saved;
+    const save = main.querySelector('.picker-save');
+    save.disabled = !pickerDirty;
+    main.querySelector('.picker-discard').disabled = !pickerDirty;
+    main.querySelector('.picker-msg').textContent = pickerDirty ? 'มีการเปลี่ยนแปลงที่ยังไม่บันทึก' : '';
+  };
 
-    row.querySelectorAll('.move-w').forEach((b) =>
-      b.addEventListener('click', async () => {
-        const ids = widgets.map((x) => x.id);
-        const j = idx + Number(b.dataset.dir);
-        [ids[idx], ids[j]] = [ids[j], ids[idx]];
-        await api(`/api/admin/dashboards/${dashboardId}/widget-order`, { method: 'PUT', body: JSON.stringify({ widget_ids: ids }) });
-        renderWidgetRows(container, dashboardId);
+  const draw = () => {
+    const usedTpl = new Set(picked.map((p) => p.template_id));
+    main.querySelector('.picked-count').textContent = `เลือกแล้ว ${picked.length} widget`;
+    main.querySelector('.picker-summary').textContent = `เลือกแล้ว ${picked.length} จาก ${templates.length} widget ใน catalog`;
+
+    const sel = picked.map((p, i) => ({ p, i, t: tplById.get(p.template_id) })).filter(({ t }) => !filtering() || matches(t));
+    const rest = filter.only ? [] : templates.filter((t) => !usedTpl.has(t.id) && matches(t));
+    const canMove = !filtering();
+
+    lists.innerHTML = `
+      <h3 class="picker-h">บน dashboard นี้ <span class="muted">(เรียงตามที่แสดงจริง)</span></h3>
+      ${!filtering() ? '' : '<p class="muted small">ล้างคำค้นและหมวดก่อน ถึงจะเลื่อนลำดับได้</p>'}
+      <div class="picker-rows">${
+        sel.length
+          ? sel
+              .map(({ p, i, t }) => {
+                const size = p.overrides.size || (t && JSON.parse(t.default_config_json || '{}').size) || 'half';
+                return `<div class="picker-row is-picked" data-i="${i}">
+                  <div class="picker-row-main">
+                    <div class="order-btns">
+                      <button type="button" class="icon-mini mv" data-dir="-1" ${!canMove || i === 0 ? 'disabled' : ''} aria-label="เลื่อนขึ้น">▲</button>
+                      <button type="button" class="icon-mini mv" data-dir="1" ${!canMove || i === picked.length - 1 ? 'disabled' : ''} aria-label="เลื่อนลง">▼</button>
+                    </div>
+                    <span class="pos">${i + 1}</span>
+                    <div class="widget-row-text">
+                      <strong>${esc(p.title || (t ? t.name : 'template ที่ถูกลบ'))}</strong>
+                      <span class="meta">${p.title && t ? `${esc(t.name)} · ` : ''}${t ? metaLine(t) : ''}</span>
+                    </div>
+                    <button type="button" class="ycheck unpick" title="เอาออก" aria-label="เอาออกจาก dashboard">✓</button>
+                    <select class="size-select" aria-label="ความกว้าง">
+                      <option value="full" ${size === 'full' ? 'selected' : ''}>เต็มแถว</option>
+                      <option value="half" ${size === 'half' ? 'selected' : ''}>ครึ่งแถว</option>
+                      <option value="third" ${size === 'third' ? 'selected' : ''}>1/3 แถว</option>
+                    </select>
+                    <button type="button" class="btn small ghost cfg">ตั้งค่า</button>
+                    <button type="button" class="icon-mini danger-mini unpick" aria-label="เอาออก">✕</button>
+                  </div>
+                  ${
+                    open.has(i)
+                      ? `<div class="widget-edit">
+                          <div class="field"><label>ชื่อที่แสดง (เว้นว่าง = ใช้ชื่อจาก catalog)</label><input class="cfg-title" value="${esc(p.title)}" placeholder="${esc(t ? t.name : '')}"></div>
+                          <div class="field"><label>Config override (JSON เช่น {"top_n": 5})</label>
+                            <textarea class="cfg-json" rows="4" spellcheck="false">${esc(Object.keys(p.overrides).length ? JSON.stringify(p.overrides, null, 2) : '')}</textarea></div>
+                          <div class="form-msg"></div>
+                          <button type="button" class="btn small primary cfg-apply">ใช้ค่านี้</button>
+                        </div>`
+                      : ''
+                  }
+                </div>`;
+              })
+              .join('')
+          : `<p class="muted">${filtering() ? 'ไม่มี widget ที่เลือกไว้ตรงกับตัวกรอง' : 'ยังไม่ได้เลือก widget — ติ๊กจากรายการด้านล่าง'}</p>`
+      }</div>
+      ${
+        filter.only
+          ? ''
+          : `<h3 class="picker-h">เพิ่มจาก Catalog <span class="muted">(${rest.length})</span></h3>
+             <div class="picker-rows">${
+               rest.length
+                 ? rest
+                     .map(
+                       (t) => `<button type="button" class="picker-row add-row" data-t="${t.id}">
+                         <span class="addcheck" aria-hidden="true">+</span>
+                         <span class="widget-row-text"><strong>${esc(t.name)}</strong><span class="meta">${metaLine(t)}</span>${t.description ? `<span class="desc">${esc(t.description)}</span>` : ''}</span>
+                       </button>`
+                     )
+                     .join('')
+                 : '<p class="muted">ไม่มี widget ที่ตรงกับตัวกรอง</p>'
+             }</div>`
+      }`;
+
+    lists.querySelectorAll('.is-picked').forEach((row) => {
+      const i = Number(row.dataset.i);
+      row.querySelectorAll('.mv').forEach((b) =>
+        b.addEventListener('click', () => {
+          const j = i + Number(b.dataset.dir);
+          [picked[i], picked[j]] = [picked[j], picked[i]];
+          const oi = open.has(i), oj = open.has(j);
+          open.delete(i); open.delete(j);
+          if (oi) open.add(j);
+          if (oj) open.add(i);
+          draw(); setDirty();
+        })
+      );
+      row.querySelectorAll('.unpick').forEach((b) =>
+        b.addEventListener('click', () => {
+          picked.splice(i, 1);
+          open.clear();
+          draw(); setDirty();
+        })
+      );
+      row.querySelector('.size-select').addEventListener('change', (e) => {
+        picked[i].overrides = { ...picked[i].overrides, size: e.target.value };
+        draw(); setDirty();
+      });
+      row.querySelector('.cfg').addEventListener('click', () => {
+        open.has(i) ? open.delete(i) : open.add(i);
+        draw();
+      });
+      const apply = row.querySelector('.cfg-apply');
+      if (apply)
+        apply.addEventListener('click', () => {
+          const raw = row.querySelector('.cfg-json').value.trim();
+          let obj = {};
+          try {
+            obj = raw ? JSON.parse(raw) : {};
+            if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new Error();
+          } catch {
+            row.querySelector('.form-msg').innerHTML = '<div class="error-msg">Config ต้องเป็น JSON object</div>';
+            return;
+          }
+          picked[i] = { ...picked[i], title: row.querySelector('.cfg-title').value.trim(), overrides: obj };
+          open.delete(i);
+          draw(); setDirty();
+        });
+    });
+    lists.querySelectorAll('.add-row').forEach((b) =>
+      b.addEventListener('click', () => {
+        picked.push({ id: null, template_id: Number(b.dataset.t), title: '', overrides: {} });
+        draw(); setDirty();
       })
     );
-    row.querySelector('.size-select').addEventListener('change', async (e) => {
-      await save(w.custom_title, { ...w.config_overrides, size: e.target.value });
-      renderWidgetRows(container, dashboardId);
-    });
-    row.querySelector('.edit-w').addEventListener('click', () => row.querySelector('.widget-edit').classList.toggle('hidden'));
-    row.querySelector('.widget-edit').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const f = e.target;
-      try {
-        await save(f.elements.title.value, f.elements.config.value.trim() || {});
-        renderWidgetRows(container, dashboardId);
-      } catch (err) {
-        f.querySelector('.form-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
-      }
-    });
-    row.querySelector('.remove-w').addEventListener('click', async () => {
-      if (!confirm(`เอา widget "${w.title}" ออกจาก dashboard นี้?`)) return;
-      await api(`/api/admin/widgets/${w.id}`, { method: 'DELETE' });
-      renderWidgetRows(container, dashboardId);
-    });
+  };
+
+  const q = main.querySelector('.picker-q');
+  q.addEventListener('input', () => { filter.q = q.value.trim().toLowerCase(); draw(); });
+  main.querySelector('.picker-cat').addEventListener('change', (e) => { filter.cat = e.target.value; draw(); });
+  main.querySelector('.picker-only').addEventListener('change', (e) => { filter.only = e.target.checked; draw(); });
+  main.querySelector('.pick-all').addEventListener('click', () => {
+    const used = new Set(picked.map((p) => p.template_id));
+    templates.filter((t) => !used.has(t.id) && matches(t)).forEach((t) => picked.push({ id: null, template_id: t.id, title: '', overrides: {} }));
+    draw(); setDirty();
   });
+  main.querySelector('.pick-none').addEventListener('click', () => {
+    if (!picked.length) return;
+    if (!confirm('เอา widget ทั้งหมดออกจาก dashboard นี้? (ยังไม่มีผลจนกว่าจะกดบันทึก)')) return;
+    picked = [];
+    open.clear();
+    draw(); setDirty();
+  });
+  main.querySelector('.back-company').addEventListener('click', () => {
+    if (!leavePicker()) return;
+    pickerDirty = false;
+    adminState.selected = { type: 'company', id: companyId };
+    renderAdminMain();
+  });
+  main.querySelector('.picker-discard').addEventListener('click', () => {
+    picked = JSON.parse(saved);
+    open.clear();
+    draw(); setDirty();
+  });
+  main.querySelector('.picker-preview').addEventListener('click', () => {
+    if (!leavePicker()) return;
+    pickerDirty = false;
+    viewCompanyDashboards(companyId, dashboardId);
+  });
+  main.querySelector('.picker-save').addEventListener('click', async (e) => {
+    const btn = e.target;
+    btn.disabled = true;
+    btn.textContent = 'กำลังบันทึก...';
+    try {
+      const items = picked.map((p) => ({ ...(p.id ? { id: p.id } : { template_id: p.template_id }), title: p.title, config_overrides: p.overrides }));
+      const r = await api(`/api/admin/dashboards/${dashboardId}/layout`, { method: 'PUT', body: JSON.stringify({ items }) });
+      picked = fromServer(r.widgets);
+      saved = JSON.stringify(picked);
+      open.clear();
+      draw(); setDirty();
+      main.querySelector('.picker-msg').textContent = 'บันทึกแล้ว';
+      renderAdminCompanyList();
+    } catch (err) {
+      main.querySelector('.picker-msg').textContent = err.message;
+    } finally {
+      btn.textContent = 'บันทึก';
+    }
+  });
+
+  draw();
+  setDirty();
 }
 
 // ---------- widget catalog ----------

@@ -255,6 +255,82 @@ router.post(
   })
 );
 
+// Save a whole dashboard layout from the widget picker in one go:
+//   items: [{ id } | { template_id }, + title, config_overrides] in display order.
+// Existing widgets not listed are removed, listed ones updated, new ones added,
+// all inside one transaction so a half-saved dashboard can't happen.
+router.put(
+  '/dashboards/:id/layout',
+  wrap(async (req, res) => {
+    const [[dash]] = await pool.query(`SELECT id, company_id FROM dashboards WHERE id = ?`, [req.params.id]);
+    if (!dash) return res.status(404).json({ error: 'Dashboard not found' });
+    const items = (req.body && req.body.items) || [];
+    if (!Array.isArray(items)) return bad(res, 'items must be an array');
+
+    const [existing] = await pool.query(`SELECT id FROM dashboard_widgets WHERE dashboard_id = ?`, [dash.id]);
+    const existingIds = new Set(existing.map((r) => r.id));
+    const prepared = [];
+    for (const it of items) {
+      let overridesJson;
+      try {
+        const obj = parseConfig(it.config_overrides);
+        overridesJson = Object.keys(obj).length ? JSON.stringify(obj) : null;
+      } catch (e) {
+        return bad(res, `config: ${e.message}`);
+      }
+      const title = it.title && String(it.title).trim() ? String(it.title).trim().slice(0, 255) : null;
+      if (it.id) {
+        if (!existingIds.has(Number(it.id))) return bad(res, `widget ${it.id} is not on this dashboard`);
+        prepared.push({ id: Number(it.id), title, overridesJson });
+      } else {
+        const [[tpl]] = await pool.query(
+          `SELECT id, report_source, default_config_json FROM widget_templates WHERE id = ? AND active = TRUE`,
+          [it.template_id]
+        );
+        if (!tpl) return bad(res, 'Unknown or inactive widget template');
+        prepared.push({ tpl, title, overridesJson });
+      }
+    }
+
+    const conn = await pool.getConnection();
+    const added = [];
+    try {
+      await conn.beginTransaction();
+      const keep = new Set(prepared.filter((p) => p.id).map((p) => p.id));
+      for (const id of existingIds) if (!keep.has(id)) await conn.query(`DELETE FROM dashboard_widgets WHERE id = ?`, [id]);
+      for (let i = 0; i < prepared.length; i++) {
+        const p = prepared[i];
+        if (p.id) {
+          await conn.query(`UPDATE dashboard_widgets SET title = ?, config_json = ?, position = ? WHERE id = ?`, [p.title, p.overridesJson, i + 1, p.id]);
+        } else {
+          await conn.query(
+            `INSERT INTO dashboard_widgets (dashboard_id, widget_template_id, title, config_json, position) VALUES (?, ?, ?, ?, ?)`,
+            [dash.id, p.tpl.id, p.title, p.overridesJson, i + 1]
+          );
+          added.push(p);
+        }
+      }
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
+    // Same warm-up as adding one widget: fetch only what new widgets read.
+    added.forEach((p) => {
+      let cfg = {};
+      try {
+        cfg = { ...JSON.parse(p.tpl.default_config_json || '{}'), ...JSON.parse(p.overridesJson || '{}') };
+      } catch {
+        /* itemized */
+      }
+      pullsForWidget(p.tpl.report_source, cfg).forEach((x) => warmSource(dash.company_id, x.source, x.grouping));
+    });
+    res.json({ ok: true, widgets: await listWidgets(dash.id) });
+  })
+);
+
 router.put(
   '/dashboards/:id/widget-order',
   wrap(async (req, res) => {
