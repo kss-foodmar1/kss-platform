@@ -149,3 +149,25 @@ CREATE TABLE IF NOT EXISTS fmh_usage_log (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_usage_company_time (company_id, created_at)
 ) DEFAULT CHARSET=utf8mb4;
+
+-- The last pull of each report that actually returned rows. A later pull that
+-- fails or comes back empty never touches it, so a demo (or a client) can
+-- always fall back to "the last data we had" with one button.
+CREATE TABLE IF NOT EXISTS fmh_cache_saved (
+  company_id INT NOT NULL,
+  cache_key VARCHAR(128) NOT NULL,
+  data_json LONGTEXT NOT NULL,
+  quota_json TEXT NULL,
+  synced_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (company_id, cache_key)
+) DEFAULT CHARSET=utf8mb4;
+
+-- The latest failed pull per report (cleared on the next success), so the
+-- dashboard can say "the last update failed" instead of failing silently.
+CREATE TABLE IF NOT EXISTS fmh_sync_errors (
+  company_id INT NOT NULL,
+  cache_key VARCHAR(128) NOT NULL,
+  error_text VARCHAR(500) NOT NULL,
+  failed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (company_id, cache_key)
+) DEFAULT CHARSET=utf8mb4;

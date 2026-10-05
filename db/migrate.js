@@ -205,6 +205,14 @@ async function main() {
   await upgradeUsers();
   await upgradeDashboards();
   await upgradeCache();
+  // First run with the saved-data fallback: every cache that has rows today
+  // becomes the "last good" copy, so the fallback works before the next sync.
+  const [bf] = await pool.query(
+    `INSERT IGNORE INTO fmh_cache_saved (company_id, cache_key, data_json, quota_json, synced_at)
+     SELECT company_id, cache_key, data_json, quota_json, synced_at FROM fmh_report_cache
+     WHERE JSON_LENGTH(data_json) > 0`
+  );
+  if (bf.affectedRows) console.log(`  fmh_cache_saved: kept ${bf.affectedRows} existing report(s) as saved data`);
   await syncCatalog();
   await convertLegacyData();
   await dropLegacyReportsTable();

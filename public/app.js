@@ -30,6 +30,7 @@ async function api(path, opts = {}) {
     const err = new Error(data.error || 'Request failed');
     err.code = data.code;
     err.status = res.status;
+    err.data = data;
     throw err;
   }
   return data;
@@ -549,8 +550,23 @@ function keyMissingMessage() {
 }
 
 // Local calendar, not UTC: before 07:00 in Bangkok the UTC date is still yesterday.
-const todayIso = () => localIso(new Date());
-const daysAgoIso = (n) => localIso(new Date(Date.now() - n * 86400000));
+// In saved-data mode "today" is the day that data was pulled, so "last 30 days"
+// and every "within N days" rule still land on the saved rows.
+let dataAnchor = null;
+const nowRef = () => (dataAnchor ? new Date(dataAnchor) : new Date());
+const todayIso = () => localIso(nowRef());
+const daysAgoIso = (n) => localIso(new Date(nowRef().getTime() - n * 86400000));
+
+// "Use saved data" is a per-browser switch, so a demo stays on it while the
+// presenter moves between dashboards.
+const savedMode = {
+  get() {
+    try { return localStorage.getItem('kss_saved_mode') === '1'; } catch (e) { return false; }
+  },
+  set(on) {
+    try { on ? localStorage.setItem('kss_saved_mode', '1') : localStorage.removeItem('kss_saved_mode'); } catch (e) { /* private window */ }
+  },
+};
 
 class DashboardView {
   constructor(wrap, { dashboard, widgets, sources }) {
@@ -560,6 +576,8 @@ class DashboardView {
     this.sources = sources;
     this.results = {}; // source -> { data, meta } | { error, code }
     this.hasDateSource = Object.values(sources).some((s) => s.date_field);
+    this.useSaved = savedMode.get();
+    this.rangeDays = 30; // the active chip; null after a custom date pick
     this.range = { start: daysAgoIso(30), end: todayIso() };
     this.build();
   }
@@ -621,7 +639,8 @@ class DashboardView {
     chips.forEach((chip) =>
       chip.addEventListener('click', () => {
         chips.forEach((c) => c.classList.toggle('active', c === chip));
-        this.range = { start: daysAgoIso(Number(chip.dataset.days)), end: todayIso() };
+        this.rangeDays = Number(chip.dataset.days);
+        this.range = { start: daysAgoIso(this.rangeDays), end: todayIso() };
         start.value = this.range.start;
         end.value = this.range.end;
         this.renderWidgets();
@@ -630,6 +649,7 @@ class DashboardView {
     [start, end].forEach((input) =>
       input.addEventListener('change', () => {
         chips.forEach((c) => c.classList.remove('active'));
+        this.rangeDays = null;
         this.range = { start: start.value, end: end.value };
         this.renderWidgets();
       })
@@ -637,19 +657,45 @@ class DashboardView {
   }
 
   async load() {
+    this.results = {};
     await Promise.all(
       Object.entries(this.sources).map(async ([key, info]) => {
-        const qs = info.grouping ? `?group=${encodeURIComponent(info.grouping)}` : '';
+        const params = new URLSearchParams();
+        if (info.grouping) params.set('group', info.grouping);
+        if (this.useSaved) params.set('saved', '1');
+        const qs = params.toString() ? `?${params}` : '';
         try {
           this.results[key] = await api(`/api/dashboards/${this.dashboard.id}/data/${info.source || key}${qs}`);
         } catch (err) {
-          this.results[key] = { error: err.message, code: err.code };
+          this.results[key] = { error: err.message, code: err.code, health: err.data && err.data.health };
         }
       })
     );
     if (state.activeDashboardId !== this.dashboard.id) return;
+    this.applyAnchor();
     this.renderStatus();
     this.renderWidgets();
+  }
+
+  // Saved mode: anchor "today" to the newest saved pull and move the date range
+  // with it; live mode: back to the real today.
+  applyAnchor() {
+    const times = this.useSaved
+      ? Object.values(this.results).filter((r) => r && r.meta && r.meta.synced_at).map((r) => new Date(r.meta.synced_at).getTime())
+      : [];
+    dataAnchor = times.length ? Math.max(...times) : null;
+    if (this.rangeDays) this.range = { start: daysAgoIso(this.rangeDays), end: todayIso() };
+    const s = this.wrap.querySelector('.range-start');
+    const e = this.wrap.querySelector('.range-end');
+    if (s) s.value = this.range.start;
+    if (e) e.value = this.range.end;
+  }
+
+  async switchSaved(on) {
+    savedMode.set(on);
+    this.useSaved = on;
+    (this.cards || []).forEach(({ body }) => (body.innerHTML = '<p class="muted">กำลังโหลด...</p>'));
+    await this.load();
   }
 
   // Widgets address data by the same key the server cached it under.
@@ -682,13 +728,37 @@ class DashboardView {
     const bar = document.createElement('div');
     bar.className = 'fmh-status-bar';
     const oldest = fmtDateTime(syncedTimes[0]);
-    bar.innerHTML = `
-      <div class="fmh-sync-line">
-        <span>${oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'}</span>
-        ${keyMissing ? '' : '<button type="button" class="btn small ghost fmh-refresh-btn">Refresh ด่วน</button>'}
-      </div>`;
+    const all = Object.values(this.results).filter(Boolean);
+    const healthOf = (r) => (r.meta && r.meta.health) || r.health || {};
+    const savedAvailable = all.some((r) => healthOf(r).saved_synced_at);
+    const failed = all.filter((r) => healthOf(r).last_error);
+    const lastFail = failed.map((r) => healthOf(r).last_error_at).sort().pop();
+    const emptyLive = ok.some((r) => Array.isArray(r.data) && !r.data.length);
+    const trouble = failed.length || errors.some((r) => r.code !== 'FMH_KEY_MISSING') || emptyLive;
+    const savedTimes = ok.filter((r) => r.meta && r.meta.from_saved).map((r) => r.meta.synced_at).sort();
+    const savedAsOf = fmtDateTime(savedTimes[savedTimes.length - 1]);
 
-    if (latest) {
+    const toggle = this.useSaved
+      ? '<button type="button" class="btn small ghost saved-toggle" data-on="0">กลับไปใช้ข้อมูลล่าสุด</button>'
+      : savedAvailable
+        ? `<button type="button" class="btn small ${trouble ? 'primary' : 'ghost'} saved-toggle" data-on="1">ใช้ข้อมูลที่เก็บไว้</button>`
+        : '';
+    bar.innerHTML = this.useSaved
+      ? `<div class="fmh-sync-line saved-mode-line">
+           <span><strong>กำลังใช้ข้อมูลที่เก็บไว้</strong>${savedAsOf ? ` · ดึงไว้เมื่อ ${esc(savedAsOf)}` : ''} · ช่วงวันที่นับจากวันนั้น ไม่ดึงข้อมูลใหม่จาก FMH</span>
+           ${toggle}
+         </div>`
+      : `<div class="fmh-sync-line">
+           <span>${oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'}</span>
+           <span class="sync-actions">${toggle}${keyMissing ? '' : '<button type="button" class="btn small ghost fmh-refresh-btn">Refresh ด่วน</button>'}</span>
+         </div>
+         ${
+           failed.length
+             ? `<div class="warn-msg">อัปเดตข้อมูลจาก FMH ครั้งล่าสุดไม่สำเร็จ${lastFail ? ` (${esc(fmtDateTime(lastFail))})` : ''} — ตัวเลขที่เห็นเป็นชุดก่อนหน้า${savedAvailable ? ' หรือกด "ใช้ข้อมูลที่เก็บไว้"' : ''}</div>`
+             : ''
+         }`;
+
+    if (latest && !this.useSaved) {
       const q = latest.meta.quota;
       const limit = Number(q.monthly_row_limit) || 0;
       const used = Number(q.rows_used) || 0;
@@ -717,7 +787,9 @@ class DashboardView {
         ).toLocaleString('th-TH')} แถว (${clipped.map(esc).join(', ')}) — ตัวเลขที่เห็นยังไม่ครบทั้งช่วง ควรแคบช่วงวันลง</div>`
       );
     }
-    if (keyMissing) bar.insertAdjacentHTML('beforeend', `<div class="error-msg" style="margin:4px 0 0;">${esc(keyMissingMessage())}</div>`);
+    const tg = bar.querySelector('.saved-toggle');
+    if (tg) tg.addEventListener('click', () => this.switchSaved(tg.dataset.on === '1'));
+    if (keyMissing && !this.useSaved) bar.insertAdjacentHTML('beforeend', `<div class="error-msg" style="margin:4px 0 0;">${esc(keyMissingMessage())}</div>`);
     this.statusEl.appendChild(bar);
 
     const btn = bar.querySelector('.fmh-refresh-btn');

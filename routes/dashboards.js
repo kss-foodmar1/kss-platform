@@ -13,7 +13,7 @@ const express = require('express');
 const pool = require('../db/pool');
 const { requireAuth } = require('../middleware/auth');
 const { wrap, isSuperadmin, resolveCompanyId, getDashboardForUser } = require('../lib/access');
-const { FMH_REPORTS, getCached, syncOne, cacheKeyFor, pullsForWidget } = require('../lib/fmhCache');
+const { FMH_REPORTS, getCached, getSaved, getSyncHealth, syncOne, cacheKeyFor, pullsForWidget } = require('../lib/fmhCache');
 const { withTrigger } = require('../lib/fmhUsage');
 const { listWidgets } = require('../lib/widgetCatalog');
 
@@ -114,7 +114,12 @@ router.get(
     );
     if (!allowed.has(source)) return res.status(404).json({ error: 'dashboard นี้ไม่ได้ใช้รายงานนี้' });
 
-    const cached = await getCached(dashboard.company_id, source, grouping);
+    // ?saved=1: the last pull that had rows ("use saved data" for demos). Falls
+    // back to the live cache for a report that has never been saved.
+    const health = await getSyncHealth(dashboard.company_id, source, grouping);
+    const wantSaved = req.query.saved === '1';
+    const saved = wantSaved ? await getSaved(dashboard.company_id, source, grouping) : null;
+    const cached = saved || (await getCached(dashboard.company_id, source, grouping));
     if (!cached) {
       const [[company]] = await pool.query(`SELECT fmh_api_key_enc FROM companies WHERE id = ?`, [dashboard.company_id]);
       return res.status(409).json({
@@ -122,6 +127,7 @@ router.get(
           ? 'ยังไม่มีข้อมูล — ระบบจะ sync ให้ตอนตี 1 หรือกด Refresh ด่วนได้เลย'
           : 'ยังไม่ได้ตั้งค่า FMH API Key ของบริษัทนี้',
         code: company && company.fmh_api_key_enc ? 'FMH_NOT_SYNCED' : 'FMH_KEY_MISSING',
+        health,
       });
     }
     res.json({
@@ -129,6 +135,8 @@ router.get(
       meta: {
         quota: cached.quota,
         synced_at: cached.syncedAt,
+        from_saved: !!saved,
+        health,
         grouping,
         date_field: grouping ? null : cfg.dateField || null,
       },
