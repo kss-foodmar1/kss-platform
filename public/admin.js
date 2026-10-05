@@ -374,6 +374,8 @@ const PROBE_LIST = [
     d: 'เทียบ product_code ระหว่างฝั่งซื้อ ฝั่งขาย สาขาเบิก และสูตร ชื่อฟิลด์ตรงกันไม่ได้แปลว่าค่าตรงกัน ถ้ารหัสคนละชุด widget ที่ต่อหลายรายงานจะได้ข้อมูลไม่ครบโดยไม่มีใครรู้' },
   { k: 'date_filter', n: 'ตัวกรองวันที่รับรูปแบบไหนบ้าง',
     d: 'ลองส่ง date_range สี่แบบ เพื่อดูว่าแบบที่แอปใช้อยู่ถูกต้องไหม และเลือกฟิลด์วันที่ฝั่ง server ได้หรือเปล่า' },
+  { k: 'ck_sales', n: 'ยอดขาย CK ที่ FMH ส่งมา เทียบกับที่ Dashboard เก็บไว้',
+    d: 'ดึงยอดขายครัวกลางตามช่วงเวลาจาก FMH ตรง ๆ แล้ววางข้างข้อมูลที่ sync ไว้ ใช้ตอบว่ายอดขายหายเพราะ FMH, เพราะ sync ไม่สำเร็จ หรือเพราะวิธีรวมเป็นช่วง กินโควตาไม่กี่แถว' },
   { k: 'group_by', n: 'จัดกลุ่มฝั่ง server ประหยัดโควตาได้แค่ไหน',
     d: 'เทียบจำนวนแถวระหว่างดึงแบบรายการกับจัดกลุ่มตามสาขา ซัพพลายเออร์ หมวด และสินค้า' },
 ];
@@ -443,6 +445,24 @@ function fmhProbeView(r, key) {
         <td class="${x.ok ? 'probe-good' : 'probe-bad'}">${x.ok ? 'ผ่าน' : 'HTTP ' + x.status}</td>
         <td>${x.rows ?? '—'}</td><td class="muted">${esc(x.message)}</td></tr>`).join('')}
     </tbody></table>`;
+  }
+  if (key === 'ck_sales') {
+    const baht = (v) => Number(v || 0).toLocaleString('th-TH', { maximumFractionDigits: 0 });
+    const cached = new Map(((r.cache && r.cache.rows) || []).map((x) => [x.period, x.sales]));
+    const allPeriods = [...new Set([...r.periods.map((p) => p.period), ...cached.keys()])].sort();
+    const live = new Map(r.periods.map((p) => [p.period, p.sales]));
+    return `<p class="${/ตรงกัน/.test(r.verdict) ? 'probe-good' : 'probe-bad'}">${esc(r.verdict)}</p>
+      ${r.message ? `<p class="probe-bad">${esc(r.message)}</p>` : ''}
+      <p>FMH รวมยอดเป็นช่วง: <b>${esc(r.bucket)}</b> · ข้อมูลที่เก็บไว้ sync ล่าสุด ${esc(r.cache ? fmtDateTime(r.cache.synced_at) : '—')}
+      ${r.last_error ? ` · <span class="probe-bad">sync ล่าสุดล้มเหลว ${esc(fmtDateTime(r.last_error.failed_at))}: ${esc(r.last_error.error_text)}</span>` : ''}</p>
+      <table class="probe-table"><thead><tr><th>period (วันเริ่มช่วง)</th><th class="num">FMH ตอนนี้</th><th class="num">ที่ Dashboard เก็บไว้</th></tr></thead><tbody>
+      ${allPeriods.map((p) => `<tr><td>${esc(p)}</td><td class="num">${live.has(p) ? baht(live.get(p)) : '—'}</td>
+        <td class="num ${live.get(p) !== cached.get(p) ? 'probe-bad' : ''}">${cached.has(p) ? baht(cached.get(p)) : '—'}</td></tr>`).join('') || '<tr><td colspan="3">ไม่มีแถว</td></tr>'}
+      </tbody></table>
+      <p><b>ยอดขายรวมจากการ์ดสรุปของ FMH</b></p>
+      <table class="probe-table"><tbody>${r.stats.map((s) => `<tr><td>${esc(s.start)} ถึง ${esc(s.end)}</td>
+        <td class="num">${s.ok ? baht(s.total_sales) : 'HTTP ' + s.status}</td><td class="muted">${esc(s.message)}</td></tr>`).join('')}</tbody></table>
+      <p class="muted">ช่วงที่ทดสอบ ${esc(r.window.start)} ถึง ${esc(r.window.end)}</p>`;
   }
   if (key === 'group_by') {
     return `${r.saving ? `<p class="probe-good">${esc(r.saving)}</p>` : ''}

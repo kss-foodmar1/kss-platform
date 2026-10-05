@@ -17,7 +17,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const src = fs.readFileSync(require('path').join(__dirname, '..', 'public', 'app.js'), 'utf8');
-const want = ['pick', 'evalMetric', 'evalRow', 'dateOnly', 'rowMatches', 'applyRowLayer', 'groupRows', 'rowFields', 'bucketOf', 'keyOf', 'pivotRows', 'localIso', 'bucketKey'];
+const want = ['pick', 'evalMetric', 'evalRow', 'dateOnly', 'rowMatches', 'applyRowLayer', 'groupRows', 'rowFields', 'bucketOf', 'keyOf', 'pivotRows', 'localIso', 'bucketKey', 'keepOverlappingBuckets'];
 let code = 'const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };\n';
 code += 'const isBlank = (v) => v === null || v === undefined || String(v).trim() === "";\n';
 for (const name of want) {
@@ -323,6 +323,20 @@ check('รายสัปดาห์ของเดือน: วันที�
   const out = H.pivotRows({ th: [{ theoretical_usage_value: 1000 }], ac: [{ actual_usage_value: 1080 }], w: [{ wastage_value: 30 }, { wastage_value: 20 }] }, cfg);
   check('AvT สรุป: รวมเป็นแถวเดียว', out.length, 1);
   check('AvT สรุป: อธิบายไม่ได้ = 80 − 50', H.evalMetric(cfg.metrics[5].value, out), 30);
+}
+// Period buckets (CK sales from cogs_over_time): a range keeps every bucket it
+// touches. The 28 Sep sale is in the September bucket (period 2026-09-01);
+// a 5 Sep – 5 Oct range must keep it.
+{
+  const K = (rows, s, e) => H.keepOverlappingBuckets(rows, 'period', s, e).map((r) => r.period);
+  const monthly = [{ period: '2026-08-01' }, { period: '2026-09-01' }, { period: '2026-10-01' }];
+  check('bucket เดือน: ช่วง 5 ก.ย.–5 ต.ค. เก็บเดือน ก.ย.', K(monthly, '2026-09-05', '2026-10-05').join(), '2026-09-01,2026-10-01');
+  check('bucket เดือน: ส.ค. ไม่ทับช่วง', K(monthly, '2026-09-05', '2026-10-05').includes('2026-08-01'), false);
+  const weekly = [{ period: '2026-09-21' }, { period: '2026-09-28' }];
+  check('bucket สัปดาห์: 28 ก.ย. ทับช่วงที่เริ่ม 1 ต.ค.', K(weekly, '2026-10-01', '2026-10-05').join(), '2026-09-28');
+  check('bucket เดือนเดียวที่วันที่ 1 = ทั้งเดือน', K([{ period: '2026-09-01' }], '2026-09-20', '2026-10-05').length, 1);
+  const daily = [{ period: '2026-09-27' }, { period: '2026-09-28' }, { period: '2026-10-03' }];
+  check('bucket วัน: ตัดตรงวัน', K(daily, '2026-09-28', '2026-10-05').join(), '2026-09-28,2026-10-03');
 }
 console.log(fails ? `\n${fails} ข้อไม่ผ่าน` : '\nผ่านทั้งหมด');
 process.exit(fails ? 1 : 0);

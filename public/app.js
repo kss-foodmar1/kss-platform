@@ -569,6 +569,34 @@ function keyMissingMessage() {
   return 'ระบบยังไม่ได้เชื่อมข้อมูล FMH — กรุณาติดต่อผู้ดูแลระบบของบริษัท';
 }
 
+// Rows whose date is the start of a period bucket (FMH chart cards): keep a
+// bucket if any day of it falls in the range. The bucket length is read from
+// the data itself — the smallest gap between periods (1 day, 7 days, a month);
+// a lone period on the 1st is taken as a month, any other lone one as a week.
+function keepOverlappingBuckets(rows, field, start, end) {
+  const day = (r) => (r[field] ? String(r[field]).slice(0, 10) : null);
+  const starts = [...new Set(rows.map(day).filter(Boolean))].sort();
+  const t = (iso) => new Date(iso + 'T00:00:00Z').getTime();
+  let gapDays = null;
+  for (let i = 1; i < starts.length; i++) {
+    const g = Math.round((t(starts[i]) - t(starts[i - 1])) / 86400000);
+    if (g > 0 && (gapDays === null || g < gapDays)) gapDays = g;
+  }
+  const monthly = gapDays === null ? starts.length === 1 && starts[0].endsWith('-01') : gapDays >= 28;
+  const len = gapDays === null ? 7 : gapDays;
+  const bucketEnd = (iso) => {
+    if (monthly) {
+      const d = new Date(iso + 'T00:00:00Z');
+      return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
+    }
+    return new Date(t(iso) + (len - 1) * 86400000).toISOString().slice(0, 10);
+  };
+  return rows.filter((r) => {
+    const d = day(r);
+    return d && (!end || d <= end) && (!start || bucketEnd(d) >= start);
+  });
+}
+
 // Local calendar, not UTC: before 07:00 in Bangkok the UTC date is still yesterday.
 // In saved-data mode "today" is the day that data was pulled, so "last 30 days"
 // and every "within N days" rule still land on the saved rows.
@@ -729,6 +757,7 @@ class DashboardView {
     const dateField = this.sources[key] && this.sources[key].date_field;
     if (!dateField || !this.hasDateSource) return r.data;
     const { start, end } = this.range;
+    if (this.sources[key].date_is_bucket) return keepOverlappingBuckets(r.data, dateField, start, end);
     return r.data.filter((row) => {
       const d = row[dateField] ? String(row[dateField]).slice(0, 10) : null;
       return d && (!start || d >= start) && (!end || d <= end);
