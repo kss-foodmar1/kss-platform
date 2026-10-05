@@ -869,6 +869,25 @@ async function renderComposer(container, companyId) {
 }
 
 // ---------- step 2: pick widgets for one dashboard from the catalog ----------
+// Catalog groups in the order a client usually thinks about them, with Thai names.
+const CAT_ORDER = [
+  ['Cost Control', 'ต้นทุนและกำไรขั้นต้น'],
+  ['Cross-report', 'เทียบข้ามรายงาน (ซื้อ × ขาย × สูตร)'],
+  ['Menu Costing', 'เมนูและสูตรอาหาร'],
+  ['Actual vs Theoretical', 'ใช้จริงเทียบตามสูตร'],
+  ['Purchasing', 'จัดซื้อ'],
+  ['Price Change', 'ราคาที่ขยับ'],
+  ['Supplier Quality', 'คุณภาพซัพพลายเออร์'],
+  ['Line Checks', 'ตรวจเอกสารรายบรรทัด (PO / GRN / Invoice)'],
+  ['Stock', 'สต็อกและของเสีย'],
+  ['Branch', 'สาขาและครัวกลาง'],
+  ['Sales', 'ยอดขาย'],
+];
+const catLabel = (c) => (CAT_ORDER.find(([k]) => k === c) || [c, c])[1];
+const catRank = (c) => {
+  const i = CAT_ORDER.findIndex(([k]) => k === c);
+  return i < 0 ? 99 : i;
+};
 // Everything is staged in the browser and saved in one request, so a half-built
 // dashboard never reaches the client. Selected widgets carry a yellow check and
 // can be reordered; the rest of the catalog sits below with a + to add.
@@ -907,7 +926,8 @@ async function renderWidgetPicker(main, companyId, dashboardId) {
   const open = new Set(); // rows with settings expanded
   pickerDirty = false;
 
-  const cats = [...new Set(templates.map((t) => t.category))].sort();
+  const cats = [...new Set(templates.map((t) => t.category))].sort((a, b) => catRank(a) - catRank(b) || a.localeCompare(b));
+  const openCats = new Set(); // catalog groups the user expanded
   main.innerHTML = `
     <div class="picker-top">
       <button type="button" class="link-btn back-company">← ${esc(company.name)} · Dashboards</button>
@@ -920,7 +940,7 @@ async function renderWidgetPicker(main, companyId, dashboardId) {
       </div>
       <div class="picker-toolbar">
         <input type="search" class="picker-q" placeholder="ค้นหา widget..." aria-label="ค้นหา widget">
-        <select class="picker-cat" aria-label="หมวด"><option value="">ทุกหมวด</option>${cats.map((c) => `<option>${esc(c)}</option>`).join('')}</select>
+        <select class="picker-cat" aria-label="หมวด"><option value="">ทุกหมวด</option>${cats.map((c) => `<option value="${esc(c)}">${esc(catLabel(c))}</option>`).join('')}</select>
         <label class="nowrap"><input type="checkbox" class="picker-only"> เฉพาะที่เลือก</label>
       </div>
       <div class="picker-countline">
@@ -948,7 +968,7 @@ async function renderWidgetPicker(main, companyId, dashboardId) {
     return hay.includes(filter.q);
   };
   const filtering = () => !!(filter.q || filter.cat);
-  const metaLine = (t) => `${esc(CHART_LABEL[t.chart_type] || t.chart_type)} · ${esc(sourceLabel(t.report_source))} · ${esc(t.category)}`;
+  const metaLine = (t) => `${esc(CHART_LABEL[t.chart_type] || t.chart_type)} · ${esc(sourceLabel(t.report_source))} · ${esc(catLabel(t.category))}`;
   const setDirty = () => {
     pickerDirty = JSON.stringify(picked) !== saved;
     const save = main.querySelector('.picker-save');
@@ -1014,18 +1034,30 @@ async function renderWidgetPicker(main, companyId, dashboardId) {
         filter.only
           ? ''
           : `<h3 class="picker-h">เพิ่มจาก Catalog <span class="muted">(${rest.length})</span></h3>
-             <div class="picker-rows">${
+             ${
                rest.length
-                 ? rest
-                     .map(
-                       (t) => `<button type="button" class="picker-row add-row" data-t="${t.id}">
-                         <span class="addcheck" aria-hidden="true">+</span>
-                         <span class="widget-row-text"><strong>${esc(t.name)}</strong><span class="meta">${metaLine(t)}</span>${t.description ? `<span class="desc">${esc(t.description)}</span>` : ''}</span>
-                       </button>`
-                     )
+                 ? cats
+                     .map((c) => {
+                       const items = rest.filter((t) => t.category === c);
+                       if (!items.length) return '';
+                       // Expanded when searching/filtering, otherwise only the groups the user opened.
+                       const isOpen = filtering() || openCats.has(c);
+                       return `<details class="cat-group" data-cat="${esc(c)}" ${isOpen ? 'open' : ''}>
+                         <summary><span class="cat-name">${esc(catLabel(c))}</span> <span class="muted">${items.length}</span>
+                           <button type="button" class="btn small ghost add-cat" data-cat="${esc(c)}">+ ทั้งหมวด</button></summary>
+                         <div class="picker-rows">${items
+                           .map(
+                             (t) => `<button type="button" class="picker-row add-row" data-t="${t.id}">
+                               <span class="addcheck" aria-hidden="true">+</span>
+                               <span class="widget-row-text"><strong>${esc(t.name)}</strong><span class="meta">${esc(CHART_LABEL[t.chart_type] || t.chart_type)} · ${esc(sourceLabel(t.report_source))}</span>${t.description ? `<span class="desc">${esc(t.description)}</span>` : ''}</span>
+                             </button>`
+                           )
+                           .join('')}</div>
+                       </details>`;
+                     })
                      .join('')
                  : '<p class="muted">ไม่มี widget ที่ตรงกับตัวกรอง</p>'
-             }</div>`
+             }`
       }`;
 
     lists.querySelectorAll('.is-picked').forEach((row) => {
@@ -1073,6 +1105,22 @@ async function renderWidgetPicker(main, companyId, dashboardId) {
           draw(); setDirty();
         });
     });
+    lists.querySelectorAll('.cat-group').forEach((d) =>
+      d.addEventListener('toggle', () => {
+        if (filtering()) return;
+        d.open ? openCats.add(d.dataset.cat) : openCats.delete(d.dataset.cat);
+      })
+    );
+    lists.querySelectorAll('.add-cat').forEach((b) =>
+      b.addEventListener('click', (e) => {
+        e.preventDefault(); // don't toggle the group
+        const used = new Set(picked.map((p) => p.template_id));
+        templates
+          .filter((t) => t.category === b.dataset.cat && !used.has(t.id) && matches(t))
+          .forEach((t) => picked.push({ id: null, template_id: t.id, title: '', overrides: {} }));
+        draw(); setDirty();
+      })
+    );
     lists.querySelectorAll('.add-row').forEach((b) =>
       b.addEventListener('click', () => {
         picked.push({ id: null, template_id: Number(b.dataset.t), title: '', overrides: {} });

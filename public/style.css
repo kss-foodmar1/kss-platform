@@ -400,3 +400,10 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
 @media (max-width: 720px) { .picker-row-main { flex-wrap: wrap; } }
 .picker-top .link-btn { align-self: flex-start; }
 .composer-dash-actions { align-items: center; }
+.cat-group { border: 1px solid var(--line); border-radius: 12px; background: #fcfbf7; margin-bottom: 8px; }
+.cat-group > summary { display: flex; align-items: center; gap: 8px; padding: 10px 12px; cursor: pointer; font-weight: 600; list-style: none; }
+.cat-group > summary::-webkit-details-marker { display: none; }
+.cat-group > summary::before { content: '▸'; display: inline-block; color: var(--muted, #6b6b6b); transition: transform .15s; }
+.cat-group[open] > summary::before { transform: rotate(90deg); }
+.cat-group > summary .add-cat { margin-left: auto; }
+.cat-group > .picker-rows { padding: 0 10px 10px; }
