@@ -269,7 +269,7 @@ el('open-admin-btn').addEventListener('click', () => {
     if (!leavePicker()) return;
     pickerDirty = false;
     showDashboardView();
-    loadCompanyPicker(state.viewCompanyId).then(() => loadDashboards(state.activeDashboardId));
+    (isSuper() ? loadCompanyPicker(state.viewCompanyId) : Promise.resolve()).then(() => loadDashboards(state.activeDashboardId));
   }
 });
 
@@ -278,8 +278,15 @@ async function openAdminConsole() {
   el('dashboard-view').classList.add('hidden');
   el('admin-view').classList.remove('hidden');
   el('open-admin-btn').textContent = '← กลับไปดู Dashboard';
+  el('admin-view').classList.toggle('company-mode', !isSuper());
   if (!adminState.meta) adminState.meta = await api('/api/admin/meta');
   await loadTemplates();
+  if (!isSuper()) {
+    if (!adminState.selected || !['my-dashboards', 'picker'].includes(adminState.selected.type)) {
+      adminState.selected = { type: 'my-dashboards', id: state.user.company_id };
+    }
+    return renderAdminMain();
+  }
   await renderAdminCompanyList();
   if (!adminState.selected) adminState.selected = state.viewCompanyId ? { type: 'company', id: state.viewCompanyId } : { type: 'catalog' };
   renderAdminMain();
@@ -290,6 +297,7 @@ async function loadTemplates() {
 }
 
 async function renderAdminCompanyList() {
+  if (!isSuper()) return; // company admins have no company list
   const { companies } = await api('/api/admin/companies');
   state.companies = companies;
   const list = el('admin-company-list');
@@ -346,6 +354,7 @@ function renderAdminMain() {
   main.scrollTop = 0;
   if (sel.type === 'company') return renderCompanyDetail(main, sel.id);
   if (sel.type === 'picker') return renderWidgetPicker(main, sel.id, sel.dashboardId);
+  if (sel.type === 'my-dashboards') return renderMyDashboards(main, sel.id);
   if (sel.type === 'new-company') return renderNewCompany(main);
   if (sel.type === 'catalog') return renderCatalog(main);
   if (sel.type === 'fmh') return renderFmhDiagnostics(main);
@@ -888,6 +897,19 @@ async function renderComposer(container, companyId) {
   });
 }
 
+// ---------- company admin: manage their own dashboards ----------
+async function renderMyDashboards(main, companyId) {
+  main.innerHTML = `
+    <div class="admin-head">
+      <div>
+        <h1 class="admin-h1">จัดการ Dashboard</h1>
+        <p class="muted">สร้าง dashboard เลือก widget จาก catalog และจัดลำดับได้เอง ผู้ใช้ที่ดูอย่างเดียวจะเห็นเฉพาะ dashboard ที่คุณให้สิทธิ์ (ปุ่ม 👥)</p>
+      </div>
+    </div>
+    <section class="admin-card"><div class="composer"></div></section>`;
+  renderComposer(main.querySelector('.composer'), companyId);
+}
+
 // ---------- step 2: pick widgets for one dashboard from the catalog ----------
 // Catalog groups in the order a client usually thinks about them, with Thai names.
 const CAT_ORDER = [
@@ -933,7 +955,7 @@ async function renderWidgetPicker(main, companyId, dashboardId) {
   }
   const dash = dashboards.find((d) => d.id === dashboardId);
   if (!dash) {
-    adminState.selected = { type: 'company', id: companyId };
+    adminState.selected = isSuper() ? { type: 'company', id: companyId } : { type: 'my-dashboards', id: companyId };
     return renderAdminMain();
   }
   const templates = adminState.templates.filter((t) => t.active);
@@ -1038,8 +1060,12 @@ async function renderWidgetPicker(main, companyId, dashboardId) {
                     open.has(i)
                       ? `<div class="widget-edit">
                           <div class="field"><label>ชื่อที่แสดง (เว้นว่าง = ใช้ชื่อจาก catalog)</label><input class="cfg-title" value="${esc(p.title)}" placeholder="${esc(t ? t.name : '')}"></div>
-                          <div class="field"><label>Config override (JSON เช่น {"top_n": 5})</label>
-                            <textarea class="cfg-json" rows="4" spellcheck="false">${esc(Object.keys(p.overrides).length ? JSON.stringify(p.overrides, null, 2) : '')}</textarea></div>
+                          ${
+                            isSuper()
+                              ? `<div class="field"><label>Config override (JSON เช่น {"top_n": 5})</label>
+                            <textarea class="cfg-json" rows="4" spellcheck="false">${esc(Object.keys(p.overrides).length ? JSON.stringify(p.overrides, null, 2) : '')}</textarea></div>`
+                              : ''
+                          }
                           <div class="form-msg"></div>
                           <button type="button" class="btn small primary cfg-apply">ใช้ค่านี้</button>
                         </div>`
@@ -1111,7 +1137,9 @@ async function renderWidgetPicker(main, companyId, dashboardId) {
       const apply = row.querySelector('.cfg-apply');
       if (apply)
         apply.addEventListener('click', () => {
-          const raw = row.querySelector('.cfg-json').value.trim();
+          const box = row.querySelector('.cfg-json');
+          // Company admins only rename; their size choice etc. is kept as is.
+          const raw = box ? box.value.trim() : JSON.stringify(picked[i].overrides);
           let obj = {};
           try {
             obj = raw ? JSON.parse(raw) : {};
@@ -1168,7 +1196,7 @@ async function renderWidgetPicker(main, companyId, dashboardId) {
   main.querySelector('.back-company').addEventListener('click', () => {
     if (!leavePicker()) return;
     pickerDirty = false;
-    adminState.selected = { type: 'company', id: companyId };
+    adminState.selected = isSuper() ? { type: 'company', id: companyId } : { type: 'my-dashboards', id: companyId };
     renderAdminMain();
   });
   main.querySelector('.picker-discard').addEventListener('click', () => {

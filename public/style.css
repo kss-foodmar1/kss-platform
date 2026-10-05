@@ -413,3 +413,6 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
 .lang-toggle:hover { border-color: var(--ink); }
 .login-card { position: relative; }
 .login-lang { position: absolute; top: 16px; right: 16px; }
+/* company admin: same console, no KSS sidebar */
+.admin-view.company-mode { grid-template-columns: 1fr; }
+.admin-view.company-mode .admin-sidebar { display: none; }

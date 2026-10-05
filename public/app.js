@@ -454,7 +454,8 @@ el('logout-btn').addEventListener('click', async () => {
 // ---------- app shell ----------
 async function enterApp() {
   el('user-display-name').textContent = state.user.display_name;
-  el('open-admin-btn').classList.toggle('hidden', !isSuper());
+  el('open-admin-btn').classList.toggle('hidden', !isSuper() && !isCompanyAdmin());
+  el('open-admin-btn').textContent = adminBtnLabel();
   el('open-manage-users-btn').classList.toggle('hidden', !isCompanyAdmin());
   el('open-settings-btn').classList.toggle('hidden', !isCompanyAdmin());
   el('company-picker-wrap').classList.toggle('hidden', !isSuper());
@@ -493,7 +494,7 @@ el('company-picker').addEventListener('change', (e) => {
 // Used by the Admin Console's "view this company's dashboards" shortcut.
 async function viewCompanyDashboards(companyId, dashboardId) {
   storageSet('kss_view_company', String(companyId));
-  await loadCompanyPicker(companyId);
+  if (isSuper()) await loadCompanyPicker(companyId);
   showDashboardView();
   await loadDashboards(dashboardId);
 }
@@ -501,7 +502,13 @@ async function viewCompanyDashboards(companyId, dashboardId) {
 function showDashboardView() {
   el('dashboard-view').classList.remove('hidden');
   el('admin-view').classList.add('hidden');
-  el('open-admin-btn').textContent = '🏢 Admin Console';
+  el('open-admin-btn').textContent = adminBtnLabel();
+}
+
+// KSS staff get the whole Admin Console; a client's company admin gets the
+// same composer and widget picker, for their own company only.
+function adminBtnLabel() {
+  return isSuper() ? '🏢 Admin Console' : '✎ จัดการ Dashboard';
 }
 
 async function loadDashboards(preferredDashboardId) {

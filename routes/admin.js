@@ -20,7 +20,43 @@ const probe = require('../lib/fmhProbe');
 const { withTrigger, usageSummary } = require('../lib/fmhUsage');
 
 const router = express.Router();
-router.use(requireAuth, requireSuperadmin);
+
+// KSS staff use everything here. A client's company_admin may use the few
+// endpoints behind "manage my dashboards" (the composer and the widget
+// picker) — and only for their own company. Everything else (companies,
+// catalog editing, FMH diagnostics, sync, billing data) stays KSS-only.
+const COMPANY_ADMIN_ROUTES = [
+  ['GET', /^\/meta$/],
+  ['GET', /^\/widget-templates$/],
+  ['GET', /^\/companies\/(\d+)$/, 'company'],
+  ['GET', /^\/companies\/(\d+)\/dashboards$/, 'company'],
+  ['POST', /^\/companies\/(\d+)\/dashboards$/, 'company'],
+  ['PUT', /^\/companies\/(\d+)\/dashboard-order$/, 'company'],
+  ['PATCH', /^\/dashboards\/(\d+)$/, 'dashboard'],
+  ['DELETE', /^\/dashboards\/(\d+)$/, 'dashboard'],
+  ['GET', /^\/dashboards\/(\d+)\/widgets$/, 'dashboard'],
+  ['PUT', /^\/dashboards\/(\d+)\/layout$/, 'dashboard'],
+];
+
+async function adminAccess(req, res, next) {
+  if (req.user.role === 'kss_superadmin') return next();
+  if (req.user.role !== 'company_admin' || !req.user.company_id) return res.status(403).json({ error: 'KSS staff access required' });
+  const rule = COMPANY_ADMIN_ROUTES.find(([m, re]) => m === req.method && re.test(req.path));
+  if (!rule) return res.status(403).json({ error: 'KSS staff access required' });
+  const id = Number((req.path.match(rule[1]) || [])[1]);
+  try {
+    if (rule[2] === 'company' && id !== req.user.company_id) return res.status(403).json({ error: 'ไม่มีสิทธิ์จัดการบริษัทนี้' });
+    if (rule[2] === 'dashboard') {
+      const [[d]] = await pool.query(`SELECT company_id FROM dashboards WHERE id = ?`, [id]);
+      if (!d || d.company_id !== req.user.company_id) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+router.use(requireAuth, adminAccess);
+const isKss = (req) => req.user.role === 'kss_superadmin';
 
 const STATUSES = ['active', 'trial', 'suspended', 'demo'];
 const TIERS = ['starter', 'growth', 'enterprise'];
@@ -392,8 +428,9 @@ router.get(
     rows.forEach((r) => {
       r.active = !!r.active;
       r.customized = !!r.customized;
+      if (!isKss(req)) delete r.usage_count; // usage across all clients is KSS-only
     });
-    res.json({ templates: rows });
+    res.json({ templates: isKss(req) ? rows : rows.filter((r) => r.active) });
   })
 );
 
