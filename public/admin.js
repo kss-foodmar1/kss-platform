@@ -611,7 +611,9 @@ async function renderCompanyDetail(main, companyId) {
               .join('')}</tbody></table>`
           : '<p class="muted">ยังไม่มีข้อมูล — จะ sync เฉพาะ report source ที่มี widget ใช้งาน</p>'
       }
-      <div class="sync-result"></div>`;
+      <div class="sync-result"></div>
+      <div class="usage-block"></div>`;
+    renderUsage(block.querySelector('.usage-block'), companyId);
     const btn = block.querySelector('.sync-now');
     if (btn) {
       btn.addEventListener('click', async () => {
@@ -643,6 +645,38 @@ async function renderCompanyDetail(main, companyId) {
   renderComposer(main.querySelector('.composer'), companyId);
   renderUserManager(main.querySelector('.company-users'), { companyId });
   renderBillingPanel(main.querySelector('.billing'), companyId);
+}
+
+// ---------- FMH quota: where the rows went ----------
+const TRIGGER_LABEL = {
+  cron: 'Sync อัตโนมัติตี 1', boot: 'ตอน deploy', refresh: 'ปุ่ม Refresh ของผู้ใช้', admin: 'Sync จาก Admin',
+  warm: 'เพิ่ม widget ใหม่', key_saved: 'ตอนใส่ API key', probe: 'Diagnostics', other: 'อื่น ๆ',
+};
+async function renderUsage(container, companyId) {
+  let u;
+  try {
+    u = await api(`/api/admin/companies/${companyId}/fmh-usage`);
+  } catch (err) {
+    container.innerHTML = '';
+    return;
+  }
+  if (!u.by_pull.length) {
+    container.innerHTML = '<p class="muted" style="margin-top:12px">ยังไม่มีบันทึกการใช้โควตา FMH (เริ่มบันทึกหลัง deploy นี้)</p>';
+    return;
+  }
+  const total = u.by_pull.reduce((a, r) => a + r.rows_fetched, 0);
+  const fmt = (n) => Number(n).toLocaleString('th-TH');
+  container.innerHTML = `
+    <h3 style="margin:16px 0 6px;font-size:15px;">โควตา FMH ที่ใช้ไป ${u.days} วันล่าสุด: ${fmt(total)} แถว</h3>
+    <div class="grid-2" style="gap:16px;align-items:start">
+      <table class="mini-table"><thead><tr><th>ใช้ไปกับ</th><th class="num">แถว</th><th class="num">ครั้ง</th></tr></thead><tbody>${u.by_trigger
+        .map((r) => `<tr><td>${esc(TRIGGER_LABEL[r.trig] || r.trig)}</td><td class="num">${fmt(r.rows_fetched)}</td><td class="num">${fmt(r.calls)}</td></tr>`)
+        .join('')}</tbody></table>
+      <table class="mini-table"><thead><tr><th>รายงาน</th><th class="num">แถว</th><th class="num">ครั้ง</th></tr></thead><tbody>${u.by_pull
+        .slice(0, 12)
+        .map((r) => `<tr><td>${esc(r.pull_key)}</td><td class="num">${fmt(r.rows_fetched)}</td><td class="num">${fmt(r.calls)}</td></tr>`)
+        .join('')}</tbody></table>
+    </div>`;
 }
 
 // ---------- billing (stage 1): payment requests + subscription end date ----------

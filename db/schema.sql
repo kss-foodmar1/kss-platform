@@ -137,3 +137,15 @@ CREATE TABLE IF NOT EXISTS fmh_report_cache (
   synced_at TIMESTAMP NOT NULL,
   PRIMARY KEY (company_id, cache_key)
 ) DEFAULT CHARSET=utf8mb4;
+
+-- Every FMH report call and the rows it returned, so the monthly row quota can
+-- be traced to what spent it (trig: cron / boot / refresh / admin / warm / key_saved / probe).
+CREATE TABLE IF NOT EXISTS fmh_usage_log (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  company_id INT NOT NULL,
+  pull_key VARCHAR(128) NOT NULL,
+  rows_fetched INT NOT NULL,
+  trig VARCHAR(20) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_usage_company_time (company_id, created_at)
+) DEFAULT CHARSET=utf8mb4;

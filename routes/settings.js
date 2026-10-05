@@ -8,6 +8,7 @@ const { requireAuth, requireCompanyAdmin } = require('../middleware/auth');
 const { wrap, resolveCompanyId } = require('../lib/access');
 const { encrypt, mask } = require('../lib/crypto');
 const { syncCompany } = require('../lib/fmhCache');
+const { withTrigger } = require('../lib/fmhUsage');
 
 const router = express.Router();
 
@@ -42,7 +43,7 @@ router.post(
 
     // Fill the cache right away in the background so dashboards have data
     // without waiting for the 1am sync.
-    syncCompany(companyId).catch((err) => console.error('Post-key sync failed:', err.message));
+    withTrigger('key_saved', () => syncCompany(companyId)).catch((err) => console.error('Post-key sync failed:', err.message));
     res.json({ ok: true, message: `บันทึกแล้ว — ${mask(apiKey)} · กำลังดึงข้อมูลครั้งแรก` });
   })
 );

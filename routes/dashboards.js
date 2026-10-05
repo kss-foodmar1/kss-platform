@@ -14,13 +14,14 @@ const pool = require('../db/pool');
 const { requireAuth } = require('../middleware/auth');
 const { wrap, isSuperadmin, resolveCompanyId, getDashboardForUser } = require('../lib/access');
 const { FMH_REPORTS, getCached, syncOne, cacheKeyFor, pullsForWidget } = require('../lib/fmhCache');
+const { withTrigger } = require('../lib/fmhUsage');
 const { listWidgets } = require('../lib/widgetCatalog');
 
 const router = express.Router();
 
 // A manual refresh is allowed at most this often per company + report source,
 // so an "open to everyone" refresh button can't burn the monthly FMH quota.
-const REFRESH_COOLDOWN_MS = 30 * 60 * 1000;
+const REFRESH_COOLDOWN_MS = 3 * 60 * 60 * 1000;
 
 router.get(
   '/',
@@ -171,7 +172,7 @@ router.post(
         continue;
       }
       try {
-        const { data } = await syncOne(dashboard.company_id, source, grouping);
+        const { data } = await withTrigger('refresh', () => syncOne(dashboard.company_id, source, grouping));
         results[key] = { ok: true, rows: data.length };
         refreshed++;
       } catch (err) {

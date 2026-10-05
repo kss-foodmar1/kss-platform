@@ -17,6 +17,7 @@ const { wrap } = require('../lib/access');
 const { FMH_REPORTS, syncCompany, syncOne, getSyncStatus, getCached, pullsForWidget } = require('../lib/fmhCache');
 const { CHART_TYPES, listWidgets } = require('../lib/widgetCatalog');
 const probe = require('../lib/fmhProbe');
+const { withTrigger, usageSummary } = require('../lib/fmhUsage');
 
 const router = express.Router();
 router.use(requireAuth, requireSuperadmin);
@@ -45,7 +46,7 @@ async function warmSource(companyId, source, grouping = null) {
   if (!c || !c.fmh_api_key_enc || !FMH_REPORTS[source]) return;
   if (await getCached(companyId, source, grouping)) return;
   const key = grouping ? `${source}|${grouping}` : source;
-  syncOne(companyId, source, grouping).catch((err) => console.error(`Warm sync failed (${companyId}/${key}):`, err.message));
+  withTrigger('warm', () => syncOne(companyId, source, grouping)).catch((err) => console.error(`Warm sync failed (${companyId}/${key}):`, err.message));
 }
 
 // ---------- meta ----------
@@ -123,8 +124,18 @@ router.post(
   '/companies/:id/sync',
   wrap(async (req, res) => {
     if (!(await companyExists(req.params.id))) return res.status(404).json({ error: 'Company not found' });
-    const results = await syncCompany(Number(req.params.id));
+    const full = !!(req.body && req.body.full);
+    const results = await withTrigger('admin', () => syncCompany(Number(req.params.id), null, { full }));
     res.json({ ok: true, results });
+  })
+);
+
+// Where this company's FMH row quota went over the last 30 days.
+router.get(
+  '/companies/:id/fmh-usage',
+  wrap(async (req, res) => {
+    if (!(await companyExists(req.params.id))) return res.status(404).json({ error: 'Company not found' });
+    res.json(await usageSummary(Number(req.params.id), 30));
   })
 );
 
@@ -399,7 +410,7 @@ router.post(
     if (!c) return res.status(404).json({ error: 'ไม่พบบริษัทนี้' });
     if (!c.fmh_api_key_enc) return bad(res, 'บริษัทนี้ยังไม่ได้ตั้งค่า FMH API key');
     try {
-      const result = await PROBES[name](companyId);
+      const result = await withTrigger('probe', () => PROBES[name](companyId), companyId);
       res.json({ probe: name, company_id: companyId, result });
     } catch (err) {
       res.status(502).json({ error: `เรียก FMH ไม่สำเร็จ: ${err.message}` });

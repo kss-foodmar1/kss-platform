@@ -12,6 +12,10 @@ const settingsRoutes = require('./routes/settings');
 const adminRoutes = require('./routes/admin');
 const billingRoutes = require('./routes/billing');
 const billing = require('./lib/billing');
+const { withTrigger } = require('./lib/fmhUsage');
+// FMH_AUTO_SYNC=off stops the nightly sync and the boot warm-up (e.g. on staging
+// when it shares an FMH key with production and would spend the quota twice).
+const AUTO_SYNC = String(process.env.FMH_AUTO_SYNC || 'on').toLowerCase() !== 'off';
 const { syncAllCompanies, syncCompany, pullsUsedByCompany, cacheKeyFor } = require('./lib/fmhCache');
 const pool = require('./db/pool');
 
@@ -105,7 +109,8 @@ app.use((err, req, res, next) => {
 
 function logSync(label, results) {
   Object.entries(results).forEach(([source, r]) => {
-    if (r.ok) console.log(`  ${label} "${source}" ok: ${r.rows} rows`);
+    if (r.skipped) return;
+    if (r.ok) console.log(`  ${label} "${source}" ok: ${r.rows} rows (${r.mode || 'full'}, fetched ${r.fetched ?? r.rows})`);
     else console.error(`  ${label} "${source}" failed: ${r.error}`);
   });
 }
@@ -115,9 +120,10 @@ function logSync(label, results) {
 cron.schedule(
   '0 1 * * *',
   async () => {
+    if (!AUTO_SYNC) return console.log('Daily FMH sync skipped (FMH_AUTO_SYNC=off)');
     console.log('Running daily FMH sync (1am Asia/Bangkok)...');
     try {
-      const all = await syncAllCompanies();
+      const all = await withTrigger('cron', () => syncAllCompanies());
       Object.entries(all).forEach(([company, results]) => logSync(company, results));
     } catch (err) {
       console.error('Daily FMH sync failed:', err.message);
@@ -146,6 +152,7 @@ cron.schedule(
 // a source it uses (fresh deploy, new widget, key just added) instead of
 // leaving those widgets empty until 1am.
 async function syncMissingOnBoot() {
+  if (!AUTO_SYNC) return console.log('Boot FMH sync skipped (FMH_AUTO_SYNC=off)');
   try {
     const [companies] = await pool.query(
       `SELECT id, name FROM companies WHERE fmh_api_key_enc IS NOT NULL AND status <> 'suspended'`
@@ -157,7 +164,7 @@ async function syncMissingOnBoot() {
       const missing = used.filter((p) => !have.has(cacheKeyFor(p.source, p.grouping)));
       if (!missing.length) continue;
       console.log(`Boot sync for company ${c.id} (${c.name}): ${missing.map((p) => cacheKeyFor(p.source, p.grouping)).join(', ')}`);
-      logSync(`${c.id}:${c.name}`, await syncCompany(c.id, missing));
+      logSync(`${c.id}:${c.name}`, await withTrigger('boot', () => syncCompany(c.id, missing)));
     }
   } catch (err) {
     console.error('Boot sync failed:', err.message);
