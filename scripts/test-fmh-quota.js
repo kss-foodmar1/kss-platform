@@ -75,6 +75,13 @@ async function main() {
     assert.strictEqual(res.mode, 'full');
     assert.deepStrictEqual(sorted(res.data), truth());
   });
+  await ok('a cache from before this change (no full_synced_at) goes incremental, not full', async () => {
+    await pool.query(`UPDATE fmh_report_cache SET quota_json = JSON_REMOVE(quota_json, '$.full_synced_at') WHERE company_id = ?`, [cid]);
+    served = 0;
+    const res = await cache.syncOne(cid, 'purchase-analysis');
+    assert.strictEqual(res.mode, 'incremental'); assert.ok(served <= 22 * 25);
+    assert.deepStrictEqual(sorted(res.data), truth());
+  });
   await ok('{full:true} forces a full pull', async () => {
     assert.strictEqual((await cache.syncOne(cid, 'purchase-analysis', null, { full: true })).mode, 'full');
   });
