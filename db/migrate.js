@@ -77,6 +77,23 @@ async function upgradeUsers() {
 }
 
 async function upgradeCompanies() {
+  if (!(await columnInfo('companies', 'data_source'))) {
+    await pool.query(`ALTER TABLE companies ADD COLUMN data_source ENUM('fmh','demo') NOT NULL DEFAULT 'fmh'`);
+    // The sales-demo company runs on generated data from now on: no FMH key,
+    // no quota, every widget populated.
+    const [r] = await pool.query(`UPDATE companies SET data_source = 'demo' WHERE status = 'demo'`);
+    // Drop what was pulled from FMH so real and generated rows never mix
+    // (incremental sync would otherwise merge new demo days into old FMH data).
+    // The tables may not exist yet on a fresh database; schema.sql has run, so they do.
+    for (const t of ['fmh_report_cache', 'fmh_cache_saved', 'fmh_sync_errors']) {
+      try {
+        await pool.query(`DELETE FROM ${t} WHERE company_id IN (SELECT id FROM companies WHERE data_source = 'demo')`);
+      } catch (e) {
+        /* pre-multi-tenant cache without company_id: nothing company-scoped to clear */
+      }
+    }
+    console.log(`  companies: added data_source (${r.affectedRows} demo company switched to demo data)`);
+  }
   if (!(await columnInfo('companies', 'subscription_ends_at'))) {
     await pool.query(`ALTER TABLE companies ADD COLUMN subscription_ends_at DATE NULL`);
     console.log('  companies: added subscription_ends_at');

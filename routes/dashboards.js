@@ -89,7 +89,8 @@ router.get(
           })
         : null;
     });
-    res.json({ dashboard, widgets, sources });
+    const [[co]] = await pool.query(`SELECT data_source FROM companies WHERE id = ?`, [dashboard.company_id]);
+    res.json({ dashboard: { ...dashboard, data_source: co ? co.data_source : 'fmh' }, widgets, sources });
   })
 );
 
@@ -122,12 +123,13 @@ router.get(
     const saved = wantSaved ? await getSaved(dashboard.company_id, source, grouping) : null;
     const cached = saved || (await getCached(dashboard.company_id, source, grouping));
     if (!cached) {
-      const [[company]] = await pool.query(`SELECT fmh_api_key_enc FROM companies WHERE id = ?`, [dashboard.company_id]);
+      const [[company]] = await pool.query(`SELECT fmh_api_key_enc, data_source FROM companies WHERE id = ?`, [dashboard.company_id]);
+      const connected = company && (company.fmh_api_key_enc || company.data_source === 'demo');
       return res.status(409).json({
-        error: company && company.fmh_api_key_enc
+        error: connected
           ? 'ยังไม่มีข้อมูล — ระบบจะ sync ให้ตอนตี 1 หรือกด Refresh ด่วนได้เลย'
           : 'ยังไม่ได้ตั้งค่า FMH API Key ของบริษัทนี้',
-        code: company && company.fmh_api_key_enc ? 'FMH_NOT_SYNCED' : 'FMH_KEY_MISSING',
+        code: connected ? 'FMH_NOT_SYNCED' : 'FMH_KEY_MISSING',
         health,
       });
     }
@@ -152,8 +154,8 @@ router.post(
     const dashboard = await getDashboardForUser(req.user, req.params.id);
     if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
 
-    const [[company]] = await pool.query(`SELECT fmh_api_key_enc FROM companies WHERE id = ?`, [dashboard.company_id]);
-    if (!company || !company.fmh_api_key_enc) {
+    const [[company]] = await pool.query(`SELECT fmh_api_key_enc, data_source FROM companies WHERE id = ?`, [dashboard.company_id]);
+    if (!company || (!company.fmh_api_key_enc && company.data_source !== 'demo')) {
       return res.status(409).json({ error: 'ยังไม่ได้ตั้งค่า FMH API Key ของบริษัทนี้', code: 'FMH_KEY_MISSING' });
     }
 

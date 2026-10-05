@@ -805,7 +805,11 @@ class DashboardView {
            ${toggle}
          </div>`
       : `<div class="fmh-sync-line">
-           <span>${oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'}</span>
+           <span>${
+             this.dashboard.data_source === 'demo'
+               ? '<span class="demo-pill">ข้อมูลตัวอย่าง</span> <span class="muted">ข้อมูลตัวอย่างสำหรับเดโม — ไม่ใช่ข้อมูลจริงและไม่ใช้โควตา FMH</span>'
+               : oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
+           }</span>
            <span class="sync-actions">${toggle}${keyMissing ? '' : '<button type="button" class="btn small ghost fmh-refresh-btn">Refresh ด่วน</button>'}</span>
          </div>
          ${
@@ -1581,13 +1585,13 @@ function renderPareto(body, rows, cfg) {
         legend: { position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: '#1B2B22' } },
         tooltip: {
           callbacks: {
-            label: (ctx) => (ctx.dataset.yAxisID === 'y2' ? ` สะสม ${ctx.parsed.y.toFixed(0)}%` : ` ${fmtValue(ctx.parsed.y, cfg.format)}`),
+            label: (ctx) => (ctx.dataset.yAxisID === 'y2' ? ` ${t(`สะสม ${ctx.parsed.y.toFixed(0)}%`)}` : ` ${fmtValue(ctx.parsed.y, cfg.format)}`),
           },
         },
       },
       scales: {
         x: { grid: { display: false }, ticks: { color: '#6b7268', maxRotation: 50, minRotation: 0, autoSkip: false } },
-        y: { beginAtZero: asBar || cfg.zero === true, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
+        y: { beginAtZero: true, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
         y2: { position: 'right', min: 0, max: 100, grid: { display: false }, border: { display: false }, ticks: { color: '#A9812F', callback: (v) => v + '%' } },
       },
     },

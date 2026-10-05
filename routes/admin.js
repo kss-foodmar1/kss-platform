@@ -78,8 +78,8 @@ async function companyExists(id) {
 // If a company has a key but no cached data for a source (e.g. a widget
 // using a new source was just added), fetch it in the background.
 async function warmSource(companyId, source, grouping = null) {
-  const [[c]] = await pool.query(`SELECT fmh_api_key_enc FROM companies WHERE id = ?`, [companyId]);
-  if (!c || !c.fmh_api_key_enc || !FMH_REPORTS[source]) return;
+  const [[c]] = await pool.query(`SELECT fmh_api_key_enc, data_source FROM companies WHERE id = ?`, [companyId]);
+  if (!c || (!c.fmh_api_key_enc && c.data_source !== 'demo') || !FMH_REPORTS[source]) return;
   if (await getCached(companyId, source, grouping)) return;
   const key = grouping ? `${source}|${grouping}` : source;
   withTrigger('warm', () => syncOne(companyId, source, grouping)).catch((err) => console.error(`Warm sync failed (${companyId}/${key}):`, err.message));
@@ -98,7 +98,7 @@ router.get(
   wrap(async (req, res) => {
     const [rows] = await pool.query(
       `SELECT c.id, c.name, c.status, c.plan_tier, c.fmh_key_updated_at, c.created_at,
-              (c.fmh_api_key_enc IS NOT NULL) AS fmh_configured,
+              (c.fmh_api_key_enc IS NOT NULL OR c.data_source = 'demo') AS fmh_configured, c.data_source,
               (SELECT COUNT(*) FROM users u WHERE u.company_id = c.id) AS user_count,
               (SELECT COUNT(*) FROM dashboards d WHERE d.company_id = c.id AND d.active = TRUE) AS dashboard_count,
               (SELECT MIN(synced_at) FROM fmh_report_cache f WHERE f.company_id = c.id) AS oldest_sync
@@ -128,7 +128,7 @@ router.get(
   '/companies/:id',
   wrap(async (req, res) => {
     const [[c]] = await pool.query(
-      `SELECT id, name, status, plan_tier, fmh_key_updated_at, created_at, (fmh_api_key_enc IS NOT NULL) AS fmh_configured
+      `SELECT id, name, status, plan_tier, data_source, fmh_key_updated_at, created_at, (fmh_api_key_enc IS NOT NULL OR data_source = 'demo') AS fmh_configured
        FROM companies WHERE id = ?`,
       [req.params.id]
     );
@@ -141,7 +141,8 @@ router.get(
 router.patch(
   '/companies/:id',
   wrap(async (req, res) => {
-    const { name, status, plan_tier } = req.body || {};
+    const { name, status, plan_tier, data_source } = req.body || {};
+    if (data_source !== undefined && !['fmh', 'demo'].includes(data_source)) return bad(res, 'invalid data_source');
     if (status !== undefined && !STATUSES.includes(status)) return bad(res, 'invalid status');
     if (plan_tier !== undefined && !TIERS.includes(plan_tier)) return bad(res, 'invalid plan_tier');
     if (name !== undefined && !String(name).trim()) return bad(res, 'name cannot be empty');
@@ -151,6 +152,18 @@ router.patch(
       [name !== undefined ? String(name).trim() : null, status ?? null, plan_tier ?? null, req.params.id]
     );
     if (!r.affectedRows) return res.status(404).json({ error: 'Company not found' });
+    if (data_source !== undefined) {
+      const [[c]] = await pool.query(`SELECT data_source FROM companies WHERE id = ?`, [req.params.id]);
+      if (c.data_source !== data_source) {
+        // Switching between real and demo data: never let the two mix in the
+        // cache, the saved copy or the error log, then refill in the background.
+        await pool.query(`UPDATE companies SET data_source = ? WHERE id = ?`, [data_source, req.params.id]);
+        for (const t of ['fmh_report_cache', 'fmh_cache_saved', 'fmh_sync_errors']) {
+          await pool.query(`DELETE FROM ${t} WHERE company_id = ?`, [req.params.id]);
+        }
+        withTrigger('admin', () => syncCompany(Number(req.params.id))).catch((e) => console.error('Sync after data source switch failed:', e.message));
+      }
+    }
     res.json({ ok: true });
   })
 );

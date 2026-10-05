@@ -416,3 +416,4 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
 /* company admin: same console, no KSS sidebar */
 .admin-view.company-mode { grid-template-columns: 1fr; }
 .admin-view.company-mode .admin-sidebar { display: none; }
+.demo-pill { display: inline-block; background: #fff3c4; color: #6b5310; border: 1px solid #e8c55a; border-radius: 999px; padding: 1px 9px; font-size: 12px; font-weight: 700; margin-right: 6px; }

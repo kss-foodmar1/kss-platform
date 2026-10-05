@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS companies (
   fmh_api_key_enc TEXT NULL,
   fmh_key_updated_at TIMESTAMP NULL,
   subscription_ends_at DATE NULL,
+  data_source ENUM('fmh','demo') NOT NULL DEFAULT 'fmh',
   suspended_reason VARCHAR(20) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) DEFAULT CHARSET=utf8mb4;

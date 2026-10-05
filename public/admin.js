@@ -545,7 +545,15 @@ function tierStatusSelects(company = {}) {
       .join('')}</select></div>
     <div class="field"><label>Plan tier</label><select name="plan_tier">${meta.tiers
       .map((t) => `<option value="${t}" ${company.plan_tier === t ? 'selected' : ''}>${esc(TIER_LABEL[t] || t)}</option>`)
-      .join('')}</select></div>`;
+      .join('')}</select></div>
+    ${
+      company.id
+        ? `<div class="field"><label>แหล่งข้อมูล</label><select name="data_source">
+            <option value="fmh" ${company.data_source !== 'demo' ? 'selected' : ''}>FMH จริง (ใช้ API key และโควตา)</option>
+            <option value="demo" ${company.data_source === 'demo' ? 'selected' : ''}>ข้อมูลตัวอย่าง (ไม่เรียก FMH)</option>
+          </select></div>`
+        : ''
+    }`;
 }
 
 function renderNewCompany(main) {
