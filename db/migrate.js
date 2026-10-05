@@ -54,6 +54,10 @@ async function runSchemaFile() {
 }
 
 async function upgradeUsers() {
+  if (!(await columnInfo('users', 'language'))) {
+    await pool.query(`ALTER TABLE users ADD COLUMN language ENUM('th','en') NOT NULL DEFAULT 'th'`);
+    console.log('  users: added language');
+  }
   if (!(await columnInfo('users', 'company_id'))) {
     await pool.query(`ALTER TABLE users ADD COLUMN company_id INT NULL, ADD INDEX idx_users_company (company_id)`);
     console.log('  users: added company_id');

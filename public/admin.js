@@ -713,7 +713,7 @@ async function renderBillingPanel(container, companyId) {
     ? `Omise: โหมด <strong>${cfg.omise_mode === 'test' ? 'ทดสอบ' : 'ใช้งานจริง'}</strong>`
     : '<span class="error-msg" style="display:inline-block">ยังไม่ได้ตั้งค่า OMISE_SECRET_KEY — สร้าง QR ไม่ได้ (ยังบันทึกโอนเงินเองได้)</span>';
   container.innerHTML = `
-    <p class="helper-text" style="margin-top:0;">${modeLine} · Webhook ${cfg.webhook_secret_set ? 'ตั้งค่าแล้ว' : 'ยังไม่ได้ตั้งค่า (ระบบยังตรวจสถานะเองทุก 10 นาที)'} · ระงับอัตโนมัติเมื่อหมดอายุ: ${cfg.enforce_expiry ? `เปิด (ผ่อนผัน ${cfg.grace_days} วัน)` : 'ปิด'}</p>
+    <p class="helper-text" style="margin-top:0;">${modeLine} · Webhook ${cfg.webhook_secret_set ? 'ตั้งค่าแล้ว' : 'ยังไม่ได้ตั้งค่า (ระบบยังตรวจสถานะเองทุก 10 นาที)'} · ระงับอัตโนมัติเมื่อหมดอายุ: ${cfg.enforce_expiry ? `เปิด (ผ่อนผัน ${cfg.grace_days} วัน)` : 'ปิดอยู่'}</p>
     <form class="inline-form sub-form">
       <label>ใช้งานได้ถึง <input type="date" name="subscription_ends_at" value="${esc(info.subscription_ends_at || '')}"></label>
       <button type="submit" class="btn small">บันทึกวันหมดอายุ</button>

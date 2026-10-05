@@ -12,12 +12,15 @@
 <!-- defer: a slow or blocked CDN must never hold up the page; line charts
      check for window.Chart and show a message if it didn't load. -->
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="/i18n-en.js"></script>
+<script src="/i18n.js"></script>
 </head>
 <body>
 
 <!-- LOGIN SCREEN -->
 <div id="login-screen" class="login-screen">
   <div class="login-card">
+    <button type="button" class="lang-toggle login-lang" data-no-i18n aria-label="Language / ภาษา"></button>
     <h1>KSS Dashboard</h1>
     <p class="sub">เข้าสู่ระบบเพื่อดูรายงานของคุณ</p>
     <div id="login-error" class="error-msg hidden"></div>
@@ -65,6 +68,7 @@
     </div>
     <div class="topbar-actions">
       <span id="user-display-name" class="user-display-name"></span>
+      <button id="lang-btn" type="button" class="lang-toggle" data-no-i18n aria-label="Language / ภาษา"></button>
       <button id="open-admin-btn" class="btn small ghost hidden" title="KSS Admin Console">🏢 Admin Console</button>
       <button id="open-manage-users-btn" class="icon-btn hidden" title="จัดการผู้ใช้งาน" aria-label="จัดการผู้ใช้งาน">👥</button>
       <button id="open-settings-btn" class="icon-btn hidden" title="ตั้งค่า FMH API" aria-label="ตั้งค่า">⚙️</button>

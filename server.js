@@ -34,7 +34,7 @@ const app = express();
 // browser has never seen cannot be served from cache. The stamp is the newest
 // mtime among the shell files, so it changes exactly when they do and stays
 // stable across restarts that changed nothing.
-const SHELL_FILES = ['app.js', 'admin.js', 'style.css', 'index.html'];
+const SHELL_FILES = ['app.js', 'admin.js', 'style.css', 'index.html', 'i18n.js', 'i18n-en.js'];
 const ASSET_VERSION = (() => {
   try {
     const newest = SHELL_FILES.reduce((max, f) => {
@@ -49,7 +49,7 @@ const ASSET_VERSION = (() => {
 
 const SHELL_HTML = (() => {
   const raw = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
-  return raw.replace(/(src|href)="\/(app\.js|admin\.js|style\.css)"/g, `$1="/$2?v=${ASSET_VERSION}"`);
+  return raw.replace(/(src|href)="\/(app\.js|admin\.js|style\.css|i18n\.js|i18n-en\.js)"/g, `$1="/$2?v=${ASSET_VERSION}"`);
 })();
 
 function sendShell(res) {

@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS users (
   role ENUM('kss_superadmin','company_admin','client') NOT NULL DEFAULT 'client',
   company_id INT NULL,
   must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+  language ENUM('th','en') NOT NULL DEFAULT 'th',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_users_company (company_id)
 ) DEFAULT CHARSET=utf8mb4;

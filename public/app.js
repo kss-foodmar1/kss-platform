@@ -81,7 +81,7 @@ function fmtAxis(v, format) {
 }
 function fmtDateTime(iso) {
   if (!iso) return null;
-  return new Date(String(iso).replace(' ', 'T')).toLocaleString('th-TH', {
+  return new Date(String(iso).replace(' ', 'T')).toLocaleString(I18N.locale(), {
     day: 'numeric',
     month: 'short',
     hour: '2-digit',
@@ -379,9 +379,27 @@ function showScreen(name) {
   el('app-shell').classList.toggle('hidden', name !== 'app');
 }
 
+// One button: shows the language you would switch TO.
+document.querySelectorAll('.lang-toggle').forEach((b) => {
+  b.textContent = I18N.lang === 'en' ? 'ไทย' : 'EN';
+  b.title = I18N.lang === 'en' ? 'เปลี่ยนเป็นภาษาไทย' : 'Switch to English';
+  b.addEventListener('click', async () => {
+    const next = I18N.lang === 'en' ? 'th' : 'en';
+    if (state.user) {
+      try {
+        await api('/api/auth/language', { method: 'PUT', body: JSON.stringify({ language: next }) });
+      } catch (e) {
+        /* still switch locally */
+      }
+    }
+    I18N.adopt(next);
+  });
+});
+
 async function boot() {
   try {
     const { user } = await api('/api/auth/me');
+    I18N.adopt(user.language);
     state.user = user;
     if (user.must_change_password) showScreen('force-change');
     else await enterApp();
@@ -400,6 +418,8 @@ el('login-form').addEventListener('submit', async (e) => {
       method: 'POST',
       body: JSON.stringify({ email: el('login-email').value.trim(), password: el('login-password').value }),
     });
+    // The account's saved language wins over what the login page was showing.
+    if ((user.language || 'th') !== I18N.lang) return I18N.adopt(user.language);
     state.user = user;
     if (user.must_change_password) showScreen('force-change');
     else await enterApp();
@@ -765,7 +785,7 @@ class DashboardView {
       const remaining = q.rows_remaining ?? Math.max(0, limit - used);
       const pct = limit ? Math.min(100, (used / limit) * 100) : 0;
       const low = limit ? remaining / limit < 0.1 : false;
-      const resets = q.resets_at ? new Date(q.resets_at).toLocaleDateString('th-TH', { day: 'numeric', month: 'short' }) : null;
+      const resets = q.resets_at ? new Date(q.resets_at).toLocaleDateString(I18N.locale(), { day: 'numeric', month: 'short' }) : null;
       bar.insertAdjacentHTML(
         'beforeend',
         `<div class="fmh-quota">
@@ -1003,13 +1023,13 @@ function bucketKey(dateStr, bucket) {
 
 function bucketLabel(k, bucket) {
   const d = new Date(k + 'T00:00:00');
-  if (bucket === 'month') return d.toLocaleDateString('th-TH', { month: 'short', year: '2-digit' });
+  if (bucket === 'month') return d.toLocaleDateString(I18N.locale(), { month: 'short', year: '2-digit' });
   if (bucket === 'wom') {
     const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
     const end = d.getDate() === 22 ? last : d.getDate() + 6;
-    return `${d.getDate()}-${end} ${d.toLocaleDateString('th-TH', { month: 'short' })}`;
+    return `${d.getDate()}-${end} ${d.toLocaleDateString(I18N.locale(), { month: 'short' })}`;
   }
-  return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+  return d.toLocaleDateString(I18N.locale(), { day: 'numeric', month: 'short' });
 }
 
 function renderLine(body, rows, cfg) {
@@ -1059,6 +1079,7 @@ function renderLine(body, rows, cfg) {
   // the series are amounts to compare side by side (sales vs purchases), not a
   // level to follow. A series may still set its own `mark` to ride as a line.
   const asBar = cfg.mark === 'bar';
+  I18N.hookCharts();
   const chart = new Chart(wrap.querySelector('canvas'), {
     type: asBar ? 'bar' : 'line',
     data: {
@@ -1323,6 +1344,7 @@ function renderDonut(body, rows, cfg) {
   const colors = items.map((it, i) =>
     (cfg.colors && cfg.colors[it.name]) || (it.other ? '#D6CFBC' : CAT_COLORS[i % CAT_COLORS.length])
   );
+  I18N.hookCharts();
   const chart = new Chart(wrap.querySelector('canvas'), {
     type: 'doughnut',
     data: { labels: items.map((i) => i.name), datasets: [{ data: items.map((i) => i.value), backgroundColor: colors, borderColor: '#fff', borderWidth: 2 }] },
@@ -1413,6 +1435,7 @@ function renderStack(body, rows, cfg) {
   wrap.style.height = `${Math.max(160, shown.length * 34 + 60)}px`;
   wrap.innerHTML = '<canvas></canvas>';
   body.appendChild(wrap);
+  I18N.hookCharts();
   const chart = new Chart(wrap.querySelector('canvas'), {
     type: 'bar',
     data: {
@@ -1505,6 +1528,7 @@ function renderPareto(body, rows, cfg) {
   wrap.className = 'chart-wrap';
   wrap.innerHTML = '<canvas></canvas>';
   body.appendChild(wrap);
+  I18N.hookCharts();
   const chart = new Chart(wrap.querySelector('canvas'), {
     data: {
       labels: items.map((i) => i.name),
@@ -1596,6 +1620,7 @@ function renderScatter(body, rows, cfg) {
   body.appendChild(wrap);
   const colorFor = (p) =>
     qx == null ? '#2a78d6' : p.x >= qx && p.y >= qy ? '#0ca30c' : p.x < qx && p.y < qy ? '#BE4229' : '#2a78d6';
+  I18N.hookCharts();
   const chart = new Chart(wrap.querySelector('canvas'), {
     type: 'scatter',
     data: { datasets: [{ data: pts, backgroundColor: pts.map(colorFor), pointRadius: 6, pointHoverRadius: 9, borderColor: '#fff', borderWidth: 1.5 }] },

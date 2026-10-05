@@ -82,6 +82,12 @@ async function main() {
     assert.strictEqual(res.mode, 'incremental'); assert.ok(served <= 22 * 25);
     assert.deepStrictEqual(sorted(res.data), truth());
   });
+  await ok('an empty cache is rebuilt with a full pull, not extended', async () => {
+    await pool.query(`UPDATE fmh_report_cache SET data_json = '[]' WHERE company_id = ? AND cache_key = 'purchase-analysis'`, [cid]);
+    const res = await cache.syncOne(cid, 'purchase-analysis');
+    assert.strictEqual(res.mode, 'full');
+    assert.deepStrictEqual(sorted(res.data), truth());
+  });
   await ok('{full:true} forces a full pull', async () => {
     assert.strictEqual((await cache.syncOne(cid, 'purchase-analysis', null, { full: true })).mode, 'full');
   });

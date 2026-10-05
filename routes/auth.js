@@ -16,7 +16,7 @@ const COOKIE_OPTS = {
 
 async function publicUser(id) {
   const [[u]] = await pool.query(
-    `SELECT u.id, u.email, u.display_name, u.role, u.company_id, u.must_change_password,
+    `SELECT u.id, u.email, u.display_name, u.role, u.company_id, u.must_change_password, u.language,
             c.name AS company_name, c.status AS company_status
      FROM users u LEFT JOIN companies c ON c.id = u.company_id WHERE u.id = ?`,
     [id]
@@ -58,6 +58,18 @@ router.get(
   requireAuth,
   wrap(async (req, res) => {
     res.json({ user: await publicUser(req.user.id) });
+  })
+);
+
+// Interface language is a per-user setting.
+router.put(
+  '/language',
+  requireAuth,
+  wrap(async (req, res) => {
+    const language = (req.body || {}).language;
+    if (!['th', 'en'].includes(language)) return res.status(400).json({ error: 'language must be th or en' });
+    await pool.query(`UPDATE users SET language = ? WHERE id = ?`, [language, req.user.id]);
+    res.json({ ok: true, language });
   })
 );
 
