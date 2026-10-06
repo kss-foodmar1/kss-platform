@@ -823,6 +823,9 @@ window.I18N_EN = {
     'ไม่พบรูปแบบไฟล์นี้': 'File layout not found',
     'POS อื่น': 'Other POS',
     'ไม่พบรายการขายที่อ่านได้ในไฟล์ (ตรวจคอลัมน์วันที่และชื่อเมนู)': 'No readable sales lines in the file (check the date and menu columns)',
+    'การชำระเงินออนไลน์ผ่าน Omise ยังไม่เปิดใช้ในระบบนี้ — กำหนดวันหมดอายุด้านบนได้ตามปกติ': 'Online payment through Omise is not switched on here — the expiry date above still works as usual.',
+    'การชำระเงินออนไลน์ (Omise) ยังไม่เปิดใช้ในระบบนี้': 'Online payment (Omise) is not switched on here',
+    'ปิดอยู่': 'Off',
   },
 
   // {0}, {1}... match any text and are carried across.

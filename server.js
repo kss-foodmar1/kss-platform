@@ -85,7 +85,8 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/pos', require('./routes/pos'));
 app.use('/api/pay', billingRoutes.publicRouter);
 app.use('/api/webhooks', billingRoutes.webhookRouter);
-app.get('/pay/:token', (req, res) => {
+app.get('/pay/:token', (req, res, next) => {
+  if (!require('./lib/omise').paymentsEnabled()) return next();
   res.set('Cache-Control', 'no-store');
   res.sendFile(path.join(__dirname, 'public', 'pay.html'));
 });
@@ -136,7 +137,7 @@ cron.schedule(
 
 // Billing: every 10 minutes settle any QR that was paid but whose webhook never
 // arrived (Omise does not guarantee retries); daily 02:00 apply expiry rules.
-cron.schedule('*/10 * * * *', () => billing.reconcilePending().catch((e) => console.error('Reconcile failed:', e.message)), { timezone: 'Asia/Bangkok' });
+cron.schedule('*/10 * * * *', () => require('./lib/omise').paymentsEnabled() && billing.reconcilePending().catch((e) => console.error('Reconcile failed:', e.message)), { timezone: 'Asia/Bangkok' });
 cron.schedule(
   '0 2 * * *',
   async () => {

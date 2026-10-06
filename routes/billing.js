@@ -32,6 +32,7 @@ adminRouter.use(requireAuth, requireSuperadmin);
 adminRouter.get('/status', (req, res) => {
   res.json({
     omise_mode: omise.mode(),
+    online_payments: omise.paymentsEnabled(),
     webhook_secret_set: !!(process.env.OMISE_WEBHOOK_SECRET || process.env.omise_webhook_secret),
     enforce_expiry: billing.enforcing(),
     grace_days: billing.GRACE_DAYS(),
@@ -50,7 +51,9 @@ adminRouter.get('/companies/:id', wrap(async (req, res) => {
   });
 }));
 
+const OFF_MSG = 'การชำระเงินออนไลน์ (Omise) ยังไม่เปิดใช้ในระบบนี้';
 adminRouter.post('/companies/:id/payments', wrap(async (req, res) => {
+  if (!omise.paymentsEnabled()) return bad(res, OFF_MSG, 403);
   const { description, amount_baht, period_months } = req.body || {};
   try {
     const { id } = await billing.createPayment({
@@ -101,6 +104,9 @@ adminRouter.put('/companies/:id/subscription', wrap(async (req, res) => {
 
 // ---------- public pay page API ----------
 const publicRouter = express.Router();
+// Payment pages and the webhook do not exist while online payments are off.
+const onlyWhenOn = (req, res, next) => (omise.paymentsEnabled() ? next() : res.status(404).json({ error: 'Not found' }));
+publicRouter.use(onlyWhenOn);
 
 // Tiny per-IP limiter for the one endpoint that can create charges at Omise.
 const hits = new Map();
@@ -157,6 +163,7 @@ publicRouter.post('/:token/qr', wrap(async (req, res) => {
 
 // ---------- Omise webhook ----------
 const webhookRouter = express.Router();
+webhookRouter.use(onlyWhenOn);
 webhookRouter.post('/omise', wrap(async (req, res) => {
   const ok = omise.verifyWebhookSignature(req.rawBody, req.get('Omise-Signature'), req.get('Omise-Signature-Timestamp'));
   if (!ok) return res.status(401).json({ error: 'bad signature' });

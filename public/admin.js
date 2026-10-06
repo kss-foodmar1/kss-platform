@@ -752,7 +752,9 @@ async function renderBillingPanel(container, companyId) {
     container.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
     return;
   }
-  const modeLine = cfg.omise_mode
+  const modeLine = !cfg.online_payments
+    ? 'Omise: <strong>ปิดอยู่</strong>'
+    : cfg.omise_mode
     ? `Omise: โหมด <strong>${cfg.omise_mode === 'test' ? 'ทดสอบ' : 'ใช้งานจริง'}</strong>`
     : '<span class="error-msg" style="display:inline-block">ยังไม่ได้ตั้งค่า OMISE_SECRET_KEY — สร้าง QR ไม่ได้ (ยังบันทึกโอนเงินเองได้)</span>';
   container.innerHTML = `
@@ -763,6 +765,8 @@ async function renderBillingPanel(container, companyId) {
       <span class="muted">${info.subscription_ends_at ? '' : 'ว่าง = ไม่มีวันหมดอายุ (ลูกค้านำร่อง)'}</span>
     </form>
     <div class="sub-msg"></div>
+    ${cfg.online_payments ? '' : '<p class="muted" style="margin-top:16px">การชำระเงินออนไลน์ผ่าน Omise ยังไม่เปิดใช้ในระบบนี้ — กำหนดวันหมดอายุด้านบนได้ตามปกติ</p>'}
+    <div class="online-pay"${cfg.online_payments ? '' : ' hidden'}>
     <h3 style="margin:20px 0 8px;font-size:15px;">ออกรายการชำระเงินใหม่</h3>
     <form class="inline-form pay-form">
       <input name="description" placeholder="รายละเอียด เช่น KSS Dashboard สมาชิกรายปี" required style="flex:2;min-width:220px">
@@ -791,7 +795,8 @@ async function renderBillingPanel(container, companyId) {
             )
             .join('')}</tbody></table>`
         : '<p class="muted" style="margin-top:12px">ยังไม่มีรายการชำระเงิน</p>'
-    }`;
+    }
+    </div>`;
 
   const msg = (sel, html) => (container.querySelector(sel).innerHTML = html);
   container.querySelector('.sub-form').addEventListener('submit', async (e) => {

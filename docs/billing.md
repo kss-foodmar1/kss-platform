@@ -32,3 +32,22 @@ Webhook URL: `<PUBLIC_BASE_URL>/api/webhooks/omise` เหตุการณ์ 
 
 ## ยังไม่ทำ (ขั้นถัดไป)
 ใบกำกับภาษี/ใบเสร็จอัตโนมัติ (FlowAccount/PEAK), แจ้งเตือนใกล้หมดอายุ, ป้ายอายุใช้งานให้ company_admin เห็น, บัตรเครดิต/ต่ออายุอัตโนมัติ, สมัครเอง (ขั้น 2)
+
+
+## Production switch (2026-10-07)
+
+Online payment is **off on production** until KSS decides to launch it. While it is off:
+
+- payment links cannot be created
+- `/pay/...` and `/api/pay` return not found
+- the Omise webhook returns not found
+- the 10-minute reconcile does nothing
+- the Admin Console billing card shows only the subscription end date
+
+The rule is in `lib/omise.js`, `paymentsEnabled()`:
+
+- `OMISE_PAYMENTS=on` or `off` decides, if it is set.
+- Otherwise it is off when Railway's `RAILWAY_ENVIRONMENT_NAME` is `production`.
+- Otherwise it is on when an Omise secret key is set.
+
+To launch payments on production, set `OMISE_PAYMENTS=on` together with the live keys.
