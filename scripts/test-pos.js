@@ -113,7 +113,7 @@ const near = (a, b, tol = 0.02) => Math.abs(a - b) <= tol;
   // ---------- the report rows ----------
   const posDash = (await kss('POST', `/api/admin/companies/${demo.id}/dashboards`, { display_name: 'POS COGS (test)' })).json.id;
   const [tpls] = await pool.query(`SELECT id, template_key FROM widget_templates WHERE report_source = 'pos-sales' ORDER BY sort_order`);
-  check('catalog: 9 POS widgets', tpls.length === 9, tpls.length);
+  check('catalog: 10 POS widgets (incl. branch × day heatmap)', tpls.length === 10, tpls.length);
   r = await kss('PUT', `/api/admin/dashboards/${posDash}/layout`, { items: tpls.map((t) => ({ template_id: t.id })) });
   check('layout saved', r.status === 200, JSON.stringify(r.json));
   r = await ca('GET', `/api/dashboards/${posDash}`);

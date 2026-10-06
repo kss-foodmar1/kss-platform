@@ -66,6 +66,7 @@ Each upload and each row records which POS it came from (`pos_uploads.pos_name`,
 | `pos_branch_cogs` | COGS % by branch |
 | `pos_category_mix` | Sales by POS category |
 | `pos_unmatched` | Menus not matched to a recipe yet |
+| `pos_branch_day_heatmap` | Sales per branch per day (heatmap) — days that dropped, branches with no file |
 | `pos_gm_recipe_vs_purchase` | Recipe GM vs actual-spend GM, against FMH purchases (Cross-report) |
 
 ## Demo
@@ -88,4 +89,4 @@ Demo Co's FMH recipes also include the 116 menus of the Foodstory sample export 
 
 ## Tests
 
-`node scripts/test-pos.js [foodstory.csv]` runs 64 checks against a running server.
+`node scripts/test-pos.js [foodstory.csv]` runs 64 checks (52 without the sample file) against a running server.

@@ -295,6 +295,12 @@ function evalRow(expr, row) {
     // Product names written in Thai and Burmese side by side: keep the
     // Thai/Latin part so a bar label fits.
     case 'clean_name': return cleanName(pick(row, expr.from));
+    // "Fish sauce (BOTTLE)": one row per product AND unit, so prices in
+    // different units never average together.
+    case 'join': {
+      const x = pick(row, expr.a), y = pick(row, expr.b);
+      return isBlank(y) ? String(x ?? 'ไม่ระบุ') : `${x ?? 'ไม่ระบุ'} (${y})`;
+    }
     // "1 จ" … "7 อา": sorts Monday first and reads as a weekday.
     case 'weekday': {
       const d = dateOnly(pick(row, expr.from));
@@ -693,8 +699,14 @@ class DashboardView {
     // A page-wide filter (customer, for the CK sales widgets): any widget can
     // ask for it with config.page_filter, and it then applies to every widget
     // on the page whose rows carry that field.
-    this.filterField = (this.widgets.find((w) => w.config && w.config.page_filter) || { config: {} }).config.page_filter || null;
-    this.filterValue = null;
+    // page_filter is one field or a list; the page offers every field any of
+    // its widgets asks for, in first-seen order.
+    this.filterFields = [];
+    this.widgets.forEach((w) => {
+      const pf = w.config && w.config.page_filter;
+      (Array.isArray(pf) ? pf : pf ? [pf] : []).forEach((f) => { if (!this.filterFields.includes(f)) this.filterFields.push(f); });
+    });
+    this.filters = {}; // field -> chosen value
     this.bucketPick = new Map();
     this.filterEl = document.createElement('div');
     this.filterEl.className = 'page-filter';
@@ -781,28 +793,47 @@ class DashboardView {
   }
 
   renderPageFilter() {
-    const f = this.filterField;
-    if (!f) return;
-    const totals = new Map();
-    Object.values(this.results).forEach((r) => {
-      if (!r || r.error || !Array.isArray(r.data)) return;
-      r.data.forEach((row) => {
-        if (!(f in row) || isBlank(row[f])) return;
-        totals.set(row[f], (totals.get(row[f]) || 0) + num(row.total ?? 1));
+    if (!this.filterFields.length) return;
+    const LABEL = { customer: ['ลูกค้า', 'ทุกราย'], branch: ['สาขา', 'ทุกสาขา'], supplier: ['ซัพพลายเออร์', 'ทุกเจ้า'] };
+    const show = (f, v) => (f === 'customer' ? partyShort(v) : String(v));
+    const groups = this.filterFields.map((f) => {
+      const totals = new Map();
+      Object.values(this.results).forEach((r) => {
+        if (!r || r.error || !Array.isArray(r.data)) return;
+        r.data.forEach((row) => {
+          if (!(f in row) || isBlank(row[f])) return;
+          totals.set(String(row[f]), (totals.get(String(row[f])) || 0) + num(row.total ?? 1));
+        });
       });
-    });
-    const values = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([v]) => v);
-    if (!values.length) { this.filterEl.innerHTML = ''; return; }
-    const chip = (v, label) => `<button type="button" class="range-chip${this.filterValue === v ? ' active' : ''}" data-v="${v === null ? '' : esc(v)}" title="${esc(v === null ? '' : v)}">${esc(label)}</button>`;
-    this.filterEl.innerHTML = `<span class="page-filter-label">ลูกค้า</span>${chip(null, 'ทุกราย')}${values.map((v) => chip(v, partyShort(v))).join('')}`;
-    this.filterEl.querySelectorAll('button').forEach((b) =>
-      b.addEventListener('click', () => {
-        const v = b.dataset.v || null;
-        this.filterValue = this.filterValue === v ? null : v;
-        this.renderPageFilter();
-        this.renderWidgets();
-      })
-    );
+      return { f, values: [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([v]) => v) };
+    }).filter((g) => g.values.length > 1);
+    if (!groups.length) { this.filterEl.innerHTML = ''; return; }
+    // A few values read best as chips; a long list (fifty suppliers) as a menu.
+    this.filterEl.innerHTML = groups.map(({ f, values }) => {
+      const [label, all] = LABEL[f] || [f, 'ทั้งหมด'];
+      const cur = this.filters[f] ?? null;
+      if (values.length <= 10) {
+        const chip = (v, text) => `<button type="button" class="range-chip${cur === v ? ' active' : ''}" data-f="${esc(f)}" data-v="${v === null ? '' : esc(v)}" title="${esc(v ?? '')}">${esc(text)}</button>`;
+        return `<div class="page-filter-group"><span class="page-filter-label">${esc(label)}</span>${chip(null, all)}${values.map((v) => chip(v, show(f, v))).join('')}</div>`;
+      }
+      return `<div class="page-filter-group"><label class="page-filter-label" for="pf-${esc(f)}">${esc(label)}</label><select id="pf-${esc(f)}" data-f="${esc(f)}"><option value="">${esc(all)}</option>${values
+        .map((v) => `<option value="${esc(v)}"${cur === v ? ' selected' : ''}>${esc(show(f, v))}</option>`).join('')}</select></div>`;
+    }).join('');
+    const set = (f, v) => {
+      this.filters[f] = this.filters[f] === v ? null : v;
+      this.renderPageFilter();
+      this.renderWidgets();
+    };
+    this.filterEl.querySelectorAll('button[data-f]').forEach((b) => b.addEventListener('click', () => set(b.dataset.f, b.dataset.v || null)));
+    this.filterEl.querySelectorAll('select[data-f]').forEach((sel) => sel.addEventListener('change', () => { this.filters[sel.dataset.f] = null; set(sel.dataset.f, sel.value || null); }));
+  }
+
+  // Which active page filters a widget's rows cannot honour (they lack the
+  // field — a server-grouped pull, another report), so it can say so.
+  unfilteredBy(rows) {
+    const active = Object.entries(this.filters).filter(([, v]) => v !== null && v !== undefined);
+    if (!active.length || !rows || !rows.length) return [];
+    return active.filter(([f]) => !(f in rows[0])).map(([f]) => f);
   }
 
   // Saved mode: anchor "today" to the newest saved pull and move the date range
@@ -835,8 +866,8 @@ class DashboardView {
     const r = this.results[key];
     if (!r || r.error) return null;
     const dateField = this.sources[key] && this.sources[key].date_field;
-    const f = this.filterField, fv = this.filterValue;
-    const byFilter = (rows) => (f && fv !== null ? rows.filter((row) => !(f in row) || String(row[f]) === fv) : rows);
+    const active = Object.entries(this.filters).filter(([, v]) => v !== null && v !== undefined);
+    const byFilter = (rows) => (active.length ? rows.filter((row) => active.every(([f, v]) => !(f in row) || String(row[f]) === v)) : rows);
     if (!dateField || !this.hasDateSource) return byFilter(r.data);
     const { start, end } = this.range;
     if (this.sources[key].date_is_bucket) return byFilter(keepOverlappingBuckets(r.data, dateField, start, end));
@@ -1038,17 +1069,34 @@ class DashboardView {
       // Day / week / month switch on the widget itself.
       let useCfg = cfg;
       if (cfg.bucket_toggle) {
-        const pickB = this.bucketPick.get(widget.id) || cfg.bucket || 'day';
+        let saved = null;
+        try { saved = localStorage.getItem(`kss_bucket_${widget.id}`); } catch (e) { /* private window */ }
+        const pickB = this.bucketPick.get(widget.id) || saved || cfg.bucket || 'day';
         useCfg = { ...cfg, bucket: pickB };
         const seg = document.createElement('div');
         seg.className = 'bucket-toggle';
         seg.innerHTML = [['day', 'วัน'], ['week', 'สัปดาห์'], ['month', 'เดือน']]
           .map(([b, l]) => `<button type="button" class="range-chip${b === pickB ? ' active' : ''}" data-b="${b}">${l}</button>`).join('');
-        seg.querySelectorAll('button').forEach((btn) => btn.addEventListener('click', () => { this.bucketPick.set(widget.id, btn.dataset.b); this.renderWidgets(); }));
+        seg.querySelectorAll('button').forEach((btn) => btn.addEventListener('click', () => {
+          this.bucketPick.set(widget.id, btn.dataset.b);
+          try { localStorage.setItem(`kss_bucket_${widget.id}`, btn.dataset.b); } catch (e) { /* private window */ }
+          this.renderWidgets();
+        }));
         body.appendChild(seg);
       }
+      // One colour per series for good: ranked on the whole pull, not on what
+      // the filters left, so a customer keeps its colour when you narrow the page.
+      if (cfg.series_by && !widget.pulls && res.data) {
+        const all = applyRowLayer(res.data, { derived: cfg.derived });
+        const totals = new Map();
+        all.forEach((r) => { const k = String(pick(r, cfg.series_by) ?? 'ไม่ระบุ'); totals.set(k, (totals.get(k) || 0) + evalMetric(cfg.value, [r])); });
+        useCfg = { ...useCfg, series_order: [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k) };
+      }
+      const base = widget.pulls ? this.results[widget.pulls[0].key] : res;
+      const skipped = this.unfilteredBy(base && base.data);
       try {
         renderer(body, rows, useCfg);
+        if (skipped.length) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">widget นี้ไม่มีข้อมูล${esc(skipped.map((f) => ({ customer: 'ลูกค้า', branch: 'สาขา', supplier: 'ซัพพลายเออร์' })[f] || f).join(', '))} จึงแสดงทั้งหมด ไม่ได้กรองตามตัวเลือกด้านบน</p>`);
         // A note on how to read the widget. Renderers that place it themselves
         // (range) are left alone.
         if (cfg.foot && widget.chart_type !== 'range') body.insertAdjacentHTML('beforeend', `<p class="widget-foot widget-note">${esc(cfg.foot)}</p>`);
@@ -1212,9 +1260,13 @@ function renderLine(body, rows, cfg) {
     const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
     const top = ranked.slice(0, cfg.top_n || 6);
     const inTop = new Set(top);
+    const colorOf = (k, i) => {
+      const at = cfg.series_order ? cfg.series_order.indexOf(k) : i;
+      return at >= 0 && at < CAT_COLORS.length ? CAT_COLORS[at] : '#B8B09A';
+    };
     series = top.map((k, i) => ({
       label: k,
-      color: CAT_COLORS[i % CAT_COLORS.length],
+      color: colorOf(k, i),
       value: { op: 'sum_where', field: cfg.value.field, where: { op: 'in', field: cfg.series_by, values: [k] } },
     }));
     if (ranked.length > top.length) {
@@ -1892,8 +1944,18 @@ function renderRange(body, rows, cfg) {
 // are both a grid the eye scans for gaps and dark spots. Columns are either a
 // date bucketed by day / week / month, or a second field.
 //   row_field, col_field | col_date + bucket, value (metric), top_rows,
-//   row_norm (shade within each row), format
-const HEAT = ['#EAF1FA', '#C9DCF2', '#9EC2E8', '#6FA3DB', '#3F80C8', '#2A64A6', '#1D4A7E'];
+//   row_rank (metric that picks and orders the rows; default: value),
+//   col_sort: 'key' (label order, e.g. weekdays) | default by size,
+//   scale: 'global' (default) | 'row' (shade within each row) |
+//          'diverging_row' (below / above the row's own average),
+//   palette: 'blue' (default) | 'red' (for amounts that are bad news),
+//   format, row_label
+// A cell with no rows prints "–"; a cell with rows prints its value, zero too,
+// because 0% short is a result and a week with no deliveries is not.
+const HEAT_PALETTES = {
+  blue: ['#EAF1FA', '#C9DCF2', '#9EC2E8', '#6FA3DB', '#3F80C8', '#2A64A6', '#1D4A7E'],
+  red: ['#FBEDE9', '#F5D3CA', '#ECB09F', '#E08770', '#CF5E44', '#B4442C', '#8C321F'],
+};
 function renderHeatmap(body, rows, cfg) {
   const rowKey = (r) => String(pick(r, cfg.row_field) ?? 'ไม่ระบุ');
   const colKey = cfg.col_date
@@ -1913,32 +1975,49 @@ function renderHeatmap(body, rows, cfg) {
     if (!colsBy.has(ck)) colsBy.set(ck, []);
     colsBy.get(ck).push(r);
   });
-  let rowKeys = [...rowsBy.keys()].map((k) => [k, evalMetric(cfg.value, rowsBy.get(k))]).sort((a, b) => b[1] - a[1]);
+  const rank = cfg.row_rank || cfg.value;
+  let rowKeys = [...rowsBy.keys()].map((k) => [k, evalMetric(rank, rowsBy.get(k)), evalMetric(cfg.value, rowsBy.get(k))]).sort((a, b) => b[1] - a[1]);
   const totalRows = rowKeys.length;
   rowKeys = rowKeys.slice(0, cfg.top_rows || 30);
-  const colKeys = cfg.col_date
-    ? [...colsBy.keys()].sort()
+  const colKeys = cfg.col_date || cfg.col_sort === 'key'
+    ? [...colsBy.keys()].sort((a, b) => a.localeCompare(b, 'th'))
     : [...colsBy.keys()].map((k) => [k, evalMetric(cfg.value, colsBy.get(k))]).sort((a, b) => b[1] - a[1]).map(([k]) => k);
   const val = new Map();
   rowKeys.forEach(([rk]) => colKeys.forEach((ck) => {
     const rs = cells.get(rk + '\u0001' + ck);
-    val.set(rk + '\u0001' + ck, rs ? evalMetric(cfg.value, rs) : 0);
+    if (rs) val.set(rk + '\u0001' + ck, evalMetric(cfg.value, rs));
   }));
-  const globalMax = Math.max(1e-9, ...val.values());
+  const pal = HEAT_PALETTES[cfg.palette] || HEAT_PALETTES.blue;
+  const scale = cfg.scale || (cfg.row_norm ? 'row' : 'global');
+  const all = [...val.values()];
+  const gMin = Math.min(0, ...all), gMax = Math.max(1e-9, ...all);
   const colLabel = (ck) => (cfg.col_date ? bucketLabel(ck, cfg.bucket || 'day') : ck);
   const short = (v) => fmtCompact(v, cfg.format);
-  let html = `<table class="heat-table"><thead><tr><th class="heat-row">${esc(cfg.row_label || '')}</th>${colKeys.map((ck) => `<th>${esc(colLabel(ck))}</th>`).join('')}<th>รวม</th></tr></thead><tbody>`;
-  rowKeys.forEach(([rk, rowTotal]) => {
+  const shade = (step, list) => `background:${list[step]};color:${step >= 4 ? '#fff' : '#1b2b22'}`;
+  let html = `<table class="heat-table"><thead><tr><th class="heat-row">${esc(cfg.row_label || '')}</th>${colKeys.map((ck) => `<th>${esc(colLabel(ck))}</th>`).join('')}<th>${scale === 'diverging_row' ? 'เฉลี่ย' : 'รวม'}</th></tr></thead><tbody>`;
+  rowKeys.forEach(([rk, , rowValue]) => {
     const vals = colKeys.map((ck) => val.get(rk + '\u0001' + ck));
-    const max = cfg.row_norm ? Math.max(1e-9, ...vals) : globalMax;
+    const present = vals.filter((v) => v !== undefined);
+    const rMax = Math.max(1e-9, ...present), rMin = Math.min(0, ...present);
+    const avg = present.length ? present.reduce((a, b) => a + b, 0) / present.length : 0;
+    const dev = Math.max(1e-9, ...present.map((v) => Math.abs(v - avg)));
     html += `<tr><th class="heat-row" title="${esc(rk)}">${esc(rk)}</th>${vals.map((v, i) => {
-      const tip = `${rk} · ${colLabel(colKeys[i])}: ${fmtValue(v, cfg.format)}${cfg.row_norm && rowTotal ? ` (${Math.round((v / rowTotal) * 100)}%)` : ''}`;
-      if (!v) return `<td class="heat-empty" title="${esc(tip)}">–</td>`;
-      const step = Math.min(HEAT.length - 1, Math.floor((v / max) * HEAT.length));
-      return `<td style="background:${HEAT[step]};color:${step >= 4 ? '#fff' : '#12304f'}" title="${esc(tip)}">${esc(short(v))}</td>`;
-    }).join('')}<td class="heat-total">${esc(short(rowTotal))}</td></tr>`;
+      const tip = `${rk} · ${colLabel(colKeys[i])}: ${v === undefined ? 'ไม่มีข้อมูล' : fmtValue(v, cfg.format)}${scale === 'diverging_row' && v !== undefined ? ` (${v >= avg ? '+' : ''}${fmtValue(v - avg, cfg.format)} จากค่าเฉลี่ยของแถว)` : ''}`;
+      if (v === undefined) return `<td class="heat-empty" title="${esc(tip)}">–</td>`;
+      let style;
+      if (scale === 'diverging_row') {
+        const t = Math.min(1, Math.abs(v - avg) / dev);
+        const step = Math.min(6, Math.round(t * 5));
+        style = step === 0 ? 'background:var(--cream);color:var(--ink)' : shade(step, v < avg ? HEAT_PALETTES.red : HEAT_PALETTES.blue);
+      } else {
+        const lo = scale === 'row' ? rMin : gMin, hi = scale === 'row' ? rMax : gMax;
+        const step = Math.max(0, Math.min(pal.length - 1, Math.floor(((v - lo) / Math.max(1e-9, hi - lo)) * pal.length)));
+        style = shade(step, pal);
+      }
+      return `<td style="${style}" title="${esc(tip)}">${esc(short(v))}</td>`;
+    }).join('')}<td class="heat-total">${esc(short(scale === 'diverging_row' ? avg : rowValue))}</td></tr>`;
   });
-  if (cfg.col_totals !== false) {
+  if (cfg.col_totals !== false && scale !== 'diverging_row' && !/pct/.test(cfg.format || '')) {
     const colTotals = colKeys.map((ck) => rowKeys.reduce((a, [rk]) => a + (val.get(rk + '\u0001' + ck) || 0), 0));
     html += `<tr class="heat-sum"><th class="heat-row">รวม</th>${colTotals.map((v) => `<td>${esc(short(v))}</td>`).join('')}<td>${esc(short(colTotals.reduce((a, b) => a + b, 0)))}</td></tr>`;
   }
@@ -1947,6 +2026,12 @@ function renderHeatmap(body, rows, cfg) {
   wrap.className = 'heat-scroll';
   wrap.innerHTML = html;
   body.appendChild(wrap);
+  // The key: what light and dark mean, with the values at either end.
+  const swatches = (list) => list.map((c) => `<i style="background:${c}"></i>`).join('');
+  const legend = scale === 'diverging_row'
+    ? `<span>ต่ำกว่าค่าเฉลี่ยของแถว</span><span class="heat-ramp">${swatches([...HEAT_PALETTES.red.slice(1, 6)].reverse())}<i style="background:var(--cream)"></i>${swatches(HEAT_PALETTES.blue.slice(1, 6))}</span><span>สูงกว่า</span>`
+    : `<span>${esc(scale === 'row' ? 'น้อยสุดในแถว' : short(gMin))}</span><span class="heat-ramp">${swatches(pal)}</span><span>${esc(scale === 'row' ? 'มากสุดในแถว' : short(gMax))}</span><span class="muted">· ช่อง – คือไม่มีข้อมูล</span>`;
+  body.insertAdjacentHTML('beforeend', `<div class="heat-legend">${legend}</div>`);
   if (totalRows > rowKeys.length) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">แสดง ${rowKeys.length} จาก ${totalRows} รายการ</p>`);
 }
 // ฿12.3k-style numbers for cells too small for a full figure.
