@@ -16,6 +16,7 @@ const { wrap, isSuperadmin, resolveCompanyId, getDashboardForUser } = require('.
 const { FMH_REPORTS, getCached, getSaved, getSyncHealth, syncOne, cacheKeyFor, pullsForWidget } = require('../lib/fmhCache');
 const { withTrigger } = require('../lib/fmhUsage');
 const { listWidgets } = require('../lib/widgetCatalog');
+const fmhFiles = require('../lib/fmhFiles');
 
 const router = express.Router();
 
@@ -133,6 +134,12 @@ router.get(
         cached = await getCached(dashboard.company_id, source, grouping);
       }
     }
+    // A company whose history comes from uploaded FMH files can have data
+    // before (or without) any API sync: build it from the files.
+    if (!cached && !grouping && !wantSaved && (await fmhFiles.hasFiles(dashboard.company_id, source))) {
+      await fmhFiles.rebuild(dashboard.company_id, source).catch((err) => console.error(`File history build failed (${dashboard.company_id}/${source}):`, err.message));
+      cached = await getCached(dashboard.company_id, source, null);
+    }
     if (!cached && cfg.local) {
       await syncOne(dashboard.company_id, source, null).catch((err) => console.error(`Local build failed (${dashboard.company_id}/${source}):`, err.message));
       cached = await getCached(dashboard.company_id, source, null);
@@ -164,6 +171,8 @@ router.get(
         health,
         grouping,
         date_field: grouping ? null : cfg.dateField || null,
+        // Where uploaded FMH files fill in before the API window.
+        history: (cached.quota && cached.quota.history) || null,
       },
     });
   })

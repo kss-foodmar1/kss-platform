@@ -642,6 +642,11 @@ function keepOverlappingBuckets(rows, field, start, end) {
 let dataAnchor = null;
 const nowRef = () => (dataAnchor ? new Date(dataAnchor) : new Date());
 const todayIso = () => localIso(nowRef());
+// Report sources that can take older months from FMH export files (fmh-file.js).
+const FILE_SOURCES = ['sales-analysis', 'purchase-analysis'];
+const dayLabel = (iso) => (iso ? new Date(String(iso).slice(0, 10) + 'T00:00:00').toLocaleDateString(I18N.locale(), { day: 'numeric', month: 'short', year: 'numeric' }) : '');
+const nextDay = (iso) => localIso(new Date(Date.parse(iso + 'T00:00:00') + 86400000));
+const prevDay = (iso) => localIso(new Date(Date.parse(iso + 'T00:00:00') - 86400000));
 const daysAgoIso = (n) => localIso(new Date(nowRef().getTime() - n * 86400000));
 
 // "Use saved data" is a per-browser switch, so a demo stays on it while the
@@ -663,6 +668,9 @@ class DashboardView {
     this.sources = sources;
     this.results = {}; // source -> { data, meta } | { error, code }
     this.hasDateSource = Object.values(sources).some((s) => s.date_field);
+    // Reports whose older months can come from FMH export files: these pages
+    // offer 6-month / 1-year ranges.
+    this.fileCapable = Object.values(sources).some((s) => FILE_SOURCES.includes(s.source) && !s.grouping);
     this.useSaved = savedMode.get();
     this.rangeDays = 30; // the active chip; null after a custom date pick
     this.range = { start: daysAgoIso(30), end: todayIso() };
@@ -685,6 +693,7 @@ class DashboardView {
                  <button type="button" class="range-chip" data-days="7">7 วัน</button>
                  <button type="button" class="range-chip active" data-days="30">30 วัน</button>
                  <button type="button" class="range-chip" data-days="80">80 วัน</button>
+                 ${this.fileCapable ? '<button type="button" class="range-chip" data-days="182">6 เดือน</button><button type="button" class="range-chip" data-days="365">1 ปี</button>' : ''}
                  <input type="date" class="range-start" value="${this.range.start}" aria-label="วันที่เริ่ม">
                  <span class="muted">–</span>
                  <input type="date" class="range-end" value="${this.range.end}" aria-label="วันที่สิ้นสุด">
@@ -711,6 +720,8 @@ class DashboardView {
     this.filterEl = document.createElement('div');
     this.filterEl.className = 'page-filter';
     this.wrap.appendChild(this.filterEl);
+    this.coverageEl = document.createElement('div');
+    this.wrap.appendChild(this.coverageEl);
 
     if (!this.widgets.length) {
       const p = document.createElement('p');
@@ -862,6 +873,62 @@ class DashboardView {
     return widget.grouping ? `${widget.report_source}|${widget.grouping}` : widget.report_source;
   }
 
+  // First day a pull has data for: uploaded files first, then the API window,
+  // else the oldest row. Null when the pull is undated.
+  coverageFrom(key) {
+    const r = this.results[key];
+    const info = this.sources[key];
+    if (!r || r.error || !info || !info.date_field) return null;
+    const h = r.meta && r.meta.history;
+    if (h && (h.file_from || h.api_from)) return h.file_from || h.api_from;
+    let min = null;
+    (r.data || []).forEach((row) => {
+      const d = row[info.date_field] ? String(row[info.date_field]).slice(0, 10) : null;
+      if (d && (!min || d < min)) min = d;
+    });
+    return min;
+  }
+
+  // One line per report whose data starts after the picked range does, so a
+  // 1-year chart with five months of data isn't read as seven quiet months.
+  coverageLine(key) {
+    const info = this.sources[key];
+    if (!info || !info.date_field || !this.range.start) return null;
+    const from = this.coverageFrom(key);
+    if (!from || Date.parse(from) - Date.parse(this.range.start) < 3 * 86400000) return null;
+    return `${info.label} มีข้อมูลตั้งแต่ ${dayLabel(from)}${FILE_SOURCES.includes(info.source) ? ' — อัปโหลดไฟล์จาก FMH เพื่อดูย้อนหลังกว่านี้' : ' (FMH API ย้อนหลังได้ราว 90 วัน)'}`;
+  }
+
+  // Page level: every report the page reads.
+  renderCoverage() {
+    if (!this.coverageEl) return;
+    const lines = [...new Set(Object.keys(this.sources).map((k) => this.coverageLine(k)).filter(Boolean))];
+    this.coverageEl.innerHTML = lines.length ? `<div class="warn-msg coverage-banner">${lines.map(esc).join('<br>')}</div>` : '';
+  }
+
+  // Widget level, only where it changes how to read that widget: two reports
+  // that cover different spans side by side, or a server-side total that does
+  // not follow the range at all.
+  coverageNote(widget) {
+    if (!this.hasDateSource || !this.range.start) return '';
+    const keys = widget.pulls ? widget.pulls.map((p) => p.key) : [this.keyFor(widget)];
+    const spanDays = (Date.parse(this.range.end) - Date.parse(this.range.start)) / 86400000;
+    const notes = [];
+    keys.forEach((key) => {
+      const info = this.sources[key];
+      if (!info) return;
+      if (!info.date_field) {
+        if (info.grouping && spanDays > 85) notes.push(`${info.label}: ยอดรวมจาก FMH ไม่เกิน 80 วันล่าสุด ไม่เปลี่ยนตามช่วงวันที่`);
+        return;
+      }
+      if (keys.length > 1) {
+        const line = this.coverageLine(key);
+        if (line) notes.push(line);
+      }
+    });
+    return notes.length ? `<p class="widget-foot coverage-note">${notes.map(esc).join('<br>')}</p>` : '';
+  }
+
   rowsFor(key) {
     const r = this.results[key];
     if (!r || r.error) return null;
@@ -940,6 +1007,31 @@ class DashboardView {
          </div>`
       );
     }
+    // Older months from uploaded FMH files: where they start, and any month
+    // left between the last file and the API window.
+    const hist = Object.entries(this.results)
+      .filter(([, r]) => r && !r.error && r.meta && r.meta.history && r.meta.history.file_from)
+      .map(([k, r]) => ({ label: (this.sources[k] || {}).label || k, ...r.meta.history }));
+    if (hist.length && !this.useSaved) {
+      const gaps = hist.filter((h) => h.api_from && Date.parse(h.api_from) - Date.parse(h.file_to) > 3 * 86400000);
+      bar.insertAdjacentHTML(
+        'beforeend',
+        `<div class="fmh-sync-line history-line"><span>ข้อมูลย้อนหลังจากไฟล์ FMH: ${hist.map((h) => `${esc(h.label)} ตั้งแต่ ${esc(dayLabel(h.file_from))}`).join(' · ')}</span></div>` +
+          gaps.map((h) => `<div class="warn-msg">${esc(h.label)}: ยังไม่มีข้อมูลช่วง ${esc(dayLabel(nextDay(h.file_to)))} – ${esc(dayLabel(prevDay(h.api_from)))} — อัปโหลดไฟล์ของช่วงนี้เพิ่ม</div>`).join('')
+      );
+    }
+    if (this.fileCapable && (isCompanyAdmin() || isSuper()) && !this.useSaved && this.dashboard.data_source !== 'demo') {
+      const line = bar.querySelector('.history-line') || bar.querySelector('.fmh-sync-line');
+      const actions = line && (line.querySelector('.sync-actions') || line);
+      if (actions) {
+        actions.insertAdjacentHTML('beforeend', ' <button type="button" class="btn small ghost history-upload-btn">อัปโหลดไฟล์ย้อนหลัง</button>');
+        actions.querySelector('.history-upload-btn').addEventListener('click', () => {
+          adminState.selected = isSuper() ? { type: 'company', id: this.dashboard.company_id } : { type: 'my-dashboards', id: state.user.company_id };
+          adminState.focus = 'fmh-files';
+          openAdminConsole();
+        });
+      }
+    }
     // A pull that hit the page cap holds only part of the period. Say which
     // ones, because every widget reading them is drawing an incomplete picture.
     const clipped = Object.entries(this.results)
@@ -981,6 +1073,7 @@ class DashboardView {
 
   renderWidgets() {
     destroyCharts();
+    this.renderCoverage();
     (this.cards || []).forEach(({ widget, body }) => {
       body.innerHTML = '';
       const key = this.keyFor(widget);
@@ -1059,6 +1152,7 @@ class DashboardView {
           );
           body.querySelector('button').addEventListener('click', () => this.setRange(pos.date_from, pos.date_to));
         }
+        if (dated) body.insertAdjacentHTML('beforeend', this.coverageNote(widget));
         return;
       }
       const renderer = RENDERERS[widget.chart_type];
@@ -1071,7 +1165,10 @@ class DashboardView {
       if (cfg.bucket_toggle) {
         let saved = null;
         try { saved = localStorage.getItem(`kss_bucket_${widget.id}`); } catch (e) { /* private window */ }
-        const pickB = this.bucketPick.get(widget.id) || saved || cfg.bucket || 'day';
+        // Over months, a day per bar is unreadable: long ranges open by month
+        // (or week, if that was the saved choice) until the user picks again.
+        const longRange = this.range.start && Date.parse(this.range.end) - Date.parse(this.range.start) > 120 * 86400000;
+        const pickB = this.bucketPick.get(widget.id) || (longRange ? (saved === 'week' ? 'week' : 'month') : saved || cfg.bucket || 'day');
         useCfg = { ...cfg, bucket: pickB };
         const seg = document.createElement('div');
         seg.className = 'bucket-toggle';
@@ -1100,6 +1197,7 @@ class DashboardView {
         // A note on how to read the widget. Renderers that place it themselves
         // (range) are left alone.
         if (cfg.foot && widget.chart_type !== 'range') body.insertAdjacentHTML('beforeend', `<p class="widget-foot widget-note">${esc(cfg.foot)}</p>`);
+        body.insertAdjacentHTML('beforeend', this.coverageNote(widget));
       } catch (err) {
         console.error('Widget render failed', widget, err);
         body.innerHTML = `<p class="muted">แสดงผล widget นี้ไม่สำเร็จ (${esc(err.message)})</p>`;
@@ -1219,6 +1317,23 @@ function bucketKey(dateStr, bucket) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// Every bucket from the first key to the last, so empty periods show as gaps.
+function continuousBuckets(keys, bucket) {
+  if (keys.length < 2 || !['day', 'week', 'month'].includes(bucket)) return keys;
+  const out = [];
+  const end = keys[keys.length - 1];
+  let d = new Date(keys[0] + 'T00:00:00');
+  while (out.length < 800) {
+    const k = localIso(d);
+    if (k > end) break;
+    out.push(k);
+    if (bucket === 'day') d.setDate(d.getDate() + 1);
+    else if (bucket === 'week') d.setDate(d.getDate() + 7);
+    else d = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  }
+  return out.length >= keys.length ? out : keys;
+}
+
 function bucketLabel(k, bucket) {
   const d = new Date(k + 'T00:00:00');
   if (bucket === 'month') return d.toLocaleDateString(I18N.locale(), { month: 'short', year: '2-digit' });
@@ -1239,11 +1354,14 @@ function renderLine(body, rows, cfg) {
     if (!buckets.has(k)) buckets.set(k, []);
     buckets.get(k).push(r);
   });
-  const keys = [...buckets.keys()].sort();
+  let keys = [...buckets.keys()].sort();
   if (!keys.length || !window.Chart) {
     body.innerHTML = `<p class="muted">${window.Chart ? 'ไม่มีวันที่ในข้อมูลสำหรับสร้างกราฟ' : 'โหลดไลบรารีกราฟไม่สำเร็จ'}</p>`;
     return;
   }
+  // Periods with no rows stay on the axis as gaps. Skipping them drew June
+  // straight into September when a month of history was missing.
+  keys = continuousBuckets(keys, cfg.bucket || 'week');
   const wrap = document.createElement('div');
   wrap.className = 'chart-wrap';
   wrap.innerHTML = '<canvas></canvas>';
@@ -1287,7 +1405,7 @@ function renderLine(body, rows, cfg) {
     data: {
       labels: keys.map((k) => bucketLabel(k, cfg.bucket)),
       datasets: series.map((s) => {
-        const data = keys.map((k) => evalMetric(s.value, buckets.get(k)));
+        const data = keys.map((k) => (buckets.has(k) ? evalMetric(s.value, buckets.get(k)) : null));
         if ((s.mark || cfg.mark) === 'bar') {
           return { type: 'bar', label: s.label, data, backgroundColor: s.color, borderRadius: 4, maxBarThickness: 36, categoryPercentage: 0.7, barPercentage: 0.9 };
         }

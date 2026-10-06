@@ -779,6 +779,11 @@ async function renderCompanyDetail(main, companyId) {
     <section class="admin-card">
       <h2>6. ยอดขาย POS (Foodstory และ POS ที่ไม่มี API)</h2>
       <div class="pos-panel"></div>
+    </section>
+
+    <section class="admin-card" id="fmh-files">
+      <h2>7. ข้อมูลย้อนหลังจากไฟล์ FMH (เกิน 90 วัน)</h2>
+      <div class="fmh-files-panel"></div>
     </section>`;
 
   main.querySelector('.view-dashboards').addEventListener('click', () => viewCompanyDashboards(companyId));
@@ -844,6 +849,11 @@ async function renderCompanyDetail(main, companyId) {
   renderUserManager(main.querySelector('.company-users'), { companyId });
   renderBillingPanel(main.querySelector('.billing'), companyId);
   renderPosPanel(main.querySelector('.pos-panel'), companyId);
+  renderFmhFilesPanel(main.querySelector('.fmh-files-panel'), companyId);
+  if (adminState.focus === 'fmh-files') {
+    adminState.focus = null;
+    main.querySelector('#fmh-files').scrollIntoView({ block: 'start' });
+  }
 }
 
 // ---------- FMH quota: where the rows went ----------
@@ -1074,11 +1084,16 @@ async function renderMyDashboards(main, companyId) {
       <div class="name-msg"></div>
     </section>
     <section class="admin-card"><div class="composer"></div></section>
+    <section class="admin-card" id="fmh-files">
+      <h2>ข้อมูลย้อนหลังจากไฟล์ FMH (เกิน 90 วัน)</h2>
+      <div class="fmh-files-panel"></div>
+    </section>
     <section class="admin-card" id="pos-sales">
       <h2>ยอดขาย POS (Foodstory และ POS ที่ไม่มี API)</h2>
       <div class="pos-panel"></div>
     </section>`;
   renderComposer(main.querySelector('.composer'), companyId);
+  renderFmhFilesPanel(main.querySelector('.fmh-files-panel'), companyId);
   renderPosPanel(main.querySelector('.pos-panel'), companyId);
   const nameForm = main.querySelector('.company-name-form');
   nameForm.addEventListener('submit', async (e) => {
@@ -1093,11 +1108,154 @@ async function renderMyDashboards(main, companyId) {
       out.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
     }
   });
-  if (adminState.focus === 'pos') {
+  if (adminState.focus === 'pos' || adminState.focus === 'fmh-files') {
+    const target = main.querySelector(adminState.focus === 'pos' ? '#pos-sales' : '#fmh-files');
     adminState.focus = null;
-    main.querySelector('#pos-sales').scrollIntoView({ block: 'start' });
+    target.scrollIntoView({ block: 'start' });
   }
 }
+
+// ---------- History older than the API window, from FMH export files ----------
+// FMH's API serves ~90 days. For six months or a year the customer exports the
+// older months from FMH's report screen (one month per file is fine) and
+// uploads them here. The browser reads the file (fmh-file.js) into rows shaped
+// like the API's and sends them in chunks; the server merges them into the
+// report before the API window. A document uploaded again replaces itself.
+const FMH_FILE_CHUNK = 2000;
+async function renderFmhFilesPanel(container, companyId, flash = '') {
+  if (!container.innerHTML) container.innerHTML = '<p class="muted">กำลังโหลด...</p>';
+  let o;
+  try {
+    o = await api(`/api/fmh-files/companies/${companyId}`);
+  } catch (err) {
+    container.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    return;
+  }
+  const months = Math.round(o.history_days / 30.4);
+  const nameOf = (src) => (o.sources.find((x) => x.source === src) || {}).name || src;
+  container.innerHTML = `
+    <p class="helper-text" style="margin-top:0;">FMH API ดึงข้อมูลย้อนหลังได้ราว 90 วัน ถ้าต้องการดู 6 เดือนหรือทั้งปี ให้เปิดรายงานใน FMH เลือกช่วงวันที่ (ทีละเดือนก็ได้) กด Export แล้วอัปโหลดไฟล์ที่นี่ ไฟล์ถูกอ่านในเครื่องของคุณก่อนส่ง เก็บย้อนหลังได้ไม่เกิน ${months} เดือน และไม่ใช้โควตา FMH</p>
+    <ul class="helper-text fmh-file-rules">
+      <li>อัปโหลดเดือนเดิมซ้ำได้ — เอกสารเลขเดิม (SO / PO) จะแทนที่ของเดิม ไม่นับซ้ำ</li>
+      <li>ช่วงที่ API มีข้อมูลอยู่แล้ว ระบบใช้ข้อมูลจาก API เสมอ ไฟล์ใช้เติมเฉพาะช่วงก่อนหน้า</li>
+      <li>ตอน Export ให้เลือกเฉพาะออเดอร์ที่อนุมัติแล้ว (ไม่เอาที่ยกเลิก ถูกปฏิเสธ หรือรออนุมัติ) เพื่อให้ตัวเลขตรงกับข้อมูลจาก API</li>
+    </ul>
+    <table class="mini-table fmh-cover"><thead><tr><th>รายงาน</th><th>จาก API</th><th>จากไฟล์</th><th>ดาวน์โหลดจาก FMH ที่</th></tr></thead><tbody>${o.sources
+      .map(
+        (x) => `<tr><td>${esc(x.name)}</td>
+          <td>${x.has_api && x.api_from ? `ตั้งแต่ ${esc(thDate(x.api_from))}` : '<span class="muted">–</span>'}</td>
+          <td>${x.file_from ? `${esc(thDate(x.file_from))} – ${esc(thDate(x.file_to))}` : '<span class="muted">ยังไม่มี</span>'}</td>
+          <td class="muted">${esc(x.fmh_menu)}</td></tr>`
+      )
+      .join('')}</tbody></table>
+    <form class="inline-form fmh-file-form">
+      <label class="pos-source">รายงาน
+        <select name="source" aria-label="รายงาน">
+          <option value="">ตรวจจากไฟล์อัตโนมัติ</option>
+          ${o.sources.map((x) => `<option value="${esc(x.source)}">${esc(x.name)}</option>`).join('')}
+        </select>
+      </label>
+      <input type="file" name="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" required aria-label="ไฟล์รายงานจาก FMH">
+      <button type="submit" class="btn small primary">อ่านไฟล์</button>
+    </form>
+    <div class="fmh-file-msg">${flash}</div>
+    <div class="fmh-file-step"></div>
+    ${
+      o.uploads.length
+        ? `<h3 class="pos-h3">ไฟล์ที่อัปโหลด</h3>
+           <div class="table-scroll"><table class="mini-table"><thead><tr><th>ไฟล์</th><th>รายงาน</th><th>ช่วงวันที่</th><th class="num">รายการ</th><th class="num">ยอดรวม</th><th>อัปโหลดเมื่อ</th><th></th></tr></thead><tbody>${o.uploads
+             .map(
+               (u) => `<tr data-id="${u.id}"><td>${esc(u.filename)}</td><td>${esc(nameOf(u.source))}</td>
+                 <td>${esc(thDate(u.date_from))} – ${esc(thDate(u.date_to))}</td>
+                 <td class="num">${Number(u.row_count).toLocaleString('th-TH')}<br><span class="muted">${Number(u.doc_count).toLocaleString('th-TH')} เอกสาร</span></td>
+                 <td class="num">${baht(u.total)}</td>
+                 <td>${esc(fmtDateTime(u.created_at))}${u.uploaded_by_email ? `<br><span class="muted">${esc(u.uploaded_by_email)}</span>` : ''}</td>
+                 <td><button type="button" class="btn small danger fmh-file-del">ลบ</button></td></tr>`
+             )
+             .join('')}</tbody></table></div>`
+        : '<p class="muted">ยังไม่มีไฟล์ย้อนหลัง</p>'
+    }`;
+
+  const msg = (html) => (container.querySelector('.fmh-file-msg').innerHTML = html);
+  const step = container.querySelector('.fmh-file-step');
+  const form = container.querySelector('.fmh-file-form');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const file = form.file.files[0];
+    if (!file) return;
+    msg('<p class="muted">กำลังอ่านไฟล์...</p>');
+    step.innerHTML = '';
+    let r;
+    try {
+      r = await FmhFile.read(await file.arrayBuffer(), file.name, { source: form.source.value || null });
+    } catch (err) {
+      msg(`<div class="error-msg">${esc(err.message)}</div>`);
+      return;
+    }
+    if (r.error) {
+      msg(`<div class="error-msg">${esc(r.error)}</div>`);
+      return;
+    }
+    msg('');
+    const info = o.sources.find((x) => x.source === r.profile) || {};
+    const st = r.stats;
+    const overlap = info.has_api && info.api_from && st.to >= info.api_from;
+    const tooOld = st.from < isoDaysAgo(o.history_days);
+    step.innerHTML = `
+      <div class="pos-confirm">
+        <h3 class="pos-h3">${esc(r.name)} · ${esc(file.name)}</h3>
+        <div class="pos-summary">
+          <div><span class="muted">ช่วงวันที่สั่ง</span><strong>${esc(thDate(st.from))} – ${esc(thDate(st.to))}</strong></div>
+          <div><span class="muted">รายการ</span><strong>${st.rows.toLocaleString('th-TH')}</strong><span class="muted">${st.docs.toLocaleString('th-TH')} เอกสาร</span></div>
+          <div><span class="muted">ยอดรวม</span><strong>${baht(st.total)}</strong></div>
+        </div>
+        ${overlap ? `<div class="warn-msg">ตั้งแต่ ${esc(thDate(info.api_from))} มีข้อมูลจาก API อยู่แล้ว — ช่วงนั้นระบบใช้ข้อมูลจาก API ส่วนไฟล์ใช้เติมช่วงก่อนหน้า</div>` : ''}
+        ${tooOld ? `<div class="warn-msg">รายการที่เก่ากว่า ${esc(thDate(isoDaysAgo(o.history_days)))} จะไม่ถูกเก็บ</div>` : ''}
+        ${!st.has_status ? '<p class="helper-text">ไฟล์นี้ไม่มีคอลัมน์สถานะ ระบบจึงนับทุกรายการในไฟล์ — ถ้า export รวมออเดอร์ที่ยกเลิกมาด้วย ให้ export ใหม่โดยกรองเฉพาะที่อนุมัติแล้ว</p>' : ''}
+        ${st.skipped ? `<p class="helper-text">ข้าม ${st.skipped} บรรทัดที่ไม่มีเลขเอกสารหรือวันที่ (เช่น บรรทัดรวมท้ายไฟล์)</p>` : ''}
+        <div class="inline-form"><button type="button" class="btn small primary fmh-file-save">บันทึกไฟล์นี้</button><button type="button" class="btn small ghost fmh-file-cancel">ยกเลิก</button><span class="fmh-file-progress muted"></span></div>
+      </div>`;
+    step.querySelector('.fmh-file-cancel').addEventListener('click', () => { step.innerHTML = ''; form.reset(); });
+    step.querySelector('.fmh-file-save').addEventListener('click', async (ev) => {
+      const btn = ev.currentTarget;
+      btn.disabled = true;
+      const prog = step.querySelector('.fmh-file-progress');
+      try {
+        const { upload_id } = await api(`/api/fmh-files/companies/${companyId}/uploads`, { method: 'POST', body: JSON.stringify({ source: r.profile, filename: file.name }) });
+        for (let i = 0; i < r.rows.length; i += FMH_FILE_CHUNK) {
+          prog.textContent = `กำลังส่ง ${Math.min(i + FMH_FILE_CHUNK, r.rows.length).toLocaleString('th-TH')} / ${r.rows.length.toLocaleString('th-TH')} รายการ`;
+          await api(`/api/fmh-files/companies/${companyId}/uploads/${upload_id}/rows`, { method: 'POST', body: JSON.stringify({ rows: r.rows.slice(i, i + FMH_FILE_CHUNK) }) });
+        }
+        prog.textContent = 'กำลังรวมเข้ากับข้อมูลเดิม...';
+        const res = await api(`/api/fmh-files/companies/${companyId}/uploads/${upload_id}/commit`, { method: 'POST' });
+        const replaced = res.replaced_lines ? ` · แทนที่ ${res.replaced_lines.toLocaleString('th-TH')} รายการของเอกสารเดิม` : '';
+        container.innerHTML = '';
+        renderFmhFilesPanel(container, companyId, `<div class="ok-msg">บันทึกแล้ว ${res.rows.toLocaleString('th-TH')} รายการ (${esc(thDate(res.date_from))} – ${esc(thDate(res.date_to))})${replaced} — เปิด dashboard แล้วเลือกช่วง 6 เดือนหรือ 1 ปีได้เลย</div>`);
+      } catch (err) {
+        btn.disabled = false;
+        prog.textContent = '';
+        msg(`<div class="error-msg">${esc(err.message)}</div>`);
+      }
+    });
+  });
+
+  container.querySelectorAll('.fmh-file-del').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('ลบไฟล์นี้? ข้อมูลย้อนหลังของช่วงในไฟล์นี้จะหายจาก dashboard (ข้อมูลจาก API ไม่หาย)')) return;
+      try {
+        await api(`/api/fmh-files/companies/${companyId}/uploads/${b.closest('tr').dataset.id}`, { method: 'DELETE' });
+        renderFmhFilesPanel(container, companyId);
+      } catch (err) {
+        msg(`<div class="error-msg">${esc(err.message)}</div>`);
+      }
+    })
+  );
+}
+const isoDaysAgo = (n) => {
+  const d = new Date(Date.now() - n * 86400000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 
 // ---------- POS sales file: upload + match menus to FMH recipes ----------
 // The file is read and totalled in the browser (pos-parse.js): only daily

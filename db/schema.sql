@@ -274,3 +274,39 @@ CREATE TABLE IF NOT EXISTS announcements (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX (published_at)
 ) DEFAULT CHARSET=utf8mb4;
+
+-- Reports exported from FMH and uploaded by the customer, for history older
+-- than the API serves (~90 days). One upload per file; rows are stored shaped
+-- like the API's rows and merged into the report cache before the API window
+-- (lib/fmhFiles.js). A newer upload of the same document (SO/PO number)
+-- replaces the older one's lines.
+CREATE TABLE IF NOT EXISTS fmh_file_uploads (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  company_id INT NOT NULL,
+  source VARCHAR(40) NOT NULL,
+  filename VARCHAR(255) NOT NULL,
+  status VARCHAR(12) NOT NULL DEFAULT 'pending',
+  date_from DATE NULL,
+  date_to DATE NULL,
+  row_count INT NOT NULL DEFAULT 0,
+  doc_count INT NOT NULL DEFAULT 0,
+  total DECIMAL(16,2) NOT NULL DEFAULT 0,
+  uploaded_by INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX (company_id, source),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS fmh_file_rows (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  upload_id INT NOT NULL,
+  company_id INT NOT NULL,
+  source VARCHAR(40) NOT NULL,
+  doc_no VARCHAR(80) NOT NULL,
+  row_date DATE NOT NULL,
+  data_json TEXT NOT NULL,
+  INDEX (company_id, source, row_date),
+  INDEX (company_id, source, doc_no),
+  INDEX (upload_id),
+  FOREIGN KEY (upload_id) REFERENCES fmh_file_uploads(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;

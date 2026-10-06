@@ -336,7 +336,7 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
 .range-row { display: grid; grid-template-columns: minmax(80px, 1fr) minmax(120px, 2.4fr) auto; gap: 10px; align-items: center; }
 .range-track { position: relative; height: 4px; border-radius: 2px; background: #e4e2da; }
 .range-dot { position: absolute; top: 50%; border-radius: 50%; transform: translate(-50%, -50%); }
-.range-end { width: 7px; height: 7px; background: #c3c2b7; }
+.range-dot.range-end { width: 7px; height: 7px; background: #c3c2b7; }
 .range-now { width: 12px; height: 12px; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.08); }
 .range-now.low { background: #2a78d6; }
 .range-now.high { background: #BE4229; }
@@ -504,3 +504,12 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
 .widget-card.rows-3 .table-scroll { max-height: 670px; }
 .widget-card.rows-2 .panel .chart-wrap { height: 260px; }
 .widget-card.rows-2.widget-scatter .chart-wrap { height: 440px; }
+
+/* ---------- History from FMH export files ---------- */
+.fmh-file-rules { margin: 0 0 12px; padding-left: 18px; }
+.fmh-file-rules li { margin: 2px 0; }
+.fmh-cover { margin: 4px 0 14px; }
+.coverage-note { color: #7a5a14; }
+.history-line { gap: 8px; flex-wrap: wrap; }
+.coverage-banner { margin: 0 0 12px; }
+.range-control input { flex-shrink: 0; }
