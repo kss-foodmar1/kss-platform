@@ -124,6 +124,15 @@ router.get(
     let cached = saved || (await getCached(dashboard.company_id, source, grouping));
     // A computed report costs nothing to build, so build it on first view
     // rather than waiting for the nightly run (demo POS file, new widget).
+    // Demo companies run on generated data: build a missing report on first
+    // view instead of waiting for a sync (a widget just added, say).
+    if (!cached && !cfg.local) {
+      const [[co]] = await pool.query(`SELECT data_source FROM companies WHERE id = ?`, [dashboard.company_id]);
+      if (co && co.data_source === 'demo') {
+        await syncOne(dashboard.company_id, source, grouping).catch((err) => console.error(`Demo build failed (${dashboard.company_id}/${source}):`, err.message));
+        cached = await getCached(dashboard.company_id, source, grouping);
+      }
+    }
     if (!cached && cfg.local) {
       await syncOne(dashboard.company_id, source, null).catch((err) => console.error(`Local build failed (${dashboard.company_id}/${source}):`, err.message));
       cached = await getCached(dashboard.company_id, source, null);

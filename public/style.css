@@ -472,3 +472,25 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
 .news-widgets legend { font-weight: 700; font-size: 12px; color: var(--muted); padding: 6px 0 2px; }
 .news-check { font-size: 13px; display: inline-flex; gap: 4px; align-items: center; }
 .news-form textarea { width: 100%; box-sizing: border-box; font: inherit; }
+
+/* Taller widgets (config.rows = 2 | 3) and the heatmap */
+.widget-card.rows-2 { min-height: 520px; display: flex; flex-direction: column; }
+.widget-card.rows-3 { min-height: 780px; display: flex; flex-direction: column; }
+.widget-card.rows-2 .widget-body, .widget-card.rows-3 .widget-body { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.widget-card.rows-2 .chart-wrap { height: 430px; }
+.widget-card.rows-3 .chart-wrap { height: 690px; }
+.widget-card.rows-2 .heat-scroll { max-height: 440px; }
+.widget-card.rows-3 .heat-scroll { max-height: 700px; }
+.heat-scroll { overflow: auto; min-width: 0; }
+.heat-table { border-collapse: separate; border-spacing: 2px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.heat-table th { font-weight: 600; color: var(--muted); text-align: right; padding: 2px 6px; white-space: nowrap; position: sticky; top: 0; background: var(--white); z-index: 1; }
+.heat-table th.heat-row { text-align: left; color: var(--ink); left: 0; z-index: 2; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+.heat-table tbody th.heat-row { position: sticky; left: 0; top: auto; }
+.heat-table td { text-align: right; padding: 4px 6px; border-radius: 4px; min-width: 46px; white-space: nowrap; }
+.heat-table td.heat-empty { color: var(--muted); text-align: center; }
+.heat-table td.heat-total, .heat-table tr.heat-sum td { font-weight: 700; background: var(--cream); color: var(--ink); }
+.bucket-toggle { display: flex; gap: 6px; margin-bottom: 8px; }
+.bucket-toggle .range-chip, .page-filter .range-chip { padding: 3px 10px; font-size: 12px; }
+.page-filter { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 14px; }
+.page-filter:empty { display: none; }
+.page-filter-label { font-size: 12px; font-weight: 700; color: var(--muted); margin-right: 4px; }

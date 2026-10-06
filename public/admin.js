@@ -1449,7 +1449,7 @@ const CAT_ORDER = [
   ['Line Checks', 'ตรวจเอกสารรายบรรทัด (PO / GRN / Invoice)'],
   ['Stock', 'สต็อกและของเสีย'],
   ['Branch', 'สาขาและครัวกลาง'],
-  ['Sales', 'ยอดขาย'],
+  ['Sales', 'ยอดขายครัวกลาง'],
 ];
 const catLabel = (c) => (CAT_ORDER.find(([k]) => k === c) || [c, c])[1];
 const catRank = (c) => {

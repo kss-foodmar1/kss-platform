@@ -289,6 +289,19 @@ function evalRow(expr, row) {
       const lb = (p + z2 / (2 * n) - z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / (1 + z2 / n);
       return Math.max(0, lb) * 100;
     }
+    // Text, for labels. A buyer in FMH reads "คุณป๊อป สาขา เซ็นจูรี่ - คุณป๊อป
+    // สาขา เซ็นจูรี่": the outlet name is the part a chart has room for.
+    case 'party_short': return partyShort(pick(row, expr.from));
+    // Product names written in Thai and Burmese side by side: keep the
+    // Thai/Latin part so a bar label fits.
+    case 'clean_name': return cleanName(pick(row, expr.from));
+    // "1 จ" … "7 อา": sorts Monday first and reads as a weekday.
+    case 'weekday': {
+      const d = dateOnly(pick(row, expr.from));
+      if (!d) return null;
+      const w = (new Date(d + 'T00:00:00Z').getUTCDay() + 6) % 7;
+      return `${w + 1} ${['จันทร์', 'อังคาร', 'พุธ', 'พฤหัสฯ', 'ศุกร์', 'เสาร์', 'อาทิตย์'][w]}`;
+    }
     // Whole days between two date fields, later minus earlier. Returns null
     // when either end is missing, so "not delivered yet" never reads as 0 days.
     case 'days': {
@@ -298,6 +311,18 @@ function evalRow(expr, row) {
     }
     default: return 0;
   }
+}
+
+function partyShort(v) {
+  const s = String(v ?? '').replace(/\s+/g, ' ').trim();
+  if (!s) return 'ไม่ระบุ';
+  const parts = s.split(' - ').map((x) => x.trim()).filter(Boolean);
+  const withBranch = parts.find((x) => /สาขา/.test(x));
+  if (withBranch) return withBranch.replace(/^.*?สาขา\s*/, '').trim() || withBranch;
+  return parts[parts.length - 1];
+}
+function cleanName(v) {
+  return String(v ?? '').replace(/[\u1000-\u109F\uAA60-\uAA7F\uA9E0-\uA9FF]+/g, ' ').replace(/\(\s*\)/g, '').replace(/\s+/g, ' ').trim() || 'ไม่ระบุ';
 }
 
 function dateOnly(v) {
@@ -665,6 +690,15 @@ class DashboardView {
 
     this.statusEl = document.createElement('div');
     this.wrap.appendChild(this.statusEl);
+    // A page-wide filter (customer, for the CK sales widgets): any widget can
+    // ask for it with config.page_filter, and it then applies to every widget
+    // on the page whose rows carry that field.
+    this.filterField = (this.widgets.find((w) => w.config && w.config.page_filter) || { config: {} }).config.page_filter || null;
+    this.filterValue = null;
+    this.bucketPick = new Map();
+    this.filterEl = document.createElement('div');
+    this.filterEl.className = 'page-filter';
+    this.wrap.appendChild(this.filterEl);
 
     if (!this.widgets.length) {
       const p = document.createElement('p');
@@ -678,7 +712,7 @@ class DashboardView {
     grid.className = 'widget-grid';
     this.cards = this.widgets.map((w) => {
       const card = document.createElement('section');
-      card.className = `widget-card size-${w.config.size || 'half'} widget-${w.chart_type}`;
+      card.className = `widget-card size-${w.config.size || 'half'} widget-${w.chart_type}${[2, 3].includes(Number(w.config.rows)) ? ` rows-${w.config.rows}` : ''}`;
       card.innerHTML = `<h3 class="widget-title">${esc(w.title)}</h3><div class="widget-body"><p class="muted">กำลังโหลด...</p></div>`;
       grid.appendChild(card);
       return { widget: w, body: card.querySelector('.widget-body') };
@@ -742,7 +776,33 @@ class DashboardView {
     if (state.activeDashboardId !== this.dashboard.id) return;
     this.applyAnchor();
     this.renderStatus();
+    this.renderPageFilter();
     this.renderWidgets();
+  }
+
+  renderPageFilter() {
+    const f = this.filterField;
+    if (!f) return;
+    const totals = new Map();
+    Object.values(this.results).forEach((r) => {
+      if (!r || r.error || !Array.isArray(r.data)) return;
+      r.data.forEach((row) => {
+        if (!(f in row) || isBlank(row[f])) return;
+        totals.set(row[f], (totals.get(row[f]) || 0) + num(row.total ?? 1));
+      });
+    });
+    const values = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([v]) => v);
+    if (!values.length) { this.filterEl.innerHTML = ''; return; }
+    const chip = (v, label) => `<button type="button" class="range-chip${this.filterValue === v ? ' active' : ''}" data-v="${v === null ? '' : esc(v)}" title="${esc(v === null ? '' : v)}">${esc(label)}</button>`;
+    this.filterEl.innerHTML = `<span class="page-filter-label">ลูกค้า</span>${chip(null, 'ทุกราย')}${values.map((v) => chip(v, partyShort(v))).join('')}`;
+    this.filterEl.querySelectorAll('button').forEach((b) =>
+      b.addEventListener('click', () => {
+        const v = b.dataset.v || null;
+        this.filterValue = this.filterValue === v ? null : v;
+        this.renderPageFilter();
+        this.renderWidgets();
+      })
+    );
   }
 
   // Saved mode: anchor "today" to the newest saved pull and move the date range
@@ -775,10 +835,12 @@ class DashboardView {
     const r = this.results[key];
     if (!r || r.error) return null;
     const dateField = this.sources[key] && this.sources[key].date_field;
-    if (!dateField || !this.hasDateSource) return r.data;
+    const f = this.filterField, fv = this.filterValue;
+    const byFilter = (rows) => (f && fv !== null ? rows.filter((row) => !(f in row) || String(row[f]) === fv) : rows);
+    if (!dateField || !this.hasDateSource) return byFilter(r.data);
     const { start, end } = this.range;
-    if (this.sources[key].date_is_bucket) return keepOverlappingBuckets(r.data, dateField, start, end);
-    return r.data.filter((row) => {
+    if (this.sources[key].date_is_bucket) return byFilter(keepOverlappingBuckets(r.data, dateField, start, end));
+    return byFilter(r.data).filter((row) => {
       const d = row[dateField] ? String(row[dateField]).slice(0, 10) : null;
       return d && (!start || d >= start) && (!end || d <= end);
     });
@@ -973,8 +1035,20 @@ class DashboardView {
         body.innerHTML = `<p class="muted">ไม่รู้จักประเภท widget: ${esc(widget.chart_type)}</p>`;
         return;
       }
+      // Day / week / month switch on the widget itself.
+      let useCfg = cfg;
+      if (cfg.bucket_toggle) {
+        const pickB = this.bucketPick.get(widget.id) || cfg.bucket || 'day';
+        useCfg = { ...cfg, bucket: pickB };
+        const seg = document.createElement('div');
+        seg.className = 'bucket-toggle';
+        seg.innerHTML = [['day', 'วัน'], ['week', 'สัปดาห์'], ['month', 'เดือน']]
+          .map(([b, l]) => `<button type="button" class="range-chip${b === pickB ? ' active' : ''}" data-b="${b}">${l}</button>`).join('');
+        seg.querySelectorAll('button').forEach((btn) => btn.addEventListener('click', () => { this.bucketPick.set(widget.id, btn.dataset.b); this.renderWidgets(); }));
+        body.appendChild(seg);
+      }
       try {
-        renderer(body, rows, cfg);
+        renderer(body, rows, useCfg);
         // A note on how to read the widget. Renderers that place it themselves
         // (range) are left alone.
         if (cfg.foot && widget.chart_type !== 'range') body.insertAdjacentHTML('beforeend', `<p class="widget-foot widget-note">${esc(cfg.foot)}</p>`);
@@ -1036,6 +1110,8 @@ function renderBar(body, rows, cfg) {
     asc: (a, b) => key(a) - key(b),
     abs_desc: (a, b) => Math.abs(key(b)) - Math.abs(key(a)),
     desc: (a, b) => key(b) - key(a),
+    // In label order: weekdays, sizes — anything whose order is the point.
+    key: (a, b) => a.name.localeCompare(b.name, 'th'),
   };
   items.sort(sorters[cfg.sort] || sorters.desc);
   items = items.slice(0, cfg.top_n || 10);
@@ -1202,6 +1278,12 @@ function renderLine(body, rows, cfg) {
 
 function renderTable(body, rows, cfg) {
   const columns = cfg.columns && cfg.columns.length ? cfg.columns : Object.keys(rows[0]).map((field) => ({ field }));
+  // A column that is another column's share of its total (each customer's
+  // percent of sales) — a total the row layer, which sees one row, cannot know.
+  columns.filter((c) => c.share_of).forEach((c) => {
+    const tot = rows.reduce((a, r) => a + num(r[c.share_of]), 0);
+    rows = rows.map((r) => ({ ...r, [c.field]: tot ? (num(r[c.share_of]) / tot) * 100 : 0 }));
+  });
   let sort = cfg.sort_by ? { ...cfg.sort_by } : null; // { field, dir }
   const limit = cfg.top_n || 200;
 
@@ -1805,6 +1887,78 @@ function renderRange(body, rows, cfg) {
   );
 }
 
+// ---- heatmap: rows × columns, every cell printed, darker = larger ----
+// "Which customer bought how much on which day" and "which product sells where"
+// are both a grid the eye scans for gaps and dark spots. Columns are either a
+// date bucketed by day / week / month, or a second field.
+//   row_field, col_field | col_date + bucket, value (metric), top_rows,
+//   row_norm (shade within each row), format
+const HEAT = ['#EAF1FA', '#C9DCF2', '#9EC2E8', '#6FA3DB', '#3F80C8', '#2A64A6', '#1D4A7E'];
+function renderHeatmap(body, rows, cfg) {
+  const rowKey = (r) => String(pick(r, cfg.row_field) ?? 'ไม่ระบุ');
+  const colKey = cfg.col_date
+    ? (r) => { const raw = pick(r, cfg.col_date); return raw ? bucketKey(raw, cfg.bucket || 'day') : null; }
+    : (r) => String(pick(r, cfg.col_field) ?? 'ไม่ระบุ');
+  const cells = new Map();
+  const rowsBy = new Map();
+  const colsBy = new Map();
+  rows.forEach((r) => {
+    const rk = rowKey(r), ck = colKey(r);
+    if (ck === null) return;
+    const k = rk + '\u0001' + ck;
+    if (!cells.has(k)) cells.set(k, []);
+    cells.get(k).push(r);
+    if (!rowsBy.has(rk)) rowsBy.set(rk, []);
+    rowsBy.get(rk).push(r);
+    if (!colsBy.has(ck)) colsBy.set(ck, []);
+    colsBy.get(ck).push(r);
+  });
+  let rowKeys = [...rowsBy.keys()].map((k) => [k, evalMetric(cfg.value, rowsBy.get(k))]).sort((a, b) => b[1] - a[1]);
+  const totalRows = rowKeys.length;
+  rowKeys = rowKeys.slice(0, cfg.top_rows || 30);
+  const colKeys = cfg.col_date
+    ? [...colsBy.keys()].sort()
+    : [...colsBy.keys()].map((k) => [k, evalMetric(cfg.value, colsBy.get(k))]).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  const val = new Map();
+  rowKeys.forEach(([rk]) => colKeys.forEach((ck) => {
+    const rs = cells.get(rk + '\u0001' + ck);
+    val.set(rk + '\u0001' + ck, rs ? evalMetric(cfg.value, rs) : 0);
+  }));
+  const globalMax = Math.max(1e-9, ...val.values());
+  const colLabel = (ck) => (cfg.col_date ? bucketLabel(ck, cfg.bucket || 'day') : ck);
+  const short = (v) => fmtCompact(v, cfg.format);
+  let html = `<table class="heat-table"><thead><tr><th class="heat-row">${esc(cfg.row_label || '')}</th>${colKeys.map((ck) => `<th>${esc(colLabel(ck))}</th>`).join('')}<th>รวม</th></tr></thead><tbody>`;
+  rowKeys.forEach(([rk, rowTotal]) => {
+    const vals = colKeys.map((ck) => val.get(rk + '\u0001' + ck));
+    const max = cfg.row_norm ? Math.max(1e-9, ...vals) : globalMax;
+    html += `<tr><th class="heat-row" title="${esc(rk)}">${esc(rk)}</th>${vals.map((v, i) => {
+      const tip = `${rk} · ${colLabel(colKeys[i])}: ${fmtValue(v, cfg.format)}${cfg.row_norm && rowTotal ? ` (${Math.round((v / rowTotal) * 100)}%)` : ''}`;
+      if (!v) return `<td class="heat-empty" title="${esc(tip)}">–</td>`;
+      const step = Math.min(HEAT.length - 1, Math.floor((v / max) * HEAT.length));
+      return `<td style="background:${HEAT[step]};color:${step >= 4 ? '#fff' : '#12304f'}" title="${esc(tip)}">${esc(short(v))}</td>`;
+    }).join('')}<td class="heat-total">${esc(short(rowTotal))}</td></tr>`;
+  });
+  if (cfg.col_totals !== false) {
+    const colTotals = colKeys.map((ck) => rowKeys.reduce((a, [rk]) => a + (val.get(rk + '\u0001' + ck) || 0), 0));
+    html += `<tr class="heat-sum"><th class="heat-row">รวม</th>${colTotals.map((v) => `<td>${esc(short(v))}</td>`).join('')}<td>${esc(short(colTotals.reduce((a, b) => a + b, 0)))}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  const wrap = document.createElement('div');
+  wrap.className = 'heat-scroll';
+  wrap.innerHTML = html;
+  body.appendChild(wrap);
+  if (totalRows > rowKeys.length) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">แสดง ${rowKeys.length} จาก ${totalRows} รายการ</p>`);
+}
+// ฿12.3k-style numbers for cells too small for a full figure.
+function fmtCompact(v, format) {
+  if (format !== 'currency' && format !== 'number') return fmtValue(v, format);
+  const a = Math.abs(v);
+  const pre = format === 'currency' ? '฿' : '';
+  if (a >= 1e6) return pre + (v / 1e6).toLocaleString('th-TH', { maximumFractionDigits: 1 }) + 'M';
+  if (a >= 1e3) return pre + (v / 1e3).toLocaleString('th-TH', { maximumFractionDigits: 1 }) + 'k';
+  return pre + Math.round(v).toLocaleString('th-TH');
+}
+
 const RENDERERS = {
   kpi: renderKpi,
   bar: renderBar,
@@ -1819,6 +1973,7 @@ const RENDERERS = {
   range: renderRange,
   stack: renderStack,
   tabs_bar: renderTabsBar,
+  heatmap: renderHeatmap,
 };
 
 // ---------- change password ----------
