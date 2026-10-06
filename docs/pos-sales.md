@@ -52,6 +52,14 @@ A company with `data_source = 'demo'` and no upload gets a generated POS file fo
 
 Uploading a real file replaces the demo file. Deleting that file brings the demo file back.
 
+Demo Co's FMH recipes also include the 116 menus of the Foodstory sample export (branch เกาะยอ), defined in `lib/demoRecipesKohYor.js`.
+
+- Uploading that sample in Demo Co matches 100% of its lines with no mapping step. COGS comes out at about 35%.
+- The recipes are invented for the demo: plausible ingredients, sized to a believable cost share of each menu's price.
+- Bought-in drinks are costed at resale price.
+- Welcome Drink is free on the POS but still has a cost.
+- Demo caches are rebuilt on every boot, so changes to the demo data show up right after a deploy.
+
 ## Tests
 
 `node scripts/test-pos.js [foodstory.csv]` runs 44 checks against a running server.

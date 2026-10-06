@@ -173,8 +173,30 @@ async function syncMissingOnBoot() {
   }
 }
 
+// Demo companies run on generated data (lib/demoData.js), so a deploy that
+// changes the demo business (new recipes, say) must reach their caches now,
+// not when the weekly recipe re-pull comes round. Rebuilding costs no quota.
+async function rebuildDemoOnBoot() {
+  try {
+    const [companies] = await pool.query(`SELECT id, name FROM companies WHERE data_source = 'demo' AND status <> 'suspended'`);
+    for (const c of companies) {
+      const [cached] = await pool.query(`SELECT cache_key FROM fmh_report_cache WHERE company_id = ?`, [c.id]);
+      const pulls = cached.map((r) => {
+        const [source, grouping] = r.cache_key.split('|');
+        return { source, grouping: grouping || null };
+      });
+      if (!pulls.length) continue;
+      const results = await syncCompany(c.id, pulls, { full: true });
+      const failed = Object.entries(results).filter(([, r]) => !r.ok);
+      console.log(`Demo data rebuilt for company ${c.id} (${c.name}): ${pulls.length} pulls${failed.length ? `, ${failed.length} failed` : ''}`);
+    }
+  } catch (err) {
+    console.error('Demo rebuild failed:', err.message);
+  }
+}
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`KSS Platform listening on port ${PORT}`);
-  syncMissingOnBoot();
+  rebuildDemoOnBoot().then(syncMissingOnBoot);
 });

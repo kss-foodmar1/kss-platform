@@ -136,6 +136,9 @@ const near = (a, b, tol = 0.02) => Math.abs(a - b) <= tol;
     check('upload: total stored = file total', near(r.json.net_sales, 55299.25), r.json.net_sales);
     o = r.json.overview;
     check('upload: real file replaces the demo file', o.demo_data === false && o.summary.date_from === '2025-07-06');
+    check('demo recipes: every menu in the Foodstory sample matches a recipe', o.summary.unmatched_menus === 0 && o.summary.coverage_pct === 100,
+      JSON.stringify(o.menus.filter((m) => m.status !== 'matched').map((m) => m.pos_menu_name)));
+    check('demo recipes: Welcome Drink is free on the POS but still costed', (o.menus.find((m) => m.pos_menu_name === 'Welcome Drink') || {}).unit_cost > 0);
     r = await ca('POST', `/api/pos/companies/${demo.id}/uploads`, { filename: 'again.csv', format: sample.format, rows: sample.rows });
     o = r.json.overview;
     check('re-upload: same day replaced, not doubled', near(o.summary.net_sales, 55299.25) && r.json.replaced === true, o.summary.net_sales);
