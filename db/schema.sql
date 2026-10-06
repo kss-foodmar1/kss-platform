@@ -257,3 +257,20 @@ CREATE TABLE IF NOT EXISTS company_name_history (
   INDEX (company_id),
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;
+
+-- "What's new" posts behind the bell in the header: new widgets, new
+-- features. Written by KSS in the Admin Console. audience: all users, or only
+-- admins (company admins + KSS). template_keys: widgets the post introduces.
+CREATE TABLE IF NOT EXISTS announcements (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  title VARCHAR(200) NOT NULL,
+  body TEXT NOT NULL,
+  title_en VARCHAR(200) NULL,
+  body_en TEXT NULL,
+  audience ENUM('all','admins') NOT NULL DEFAULT 'all',
+  template_keys TEXT NULL,
+  published_at DATETIME NOT NULL,
+  created_by INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX (published_at)
+) DEFAULT CHARSET=utf8mb4;

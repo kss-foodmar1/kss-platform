@@ -83,6 +83,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/admin/billing', billingRoutes.adminRouter);
 app.use('/api/admin', adminRoutes);
 app.use('/api/pos', require('./routes/pos'));
+app.use('/api/announcements', require('./routes/announcements'));
 app.use('/api/pay', billingRoutes.publicRouter);
 app.use('/api/webhooks', billingRoutes.webhookRouter);
 app.get('/pay/:token', (req, res, next) => {

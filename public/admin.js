@@ -375,12 +375,127 @@ function renderAdminMain() {
   if (sel.type === 'new-company') return renderNewCompany(main);
   if (sel.type === 'catalog') return renderCatalog(main);
   if (sel.type === 'fmh') return renderFmhDiagnostics(main);
+  if (sel.type === 'news') return renderNews(main);
   if (sel.type === 'staff') {
     main.innerHTML = `<h1 class="admin-h1">ทีม KSS</h1>
       <p class="muted">บัญชีทีม KSS เห็นทุกบริษัทและใช้ Admin Console ได้</p>
       <section class="admin-card"><div class="staff-users"></div></section>`;
     return renderUserManager(main.querySelector('.staff-users'), { kss: true });
   }
+}
+
+// ---------- What's new: posts behind the bell in the header ----------
+const toLocalInput = (d) => {
+  const t = new Date(d);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}T${p(t.getHours())}:${p(t.getMinutes())}`;
+};
+
+async function renderNews(main, editId = null, flash = '') {
+  main.innerHTML = '<p class="muted">กำลังโหลด...</p>';
+  let items;
+  try {
+    ({ items } = await api('/api/announcements/admin'));
+  } catch (err) {
+    main.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    return;
+  }
+  const editing = items.find((n) => n.id === editId) || null;
+  const picked = new Set(editing ? editing.template_keys : []);
+  const byCat = new Map();
+  adminState.templates.filter((t) => t.active).forEach((t) => {
+    if (!byCat.has(t.category)) byCat.set(t.category, []);
+    byCat.get(t.category).push(t);
+  });
+  const now = Date.now();
+  main.innerHTML = `
+    <h1 class="admin-h1">ประกาศ (มีอะไรใหม่)</h1>
+    <p class="muted">ข้อความที่ผู้ใช้เห็นเมื่อกดกระดิ่ง 🔔 มุมขวาบน จุดแดงขึ้นจนกว่าผู้ใช้จะเปิดอ่าน ใช้แจ้ง widget ใหม่หรือฟีเจอร์ใหม่</p>
+    ${flash}
+    <section class="admin-card">
+      <h2>${editing ? 'แก้ไขประกาศ' : 'เขียนประกาศใหม่'}</h2>
+      <form class="news-form">
+        <div class="grid-2">
+          <div class="field"><label>หัวข้อ (ไทย) *</label><input name="title" maxlength="200" required value="${esc(editing ? editing.title : '')}"></div>
+          <div class="field"><label>หัวข้อ (อังกฤษ)</label><input name="title_en" maxlength="200" value="${esc(editing ? editing.title_en || '' : '')}"></div>
+          <div class="field"><label>รายละเอียด (ไทย) *</label><textarea name="body" rows="4" required>${esc(editing ? editing.body : '')}</textarea></div>
+          <div class="field"><label>รายละเอียด (อังกฤษ)</label><textarea name="body_en" rows="4">${esc(editing ? editing.body_en || '' : '')}</textarea></div>
+          <div class="field"><label>ผู้ที่เห็น</label>
+            <select name="audience">
+              <option value="all">ผู้ใช้ทุกคน</option>
+              <option value="admins"${editing && editing.audience === 'admins' ? ' selected' : ''}>เฉพาะ Admin ของบริษัท</option>
+            </select></div>
+          <div class="field"><label>เผยแพร่เมื่อ</label><input type="datetime-local" name="published_at" value="${toLocalInput(editing ? editing.published_at : new Date())}"></div>
+        </div>
+        <details class="news-widgets"${picked.size ? ' open' : ''}><summary>Widget ที่ประกาศนี้แนะนำ (${picked.size})</summary>
+          ${[...byCat.entries()]
+            .sort((a, b) => catRank(a[0]) - catRank(b[0]))
+            .map(
+              ([cat, list]) => `<fieldset><legend>${esc(catLabel(cat))}</legend>${list
+                .map((t) => `<label class="news-check"><input type="checkbox" name="tk" value="${esc(t.template_key)}"${picked.has(t.template_key) ? ' checked' : ''}> ${esc(t.name)}</label>`)
+                .join('')}</fieldset>`
+            )
+            .join('')}
+        </details>
+        <p class="helper-text">ไม่ใส่ภาษาอังกฤษ ผู้ใช้ที่ตั้งภาษาอังกฤษจะเห็นข้อความภาษาไทย · ตั้งเวลาในอนาคตได้ ประกาศจะขึ้นเมื่อถึงเวลา</p>
+        <div class="inline-form">
+          <button type="submit" class="btn small primary">${editing ? 'บันทึกการแก้ไข' : 'เผยแพร่'}</button>
+          ${editing ? '<button type="button" class="btn small ghost news-cancel">ยกเลิก</button>' : ''}
+        </div>
+        <div class="news-msg"></div>
+      </form>
+    </section>
+    <section class="admin-card">
+      <h2>ประกาศทั้งหมด (${items.length})</h2>
+      ${
+        items.length
+          ? items
+              .map((n) => {
+                const future = new Date(n.published_at).getTime() > now;
+                return `<article class="news-row" data-id="${n.id}">
+                  <div><strong>${esc(n.title)}</strong> <span class="muted">· ${esc(fmtDateTime(n.published_at))}${future ? ' · ตั้งเวลาไว้' : ''} · ${n.audience === 'admins' ? 'เฉพาะ Admin' : 'ทุกคน'}${n.widgets.length ? ` · ${n.widgets.length} widget` : ''}</span></div>
+                  <p class="muted">${esc(n.body)}</p>
+                  <div class="inline-form"><button type="button" class="btn small ghost news-edit">แก้ไข</button><button type="button" class="btn small danger news-del">ลบ</button></div>
+                </article>`;
+              })
+              .join('')
+          : '<p class="muted">ยังไม่มีประกาศ</p>'
+      }
+    </section>`;
+
+  const form = main.querySelector('.news-form');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const body = {
+      title: fd.get('title'), body: fd.get('body'), title_en: fd.get('title_en'), body_en: fd.get('body_en'),
+      audience: fd.get('audience'), template_keys: fd.getAll('tk'),
+      published_at: fd.get('published_at') ? new Date(fd.get('published_at')).toISOString() : null,
+    };
+    try {
+      await api(editing ? `/api/announcements/admin/${editing.id}` : '/api/announcements/admin', { method: editing ? 'PUT' : 'POST', body: JSON.stringify(body) });
+      await renderNews(main, null, `<div class="ok-msg">${editing ? 'บันทึกแล้ว' : 'เผยแพร่แล้ว — ผู้ใช้จะเห็นจุดแดงที่กระดิ่ง'}</div>`);
+      loadNotifications();
+    } catch (err) {
+      form.querySelector('.news-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    }
+  });
+  form.querySelectorAll('[name=tk]').forEach((c) =>
+    c.addEventListener('change', () => {
+      form.querySelector('.news-widgets summary').textContent = `Widget ที่ประกาศนี้แนะนำ (${form.querySelectorAll('[name=tk]:checked').length})`;
+    })
+  );
+  const cancel = form.querySelector('.news-cancel');
+  if (cancel) cancel.addEventListener('click', () => renderNews(main));
+  main.querySelectorAll('.news-edit').forEach((b) => b.addEventListener('click', () => renderNews(main, Number(b.closest('.news-row').dataset.id))));
+  main.querySelectorAll('.news-del').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('ลบประกาศนี้? ผู้ใช้จะไม่เห็นอีก')) return;
+      await api(`/api/announcements/admin/${b.closest('.news-row').dataset.id}`, { method: 'DELETE' });
+      renderNews(main);
+      loadNotifications();
+    })
+  );
 }
 
 // ---------- FMH Diagnostics ----------

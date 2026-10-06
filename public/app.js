@@ -462,6 +462,7 @@ async function enterApp() {
   el('company-name').classList.toggle('hidden', isSuper() || !state.user.company_name);
   el('company-name').textContent = (state.user.company_name || '') + (state.user.company_code ? ` · ${state.user.company_code}` : '');
   showScreen('app');
+  loadNotifications();
 
   if (isSuper()) {
     await loadCompanyPicker();
@@ -1840,3 +1841,87 @@ el('password-modal-form').addEventListener('submit', async (e) => {
 });
 
 document.addEventListener('DOMContentLoaded', boot);
+
+
+// ---------- what's new (the bell) ----------
+// Posts KSS writes in the Admin Console: new widgets, new features. The badge
+// counts posts since this user last opened the panel.
+const notif = { items: [], open: false };
+
+async function loadNotifications() {
+  try {
+    const r = await api('/api/announcements');
+    notif.items = r.items;
+    const badge = el('notif-badge');
+    badge.textContent = r.unread > 9 ? '9+' : String(r.unread);
+    badge.classList.toggle('hidden', !r.unread);
+    el('notif-btn').setAttribute('aria-label', r.unread ? `มีอะไรใหม่ (${r.unread} ยังไม่ได้อ่าน)` : 'มีอะไรใหม่');
+  } catch (err) {
+    /* the bell is a nicety; never block the app on it */
+  }
+}
+setInterval(() => state.user && loadNotifications(), 15 * 60 * 1000);
+
+function renderNotifPanel() {
+  const en = I18N.lang === 'en';
+  const panel = el('notif-panel');
+  const canAdd = isCompanyAdmin() || isSuper();
+  panel.innerHTML = `
+    <div class="notif-head"><strong>มีอะไรใหม่</strong><button type="button" class="icon-mini notif-close" aria-label="ปิด">✕</button></div>
+    ${
+      notif.items.length
+        ? notif.items
+            .map((n) => {
+              const title = en && n.title_en ? n.title_en : n.title;
+              const body = en && n.body_en ? n.body_en : n.body;
+              return `<article class="notif-item${n.unread ? ' unread' : ''}">
+                <div class="notif-meta">${n.unread ? '<span class="notif-new">ใหม่</span>' : ''}<span class="muted">${esc(new Date(n.published_at).toLocaleDateString(I18N.locale(), { day: 'numeric', month: 'short', year: 'numeric' }))}</span></div>
+                <h4 data-no-i18n>${esc(title)}</h4>
+                <p data-no-i18n>${esc(body)}</p>
+                ${
+                  n.widgets.length
+                    ? `<div class="notif-widgets">${n.widgets.slice(0, 5).map((w) => `<span class="notif-chip">${esc(w.name)}</span>`).join('')}${n.widgets.length > 5 ? `<span class="notif-chip">+${n.widgets.length - 5} widget</span>` : ''}</div>
+                       ${canAdd ? '<button type="button" class="btn small ghost notif-add">เพิ่ม widget ลง Dashboard →</button>' : ''}`
+                    : ''
+                }
+              </article>`;
+            })
+            .join('')
+        : '<p class="muted notif-empty">ยังไม่มีประกาศ</p>'
+    }`;
+  panel.querySelector('.notif-close').addEventListener('click', () => toggleNotif(false));
+  panel.querySelectorAll('.notif-add').forEach((b) =>
+    b.addEventListener('click', () => {
+      toggleNotif(false);
+      if (!isSuper()) adminState.selected = { type: 'my-dashboards', id: state.user.company_id };
+      openAdminConsole();
+    })
+  );
+}
+
+function toggleNotif(open) {
+  notif.open = open === undefined ? !notif.open : open;
+  el('notif-panel').classList.toggle('hidden', !notif.open);
+  el('notif-btn').setAttribute('aria-expanded', String(notif.open));
+  if (notif.open) {
+    renderNotifPanel();
+    // Opening counts as reading; the "new" marks stay until the panel closes.
+    if (notif.items.some((n) => n.unread)) {
+      api('/api/announcements/seen', { method: 'POST' }).catch(() => {});
+      el('notif-badge').classList.add('hidden');
+    }
+  } else {
+    notif.items.forEach((n) => (n.unread = false));
+  }
+}
+
+el('notif-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  toggleNotif();
+});
+document.addEventListener('click', (e) => {
+  if (notif.open && !e.target.closest('.notif-wrap')) toggleNotif(false);
+});
+document.addEventListener('keydown', (e) => {
+  if (notif.open && e.key === 'Escape') toggleNotif(false);
+});

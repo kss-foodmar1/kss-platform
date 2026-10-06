@@ -123,6 +123,41 @@ async function upgradePos() {
   }
 }
 
+// Read state for the "what's new" bell, and the first posts.
+async function upgradeAnnouncements() {
+  if (!(await columnInfo('users', 'announcements_seen_at'))) {
+    await pool.query(`ALTER TABLE users ADD COLUMN announcements_seen_at DATETIME NULL`);
+    console.log('  users: added announcements_seen_at');
+  }
+  const [[{ n }]] = await pool.query(`SELECT COUNT(*) AS n FROM announcements`);
+  if (n) return;
+  const posts = [
+    {
+      at: '2026-10-06 09:00:00', audience: 'all',
+      title: 'Widget ใหม่ 9 ตัว: ต้นทุนจากยอดขาย POS',
+      body: 'ร้านที่ใช้ Foodstory หรือ POS ที่ไม่มี API ดู COGS และกำไรขั้นต้นรายเมนูได้แล้ว โดยอัปโหลดไฟล์ยอดขายจาก POS ระบบจับคู่ชื่อเมนูกับสูตรใน FMH ให้ Admin ของบริษัทอัปโหลดไฟล์ได้ที่ ✎ จัดการ Dashboard → ยอดขาย POS แล้วเลือก widget หมวด "ต้นทุนจากยอดขาย POS" ใส่ dashboard',
+      title_en: '9 new widgets: cost from POS sales',
+      body_en: 'Restaurants on Foodstory or any POS without an API can now see COGS and gross margin per menu by uploading the POS sales file; menu names are matched to FMH recipes. Company admins upload under ✎ Manage dashboards → POS sales, then add widgets from the "Cost from POS sales" category.',
+      keys: ['pos_cogs_kpi', 'pos_cogs_trend', 'pos_menu_margin', 'pos_low_margin', 'pos_menu_gp', 'pos_branch_cogs', 'pos_category_mix', 'pos_unmatched', 'pos_gm_recipe_vs_purchase'],
+    },
+    {
+      at: null, audience: 'admins',
+      title: 'แก้ชื่อบริษัทได้เอง',
+      body: 'Admin ของบริษัทแก้ชื่อบริษัทได้ที่ ✎ จัดการ Dashboard → ข้อมูลบริษัท รหัสบริษัท (KSS-…) ไม่เปลี่ยน ใช้อ้างอิงเวลาติดต่อทีม KSS',
+      title_en: 'Rename your company yourself',
+      body_en: 'Company admins can change the company name under ✎ Manage dashboards → Company details. The company code (KSS-…) stays the same — quote it when you contact KSS.',
+      keys: [],
+    },
+  ];
+  for (const p of posts) {
+    await pool.query(
+      `INSERT INTO announcements (title, body, title_en, body_en, audience, template_keys, published_at) VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, NOW()))`,
+      [p.title, p.body, p.title_en, p.body_en, p.audience, JSON.stringify(p.keys), p.at]
+    );
+  }
+  console.log(`  announcements: added ${posts.length} first posts`);
+}
+
 async function upgradeDashboards() {
   if (!(await columnInfo('dashboards', 'company_id'))) {
     await pool.query(`ALTER TABLE dashboards ADD COLUMN company_id INT NULL, ADD INDEX idx_dashboards_company (company_id)`);
@@ -245,6 +280,7 @@ async function main() {
   await upgradeUsers();
   await upgradeDashboards();
   await upgradePos();
+  await upgradeAnnouncements();
   await upgradeCache();
   // First run with the saved-data fallback: every cache that has rows today
   // becomes the "last good" copy, so the fallback works before the next sync.
