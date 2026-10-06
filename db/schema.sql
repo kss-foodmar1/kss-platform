@@ -244,3 +244,16 @@ CREATE TABLE IF NOT EXISTS pos_profiles (
   UNIQUE KEY uq_pos_profile_name (company_id, name),
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;
+
+-- Every rename of a company, so KSS can still find a client that renamed
+-- itself (company admins can edit their own company name).
+CREATE TABLE IF NOT EXISTS company_name_history (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  company_id INT NOT NULL,
+  old_name VARCHAR(255) NOT NULL,
+  new_name VARCHAR(255) NOT NULL,
+  changed_by INT NULL,
+  changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX (company_id),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;

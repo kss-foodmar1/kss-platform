@@ -17,7 +17,7 @@ const COOKIE_OPTS = {
 async function publicUser(id) {
   const [[u]] = await pool.query(
     `SELECT u.id, u.email, u.display_name, u.role, u.company_id, u.must_change_password, u.language,
-            c.name AS company_name, c.status AS company_status
+            c.name AS company_name, c.company_code, c.status AS company_status
      FROM users u LEFT JOIN companies c ON c.id = u.company_id WHERE u.id = ?`,
     [id]
   );

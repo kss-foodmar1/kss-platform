@@ -440,3 +440,10 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
 .pos-sample { display: block; font-size: 12px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pos-profiles { margin: 10px 0; font-size: 13px; }
 .pos-profiles summary { cursor: pointer; font-weight: 600; }
+.company-code { font-size: 11px; font-weight: 700; letter-spacing: .04em; color: var(--muted); background: var(--line-soft); border-radius: 6px; padding: 1px 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.company-code.big { font-size: 13px; vertical-align: middle; }
+.admin-company-search { width: 100%; box-sizing: border-box; margin: 0 0 8px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 13px; }
+.company-item[hidden] { display: none !important; }
+.company-name-form { align-items: flex-end; }
+.company-name-form + .helper-text { margin-top: 10px; }
+.company-item-name .company-code { margin-left: 4px; }

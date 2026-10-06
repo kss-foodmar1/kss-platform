@@ -49,6 +49,7 @@ async function main() {
       [DEMO_COMPANY_NAME]
     );
     demoCo = { id: res.insertId };
+    await require('../lib/companyCode').assignMissingCodes();
     for (let i = 0; i < DEMO_DASHBOARDS.length; i++) {
       const d = DEMO_DASHBOARDS[i];
       const [dash] = await pool.query(

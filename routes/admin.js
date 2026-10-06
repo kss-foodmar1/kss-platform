@@ -17,6 +17,7 @@ const { wrap } = require('../lib/access');
 const { FMH_REPORTS, syncCompany, syncOne, getSyncStatus, getCached, pullsForWidget } = require('../lib/fmhCache');
 const { CHART_TYPES, listWidgets } = require('../lib/widgetCatalog');
 const probe = require('../lib/fmhProbe');
+const { codeFor, assignMissingCodes } = require('../lib/companyCode');
 const { withTrigger, usageSummary } = require('../lib/fmhUsage');
 
 const router = express.Router();
@@ -29,6 +30,7 @@ const COMPANY_ADMIN_ROUTES = [
   ['GET', /^\/meta$/],
   ['GET', /^\/widget-templates$/],
   ['GET', /^\/companies\/(\d+)$/, 'company'],
+  ['PATCH', /^\/companies\/(\d+)\/name$/, 'company'],
   ['GET', /^\/companies\/(\d+)\/dashboards$/, 'company'],
   ['POST', /^\/companies\/(\d+)\/dashboards$/, 'company'],
   ['PUT', /^\/companies\/(\d+)\/dashboard-order$/, 'company'],
@@ -97,7 +99,8 @@ router.get(
   '/companies',
   wrap(async (req, res) => {
     const [rows] = await pool.query(
-      `SELECT c.id, c.name, c.status, c.plan_tier, c.fmh_key_updated_at, c.created_at,
+      `SELECT c.id, c.company_code, c.name, c.status, c.plan_tier, c.fmh_key_updated_at, c.created_at,
+              (SELECT GROUP_CONCAT(DISTINCT h.old_name ORDER BY h.changed_at DESC SEPARATOR ' | ') FROM company_name_history h WHERE h.company_id = c.id) AS former_names,
               (c.fmh_api_key_enc IS NOT NULL OR c.data_source = 'demo') AS fmh_configured, c.data_source,
               (SELECT COUNT(*) FROM users u WHERE u.company_id = c.id) AS user_count,
               (SELECT COUNT(*) FROM dashboards d WHERE d.company_id = c.id AND d.active = TRUE) AS dashboard_count,
@@ -120,7 +123,8 @@ router.post(
       status,
       plan_tier,
     ]);
-    res.status(201).json({ id: r.insertId });
+    await assignMissingCodes();
+    res.status(201).json({ id: r.insertId, company_code: codeFor(r.insertId) });
   })
 );
 
@@ -128,12 +132,19 @@ router.get(
   '/companies/:id',
   wrap(async (req, res) => {
     const [[c]] = await pool.query(
-      `SELECT id, name, status, plan_tier, data_source, fmh_key_updated_at, created_at, (fmh_api_key_enc IS NOT NULL OR data_source = 'demo') AS fmh_configured
+      `SELECT id, company_code, name, status, plan_tier, data_source, fmh_key_updated_at, created_at, (fmh_api_key_enc IS NOT NULL OR data_source = 'demo') AS fmh_configured
        FROM companies WHERE id = ?`,
       [req.params.id]
     );
     if (!c) return res.status(404).json({ error: 'Company not found' });
     c.fmh_configured = !!c.fmh_configured;
+    const [history] = await pool.query(
+      `SELECT h.old_name, h.new_name, h.changed_at, u.email AS changed_by_email, u.role AS changed_by_role
+       FROM company_name_history h LEFT JOIN users u ON u.id = h.changed_by
+       WHERE h.company_id = ? ORDER BY h.changed_at DESC, h.id DESC LIMIT 20`,
+      [c.id]
+    );
+    c.name_history = history;
     res.json({ company: c, sync_status: await getSyncStatus(c.id) });
   })
 );
@@ -146,12 +157,15 @@ router.patch(
     if (status !== undefined && !STATUSES.includes(status)) return bad(res, 'invalid status');
     if (plan_tier !== undefined && !TIERS.includes(plan_tier)) return bad(res, 'invalid plan_tier');
     if (name !== undefined && !String(name).trim()) return bad(res, 'name cannot be empty');
-    const [r] = await pool.query(
-      `UPDATE companies SET name = COALESCE(?, name), status = COALESCE(?, status), plan_tier = COALESCE(?, plan_tier)
-       WHERE id = ?`,
-      [name !== undefined ? String(name).trim() : null, status ?? null, plan_tier ?? null, req.params.id]
+    if (!(await companyExists(req.params.id))) return res.status(404).json({ error: 'Company not found' });
+    if (name !== undefined) {
+      const err = await renameCompany(Number(req.params.id), name, req.user.id);
+      if (err) return bad(res, err);
+    }
+    await pool.query(
+      `UPDATE companies SET status = COALESCE(?, status), plan_tier = COALESCE(?, plan_tier) WHERE id = ?`,
+      [status ?? null, plan_tier ?? null, req.params.id]
     );
-    if (!r.affectedRows) return res.status(404).json({ error: 'Company not found' });
     if (data_source !== undefined) {
       const [[c]] = await pool.query(`SELECT data_source FROM companies WHERE id = ?`, [req.params.id]);
       if (c.data_source !== data_source) {
@@ -165,6 +179,33 @@ router.patch(
       }
     }
     res.json({ ok: true });
+  })
+);
+
+// A client's company admin may rename their own company (KSS staff too).
+// Every rename is kept in company_name_history, and the company code never
+// changes, so KSS can always tell which client it is.
+async function renameCompany(companyId, rawName, userId) {
+  const name = String(rawName || '').replace(/\s+/g, ' ').trim();
+  if (name.length < 2 || name.length > 120) return 'ชื่อบริษัทต้องยาว 2–120 ตัวอักษร';
+  const [[c]] = await pool.query(`SELECT name FROM companies WHERE id = ?`, [companyId]);
+  if (!c || c.name === name) return null;
+  await pool.query(`UPDATE companies SET name = ? WHERE id = ?`, [name, companyId]);
+  await pool.query(
+    `INSERT INTO company_name_history (company_id, old_name, new_name, changed_by) VALUES (?, ?, ?, ?)`,
+    [companyId, c.name, name, userId || null]
+  );
+  return null;
+}
+
+router.patch(
+  '/companies/:id/name',
+  wrap(async (req, res) => {
+    if (!(await companyExists(req.params.id))) return res.status(404).json({ error: 'Company not found' });
+    const err = await renameCompany(Number(req.params.id), req.body && req.body.name, req.user.id);
+    if (err) return bad(res, err);
+    const [[c]] = await pool.query(`SELECT id, company_code, name FROM companies WHERE id = ?`, [req.params.id]);
+    res.json({ ok: true, company: c });
   })
 );
 

@@ -826,6 +826,16 @@ window.I18N_EN = {
     'การชำระเงินออนไลน์ผ่าน Omise ยังไม่เปิดใช้ในระบบนี้ — กำหนดวันหมดอายุด้านบนได้ตามปกติ': 'Online payment through Omise is not switched on here — the expiry date above still works as usual.',
     'การชำระเงินออนไลน์ (Omise) ยังไม่เปิดใช้ในระบบนี้': 'Online payment (Omise) is not switched on here',
     'ปิดอยู่': 'Off',
+    // ---------- company name + code ----------
+    'ข้อมูลบริษัท': 'Company details',
+    'ชื่อบริษัท': 'Company name',
+    'บันทึกชื่อ': 'Save name',
+    'รหัสบริษัท': 'Company code',
+    '— รหัสนี้ไม่เปลี่ยนแม้เปลี่ยนชื่อบริษัท ใช้อ้างอิงเมื่อติดต่อทีม KSS': '— this code stays the same when the company name changes; quote it when you contact KSS',
+    'บันทึกชื่อบริษัทแล้ว': 'Company name saved',
+    'ชื่อบริษัทต้องยาว 2–120 ตัวอักษร': 'Company name must be 2–120 characters',
+    'ค้นหาชื่อ / รหัส KSS-…': 'Search name / code KSS-…',
+    'ค้นหาบริษัท': 'Search companies',
   },
 
   // {0}, {1}... match any text and are carried across.
@@ -928,5 +938,9 @@ window.I18N_EN = {
     ['ไฟล์นี้ไม่ตรงกับรูปแบบของ {0} — ตรวจการจับคู่คอลัมน์ด้านล่าง', 'This file does not match the {0} layout — check the column mapping below'],
     ['ชื่อ "{0}" เป็นรูปแบบที่ระบบมีอยู่แล้ว ตั้งชื่ออื่น', '"{0}" is a built-in layout — choose another name'],
     ['{0} = {1}', '{0} = {1}'],
+    ['ชื่อเดิม: {0}', 'Former name: {0}'],
+    ['(เปลี่ยนเป็น "{0}" {1} โดย {2} — ลูกค้า)', '(renamed to "{0}" {1} by {2} — client)'],
+    ['(เปลี่ยนเป็น "{0}" {1} โดย {2})', '(renamed to "{0}" {1} by {2})'],
+    ['(เปลี่ยนเป็น "{0}" {1})', '(renamed to "{0}" {1})'],
   ],
 };

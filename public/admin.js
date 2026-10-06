@@ -301,17 +301,34 @@ async function renderAdminCompanyList() {
   const { companies } = await api('/api/admin/companies');
   state.companies = companies;
   const list = el('admin-company-list');
+  // Search by name, code (KSS-0007) or any name the company had before.
+  let search = el('admin-company-search');
+  if (!search) {
+    search = document.createElement('input');
+    search.id = 'admin-company-search';
+    search.type = 'search';
+    search.className = 'admin-company-search';
+    search.placeholder = 'ค้นหาชื่อ / รหัส KSS-…';
+    search.setAttribute('aria-label', 'ค้นหาบริษัท');
+    list.parentNode.insertBefore(search, list);
+    search.addEventListener('input', () => {
+      const q = search.value.trim().toLowerCase();
+      list.querySelectorAll('.company-item').forEach((b) => (b.hidden = !!q && !b.dataset.search.includes(q)));
+    });
+  }
   list.innerHTML = companies
     .map(
-      (c) => `<button type="button" class="admin-nav-item company-item" data-id="${c.id}">
+      (c) => `<button type="button" class="admin-nav-item company-item" data-id="${c.id}" data-search="${esc([c.name, c.company_code, c.former_names, c.id].join(' ').toLowerCase())}">
         <span class="company-item-name">${esc(c.name)}</span>
+        ${c.former_names ? `<span class="company-item-meta">ชื่อเดิม: ${esc(c.former_names)}</span>` : ''}
         <span class="company-item-meta">
           <span class="dot ${c.fmh_configured ? 'dot-good' : 'dot-off'}" title="${c.fmh_configured ? 'เชื่อม FMH แล้ว' : 'ยังไม่ได้ใส่ FMH key'}"></span>
-          ${esc(STATUS_LABEL[c.status] || c.status)} · ${c.dashboard_count} dashboards
+          <span class="company-code">${esc(c.company_code || '')}</span> ${esc(STATUS_LABEL[c.status] || c.status)} · ${c.dashboard_count} dashboards
         </span>
       </button>`
     )
     .join('');
+  if (search.value) search.dispatchEvent(new Event('input'));
   list.querySelectorAll('.company-item').forEach((b) =>
     b.addEventListener('click', () => {
       if (!leavePicker()) return;
@@ -597,7 +614,14 @@ async function renderCompanyDetail(main, companyId) {
   main.innerHTML = `
     <div class="admin-head">
       <div>
-        <h1 class="admin-h1">${esc(c.name)}</h1>
+        <h1 class="admin-h1">${esc(c.name)} <span class="company-code big">${esc(c.company_code || '')}</span></h1>
+        ${
+          c.name_history && c.name_history.length
+            ? `<p class="muted">ชื่อเดิม: ${c.name_history
+                .map((h) => `${esc(h.old_name)} <span class="nowrap">(เปลี่ยนเป็น "${esc(h.new_name)}" ${esc(fmtDateTime(h.changed_at))}${h.changed_by_email ? ` โดย ${esc(h.changed_by_email)}${h.changed_by_role === 'company_admin' ? ' — ลูกค้า' : ''}` : ''})</span>`)
+                .join(' · ')}</p>`
+            : ''
+        }
         <p class="muted">${esc(STATUS_LABEL[c.status] || c.status)} · ${esc(TIER_LABEL[c.plan_tier] || c.plan_tier)} · สร้างเมื่อ ${esc(fmtDateTime(c.created_at))}</p>
       </div>
       <button type="button" class="btn small view-dashboards">ดู dashboard ของบริษัทนี้ →</button>
@@ -925,6 +949,15 @@ async function renderMyDashboards(main, companyId) {
         <p class="muted">สร้าง dashboard เลือก widget จาก catalog และจัดลำดับได้เอง ผู้ใช้ที่ดูอย่างเดียวจะเห็นเฉพาะ dashboard ที่คุณให้สิทธิ์ (ปุ่ม 👥)</p>
       </div>
     </div>
+    <section class="admin-card">
+      <h2>ข้อมูลบริษัท</h2>
+      <form class="inline-form company-name-form">
+        <label class="field" style="flex:2;min-width:220px;margin:0"><span>ชื่อบริษัท</span><input name="name" required minlength="2" maxlength="120" value="${esc(state.user.company_name || '')}"></label>
+        <button type="submit" class="btn small primary">บันทึกชื่อ</button>
+      </form>
+      <p class="helper-text">รหัสบริษัท <strong class="company-code big">${esc(state.user.company_code || '')}</strong> — รหัสนี้ไม่เปลี่ยนแม้เปลี่ยนชื่อบริษัท ใช้อ้างอิงเมื่อติดต่อทีม KSS</p>
+      <div class="name-msg"></div>
+    </section>
     <section class="admin-card"><div class="composer"></div></section>
     <section class="admin-card" id="pos-sales">
       <h2>ยอดขาย POS (Foodstory และ POS ที่ไม่มี API)</h2>
@@ -932,6 +965,19 @@ async function renderMyDashboards(main, companyId) {
     </section>`;
   renderComposer(main.querySelector('.composer'), companyId);
   renderPosPanel(main.querySelector('.pos-panel'), companyId);
+  const nameForm = main.querySelector('.company-name-form');
+  nameForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const out = main.querySelector('.name-msg');
+    try {
+      const { company } = await api(`/api/admin/companies/${companyId}/name`, { method: 'PATCH', body: JSON.stringify({ name: nameForm.name.value }) });
+      state.user.company_name = company.name;
+      el('company-name').textContent = `${company.name} · ${company.company_code}`;
+      out.innerHTML = '<div class="ok-msg">บันทึกชื่อบริษัทแล้ว</div>';
+    } catch (err) {
+      out.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    }
+  });
   if (adminState.focus === 'pos') {
     adminState.focus = null;
     main.querySelector('#pos-sales').scrollIntoView({ block: 'start' });

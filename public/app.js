@@ -460,7 +460,7 @@ async function enterApp() {
   el('open-settings-btn').classList.toggle('hidden', !isCompanyAdmin());
   el('company-picker-wrap').classList.toggle('hidden', !isSuper());
   el('company-name').classList.toggle('hidden', isSuper() || !state.user.company_name);
-  el('company-name').textContent = state.user.company_name || '';
+  el('company-name').textContent = (state.user.company_name || '') + (state.user.company_code ? ` · ${state.user.company_code}` : '');
   showScreen('app');
 
   if (isSuper()) {

@@ -98,6 +98,13 @@ async function upgradeCompanies() {
     await pool.query(`ALTER TABLE companies ADD COLUMN subscription_ends_at DATE NULL`);
     console.log('  companies: added subscription_ends_at');
   }
+  // A short code that never changes (KSS-0007), so KSS can find a client
+  // even after the client renames itself. Backfills any company without one.
+  if (!(await columnInfo('companies', 'company_code'))) {
+    await pool.query(`ALTER TABLE companies ADD COLUMN company_code VARCHAR(16) NULL, ADD UNIQUE KEY uq_company_code (company_code)`);
+    console.log('  companies: added company_code');
+  }
+  await pool.query(`UPDATE companies SET company_code = CONCAT('KSS-', LPAD(id, 4, '0')) WHERE company_code IS NULL`);
   if (!(await columnInfo('companies', 'suspended_reason'))) {
     await pool.query(`ALTER TABLE companies ADD COLUMN suspended_reason VARCHAR(20) NULL`);
     console.log('  companies: added suspended_reason');
@@ -249,6 +256,7 @@ async function main() {
   if (bf.affectedRows) console.log(`  fmh_cache_saved: kept ${bf.affectedRows} existing report(s) as saved data`);
   await syncCatalog();
   await convertLegacyData();
+  await require('../lib/companyCode').assignMissingCodes(); // the legacy company, if just created
   await dropLegacyReportsTable();
   console.log('Migration complete.');
   process.exit(0);
