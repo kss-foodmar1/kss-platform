@@ -4,9 +4,12 @@
 // source by routes/dashboards.js ('pos-sales').
 //
 //   GET    /api/pos/companies/:id                 uploads, menus + match status
-//   POST   /api/pos/companies/:id/uploads         { filename, format, rows }
+//   POST   /api/pos/companies/:id/uploads         { filename, format, rows, pos_name, profile }
 //   DELETE /api/pos/companies/:id/uploads/:uid
 //   PUT    /api/pos/companies/:id/map             { pos_menu_name, fmh_menu_name, ignore }
+//   DELETE /api/pos/companies/:id/profiles/:pid   a saved POS file layout
+// An upload may carry pos_name (which POS it came from) and profile
+// ({ name, columns, date_order, signature }) to save a new column mapping.
 const express = require('express');
 const { requireAuth } = require('../middleware/auth');
 const { wrap } = require('../lib/access');
@@ -44,8 +47,8 @@ router.get('/companies/:id', send(async (req, res) => res.json(await pos.overvie
 router.post(
   '/companies/:id/uploads',
   send(async (req, res) => {
-    const { filename, format, rows } = req.body || {};
-    const result = await pos.importUpload(req.companyId, req.user.id, { filename, format, rows });
+    const { filename, format, rows, pos_name, profile } = req.body || {};
+    const result = await pos.importUpload(req.companyId, req.user.id, { filename, format, rows, pos_name, profile });
     res.json({ ok: true, ...result, overview: await pos.overview(req.companyId) });
   })
 );
@@ -55,6 +58,15 @@ router.delete(
   send(async (req, res) => {
     const ok = await pos.deleteUpload(req.companyId, Number(req.params.uid));
     if (!ok) return res.status(404).json({ error: 'ไม่พบไฟล์นี้' });
+    res.json({ ok: true, overview: await pos.overview(req.companyId) });
+  })
+);
+
+router.delete(
+  '/companies/:id/profiles/:pid',
+  send(async (req, res) => {
+    const ok = await pos.deleteProfile(req.companyId, Number(req.params.pid));
+    if (!ok) return res.status(404).json({ error: 'ไม่พบรูปแบบไฟล์นี้' });
     res.json({ ok: true, overview: await pos.overview(req.companyId) });
   })
 );

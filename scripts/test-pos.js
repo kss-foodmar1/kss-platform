@@ -159,9 +159,51 @@ const near = (a, b, tol = 0.02) => Math.abs(a - b) <= tol;
   check('no recipes yet: upload still works, nothing matched', r.status === 200 && r.json.overview.summary.coverage_pct === 0, JSON.stringify(r.json).slice(0, 300));
   check('isolation: other company does not see demo uploads', !r.json.overview.uploads.some((u) => u.filename === 'again.csv'));
 
+  // ---------- another POS: unknown layout, mapped once, remembered ----------
+  const other1 = [
+    'Daily Sales Report;;;;',
+    'Exported 2026-10-06;;;;',
+    'Outlet;Business Day;Item;Qty;Net Amount',
+    'Siam;10/03/2026;Iced Latte;2;180',
+    'Siam;10/03/2026;กะเพราหมูสับ ไข่ดาว;1;69',
+    'Siam;10/13/2026;Iced Latte;1;(10)',
+  ].join('\n');
+  const ins = PosParse.inspect(other1, []);
+  check('other POS: semicolon file, header found below the title lines', ins.header.join('|') === 'Outlet|Business Day|Item|Qty|Net Amount', ins.header.join('|'));
+  check('other POS: no built-in layout claims it', ins.profile === null);
+  check('other POS: date order guessed as month/day', ins.date_order === 'mdy');
+  check('other POS: best guess pre-fills branch, menu, qty, net', ins.guess.branch === 'Outlet' && ins.guess.menu === 'Item' && ins.guess.qty === 'Qty' && ins.guess.net === 'Net Amount', JSON.stringify(ins.guess));
+  let err2 = '';
+  try { PosParse.aggregate(other1); } catch (e) { err2 = e.message; }
+  check('other POS: without a mapping the missing date column is named', /วันที่ขาย/.test(err2), err2);
+  const ochaCols = { date: 'Business Day', menu: 'Item', qty: 'Qty', net: 'Net Amount', branch: 'Outlet' };
+  const ocha = PosParse.aggregate(other1, { columns: ochaCols, dateOrder: 'mdy' });
+  check('other POS: mapped file reads month/day dates', ocha.rows.map((r) => r.sale_date).sort().join() === '2026-10-03,2026-10-03,2026-10-13', ocha.rows.map((r) => r.sale_date).join());
+  check('other POS: (10) read as -10 (a refund)', ocha.rows.some((r) => r.net_sales === -10));
+  check('other POS: saved layout recognised next time', PosParse.detectProfile(ins.header, [{ id: 'p:1', name: 'Ocha', columns: ochaCols }]).name === 'Ocha');
+  check('other POS: Foodstory layout does not claim this file', !PosParse.profileFits({ ...PosParse.BUILTIN[0] }, ins.header));
+
+  r = await ca('POST', `/api/pos/companies/${demo.id}/uploads`, { filename: 'ocha.csv', format: 'custom', rows: ocha.rows, profile: { name: 'Foodstory', columns: ochaCols } });
+  check('profile: a built-in name is refused', r.status === 400);
+  r = await ca('POST', `/api/pos/companies/${demo.id}/uploads`, { filename: 'ocha.csv', format: 'custom', rows: ocha.rows, profile: { name: 'Ocha', columns: { menu: 'Item' } } });
+  check('profile: incomplete mapping refused', r.status === 400);
+  r = await ca('POST', `/api/pos/companies/${demo.id}/uploads`, { filename: 'ocha.csv', format: 'custom', rows: ocha.rows, profile: { name: 'Ocha', columns: ochaCols, date_order: 'mdy', signature: PosParse.signature(ins.header) } });
+  check('profile: upload with a new mapping', r.status === 200 && r.json.pos_name === 'Ocha', JSON.stringify(r.json).slice(0, 200));
+  o = r.json.overview;
+  check('profile: saved for the company', o.profiles.length === 1 && o.profiles[0].name === 'Ocha' && o.profiles[0].columns.date === 'Business Day' && o.profiles[0].date_order === 'mdy');
+  check('profile: upload records which POS', o.uploads[0].pos_name === 'Ocha');
+  r = await ca('GET', `/api/dashboards/${posDash}/data/pos-sales`);
+  check('data: rows carry the POS name', r.json.data.length && r.json.data.every((x) => x.pos_system === 'Ocha'), JSON.stringify((r.json.data || [])[0]));
+  check('isolation: other company does not see the profile', (await other('GET', `/api/pos/companies/${otherId}`)).json.profiles.length === 0);
+  check('isolation: other company cannot delete it', (await other('DELETE', `/api/pos/companies/${demo.id}/profiles/${o.profiles[0].id}`)).status === 403);
+  r = await ca('DELETE', `/api/pos/companies/${demo.id}/profiles/${o.profiles[0].id}`);
+  check('profile: deleted', r.status === 200 && r.json.overview.profiles.length === 0);
+  for (const u of r.json.overview.uploads) await ca('DELETE', `/api/pos/companies/${demo.id}/uploads/${u.id}`);
+
   // ---------- cleanup ----------
   await pool.query(`DELETE FROM dashboards WHERE id = ?`, [posDash]);
   await pool.query(`DELETE FROM pos_menu_map WHERE company_id = ?`, [demo.id]);
+  await pool.query(`DELETE FROM pos_profiles WHERE company_id = ?`, [demo.id]);
   await pool.query(`DELETE FROM fmh_report_cache WHERE company_id = ? AND cache_key = 'pos-sales'`, [demo.id]);
   await pool.query(`DELETE FROM companies WHERE id = ?`, [otherId]);
   await pool.query(`DELETE FROM users WHERE email IN ('pos-kss@test.co','pos-ca@test.co','pos-client@test.co','pos-other@test.co')`);

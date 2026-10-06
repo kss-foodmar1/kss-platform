@@ -961,10 +961,27 @@ async function renderPosPanel(container, companyId, view = { filter: 'unmatched'
   container.innerHTML = `
     <p class="helper-text" style="margin-top:0;">สำหรับร้านที่ POS ไม่มี API (เช่น Foodstory): export ไฟล์ยอดขายรายบิลแบบละเอียดเป็น CSV แล้วอัปโหลดที่นี่ ระบบจับคู่ชื่อเมนูกับสูตรใน FMH เพื่อคิดต้นทุนและกำไรขั้นต้น ไฟล์ถูกอ่านในเครื่องของคุณ ส่งขึ้นระบบเฉพาะยอดรวมรายวันต่อเมนู — ชื่อลูกค้าและเบอร์โทรไม่ถูกส่ง</p>
     <form class="inline-form pos-upload-form">
-      <input type="file" name="file" accept=".csv,text/csv" required aria-label="ไฟล์ยอดขาย CSV">
-      <button type="submit" class="btn small primary">อัปโหลดไฟล์ยอดขาย</button>
+      <label class="pos-source">ไฟล์มาจาก POS
+        <select name="source" aria-label="ไฟล์มาจาก POS">
+          <option value="auto">ตรวจจากไฟล์อัตโนมัติ</option>
+          ${o.builtin_profiles.map((b) => `<option value="b:${esc(b.id)}">${esc(b.name)}</option>`).join('')}
+          ${o.profiles.map((p) => `<option value="p:${p.id}">${esc(p.name)} (รูปแบบที่บันทึกไว้)</option>`).join('')}
+          <option value="custom">POS อื่น — จับคู่คอลัมน์เอง</option>
+        </select>
+      </label>
+      <input type="file" name="file" accept=".csv,.txt,text/csv" required aria-label="ไฟล์ยอดขาย CSV">
+      <button type="submit" class="btn small primary">อ่านไฟล์</button>
     </form>
     <div class="pos-msg">${flash}</div>
+    <div class="pos-step"></div>
+    ${
+      o.profiles.length
+        ? `<details class="pos-profiles"><summary>รูปแบบไฟล์ POS ที่บันทึกไว้ (${o.profiles.length})</summary>
+             <table class="mini-table"><tbody>${o.profiles
+               .map((p) => `<tr data-pid="${p.id}"><td>${esc(p.name)}</td><td class="muted">${esc(PosParse.ROLES.filter((r) => p.columns[r.key]).map((r) => `${r.label} = ${p.columns[r.key]}`).join(' · '))}</td><td><button type="button" class="btn small danger pos-del-profile">ลบ</button></td></tr>`)
+               .join('')}</tbody></table></details>`
+        : ''
+    }
     ${
       o.demo_data
         ? '<p class="muted"><span class="demo-pill">ข้อมูลตัวอย่าง</span> ยังไม่มีไฟล์จริง — ใช้ไฟล์ POS ตัวอย่างของร้านเดโม อัปโหลดไฟล์จริงเมื่อไรจะใช้ไฟล์นั้นแทน</p>'
@@ -988,9 +1005,9 @@ async function renderPosPanel(container, companyId, view = { filter: 'unmatched'
     ${
       o.uploads.length
         ? `<h3 class="pos-h3">ไฟล์ที่อัปโหลด</h3>
-           <table class="mini-table"><thead><tr><th>ไฟล์</th><th>ช่วงวันที่</th><th class="num">ยอดสุทธิ</th><th>อัปโหลดเมื่อ</th><th></th></tr></thead><tbody>${o.uploads
+           <table class="mini-table"><thead><tr><th>ไฟล์</th><th>POS</th><th>ช่วงวันที่</th><th class="num">ยอดสุทธิ</th><th>อัปโหลดเมื่อ</th><th></th></tr></thead><tbody>${o.uploads
              .map(
-               (u) => `<tr data-id="${u.id}"><td>${esc(u.filename)}${u.pos_format === 'foodstory' ? ' <span class="muted">· Foodstory</span>' : ''}</td>
+               (u) => `<tr data-id="${u.id}"><td>${esc(u.filename)}</td><td>${esc(u.pos_name || '')}</td>
                  <td>${esc(thDate(u.date_from))} – ${esc(thDate(u.date_to))}</td>
                  <td class="num">${baht(u.net_sales)}</td>
                  <td>${esc(fmtDateTime(u.created_at))}${u.uploaded_by_email ? `<br><span class="muted">${esc(u.uploaded_by_email)}</span>` : ''}</td>
@@ -1074,32 +1091,181 @@ async function renderPosPanel(container, companyId, view = { filter: 'unmatched'
     })
   );
 
-  container.querySelector('.pos-upload-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const file = e.target.file.files[0];
-    if (!file) return;
-    const btn = e.target.querySelector('button');
-    btn.disabled = true;
-    msg('<p class="muted">กำลังอ่านไฟล์...</p>');
+  container.querySelectorAll('.pos-del-profile').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('ลบรูปแบบไฟล์นี้? ไฟล์ที่อัปโหลดไปแล้วไม่หาย แต่ครั้งหน้าต้องจับคู่คอลัมน์ใหม่')) return;
+      try {
+        await api(`/api/pos/companies/${companyId}/profiles/${b.closest('tr').dataset.pid}`, { method: 'DELETE' });
+        renderPosPanel(container, companyId, view);
+      } catch (err) {
+        msg(`<div class="error-msg">${esc(err.message)}</div>`);
+      }
+    })
+  );
+
+  // ---- upload: read the file, settle which POS layout it is, preview, send ----
+  const step = container.querySelector('.pos-step');
+  const saved = o.profiles.map((p) => ({ id: `p:${p.id}`, name: p.name, columns: p.columns, date_order: p.date_order }));
+  const builtins = PosParse.BUILTIN.map((b) => ({ ...b, id: `b:${b.id}` }));
+  let file = null;
+  let text = '';
+  let info = null;
+
+  const upload = async (profile, parsed, saveAs) => {
+    step.innerHTML = '<p class="muted">กำลังอัปโหลด...</p>';
     try {
-      if (!window.PosParse) throw new Error('ตัวอ่านไฟล์ยังโหลดไม่เสร็จ ลองใหม่อีกครั้ง');
-      const parsed = PosParse.aggregate(PosParse.decode(await file.arrayBuffer()));
-      const st = parsed.stats;
-      msg(`<p class="muted">อ่านได้ ${st.lines.toLocaleString('th-TH')} รายการ · ${st.menus} เมนู · ${st.branches.length} สาขา — กำลังอัปโหลด...</p>`);
       const r = await api(`/api/pos/companies/${companyId}/uploads`, {
         method: 'POST',
-        body: JSON.stringify({ filename: file.name, format: parsed.format, rows: parsed.rows }),
+        body: JSON.stringify({
+          filename: file.name,
+          format: profile.id === 'b:foodstory' ? 'foodstory' : 'custom',
+          pos_name: saveAs ? saveAs.name : profile.name,
+          profile: saveAs || undefined,
+          rows: parsed.rows,
+        }),
       });
+      const st = parsed.stats;
       renderPosPanel(
         container,
         companyId,
         { filter: 'unmatched' },
-        `<div class="ok-msg">อัปโหลดแล้ว: ${esc(thDate(r.date_from))} – ${esc(thDate(r.date_to))} · ${st.lines.toLocaleString('th-TH')} รายการ · ${st.branches.map(esc).join(', ')} · ยอดสุทธิ ${baht(r.net_sales)}${r.replaced ? ' · แทนที่ข้อมูลเดิมของวันเดียวกันแล้ว' : ''}${st.skipped ? ` · ข้าม ${st.skipped} แถวที่ไม่ใช่รายการขาย` : ''}</div>`
+        `<div class="ok-msg">อัปโหลดแล้ว: ${esc(r.pos_name)} · ${esc(thDate(r.date_from))} – ${esc(thDate(r.date_to))} · ${st.lines.toLocaleString('th-TH')} รายการ · ${st.branches.map(esc).join(', ')} · ยอดสุทธิ ${baht(r.net_sales)}${r.replaced ? ' · แทนที่ข้อมูลเดิมของวันเดียวกันแล้ว' : ''}${st.skipped ? ` · ข้าม ${st.skipped} แถวที่ไม่ใช่รายการขาย` : ''}${saveAs ? ' · บันทึกรูปแบบไฟล์แล้ว ครั้งหน้าไม่ต้องจับคู่คอลัมน์อีก' : ''}</div>`
       );
     } catch (err) {
-      btn.disabled = false;
-      msg(`<div class="error-msg">${esc(err.message)}</div>`);
+      step.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
     }
+  };
+
+  const previewTable = (parsed) => `
+    <div class="table-scroll"><table class="mini-table"><thead><tr><th>วันที่</th><th>สาขา</th><th>เมนู</th><th class="num">จำนวน</th><th class="num">ยอดสุทธิ</th></tr></thead><tbody>${parsed.rows
+      .slice(0, 5)
+      .map((r) => `<tr><td>${esc(thDate(r.sale_date))}</td><td>${esc(r.branch)}</td><td>${esc(r.menu_name)}</td><td class="num">${Number(r.qty).toLocaleString('th-TH')}</td><td class="num">${baht(r.net_sales)}</td></tr>`)
+      .join('')}</tbody></table></div>`;
+  const statsLine = (st) =>
+    `${st.lines.toLocaleString('th-TH')} รายการ · ${st.menus} เมนู · ${st.branches.length} สาขา · ${esc(thDate(st.date_from))} – ${esc(thDate(st.date_to))} · ยอดสุทธิ ${baht(st.net_sales)}`;
+
+  // A layout the file matches: show what was read and confirm.
+  function showConfirm(profile) {
+    let parsed;
+    try {
+      parsed = PosParse.aggregate(text, { columns: profile.columns, dateOrder: profile.date_order });
+    } catch (err) {
+      return showMapping(profile, err.message);
+    }
+    step.innerHTML = `
+      <div class="pos-card">
+        <p><strong>ไฟล์จาก ${esc(profile.name)}</strong> · ${statsLine(parsed.stats)}</p>
+        ${previewTable(parsed)}
+        <p class="helper-text">ตัวอย่าง 5 แถวแรกหลังรวมยอดรายวันต่อเมนู ถ้าวันที่หรือยอดไม่ถูก ให้จับคู่คอลัมน์ใหม่</p>
+        <div class="inline-form">
+          <button type="button" class="btn small primary pos-go">ยืนยันอัปโหลด</button>
+          <button type="button" class="btn small ghost pos-remap">จับคู่คอลัมน์เอง</button>
+          <button type="button" class="btn small ghost pos-cancel">ยกเลิก</button>
+        </div>
+      </div>`;
+    step.querySelector('.pos-go').addEventListener('click', () => upload(profile, parsed, null));
+    step.querySelector('.pos-remap').addEventListener('click', () => showMapping(profile));
+    step.querySelector('.pos-cancel').addEventListener('click', () => (step.innerHTML = ''));
+  }
+
+  // A file no layout fits (or the user wants to fix one): map the columns.
+  function showMapping(start, problem) {
+    const header = info.header;
+    const sampleOf = (name) => {
+      const i = header.indexOf(name);
+      const vals = i < 0 ? [] : info.sample.map((r) => String(r[i] ?? '').trim()).filter(Boolean).slice(0, 2);
+      return vals.join(' · ');
+    };
+    const pre = { ...info.guess, ...((start && start.columns) || {}) };
+    const isSaved = start && String(start.id).startsWith('p:');
+    step.innerHTML = `
+      <div class="pos-card">
+        ${problem ? `<div class="warn-msg">${esc(problem)}</div>` : ''}
+        <p><strong>จับคู่คอลัมน์ของไฟล์</strong> · ${info.row_count.toLocaleString('th-TH')} แถว · ${header.length} คอลัมน์</p>
+        <p class="helper-text" style="margin-top:0;">บอกระบบว่าคอลัมน์ไหนในไฟล์คือข้อมูลอะไร ช่องที่มี * ต้องเลือก ระบบจะจำรูปแบบนี้ไว้ ไฟล์ต่อไปจาก POS เดียวกันอัปโหลดได้ทันที</p>
+        <div class="grid-2 pos-map-form">
+          <div class="field"><label>ชื่อ POS *</label><input name="pos_name" maxlength="100" placeholder="เช่น Ocha, Loyverse, Wongnai POS" value="${esc(isSaved ? start.name : '')}"></div>
+          <div class="field"><label>รูปแบบวันที่ในไฟล์</label>
+            <select name="date_order">
+              <option value="dmy">วัน/เดือน/ปี (31/12/2025)</option>
+              <option value="mdy">เดือน/วัน/ปี (12/31/2025)</option>
+              <option value="ymd">ปี-เดือน-วัน (2025-12-31)</option>
+            </select></div>
+          ${PosParse.ROLES.map(
+            (r) => `<div class="field"><label>${esc(r.label)}${r.required ? ' *' : ''}</label>
+              <select name="col_${r.key}" data-role="${r.key}"><option value="">— ${r.required ? 'เลือกคอลัมน์' : 'ไม่มีในไฟล์'} —</option>${header
+                .map((h) => `<option value="${esc(h)}">${esc(h)}</option>`)
+                .join('')}</select>
+              <span class="muted pos-sample" data-role="${r.key}"></span></div>`
+          ).join('')}
+        </div>
+        <div class="pos-live"></div>
+        <div class="inline-form">
+          <button type="button" class="btn small primary pos-go" disabled>บันทึกรูปแบบและอัปโหลด</button>
+          <button type="button" class="btn small ghost pos-cancel">ยกเลิก</button>
+        </div>
+      </div>`;
+    const form = step.querySelector('.pos-map-form');
+    form.querySelector('[name=date_order]').value = (start && start.date_order) || info.date_order || 'dmy';
+    PosParse.ROLES.forEach((r) => {
+      const sel = form.querySelector(`[name=col_${r.key}]`);
+      if (pre[r.key] && header.includes(pre[r.key])) sel.value = pre[r.key];
+    });
+    let current = null;
+    const refresh = () => {
+      const columns = {};
+      PosParse.ROLES.forEach((r) => {
+        const v = form.querySelector(`[name=col_${r.key}]`).value;
+        if (v) columns[r.key] = v;
+        form.querySelector(`.pos-sample[data-role=${r.key}]`).textContent = v ? `ตัวอย่าง: ${sampleOf(v) || '(ว่าง)'}` : '';
+      });
+      const live = step.querySelector('.pos-live');
+      const go = step.querySelector('.pos-go');
+      current = null;
+      try {
+        const parsed = PosParse.aggregate(text, { columns, dateOrder: form.querySelector('[name=date_order]').value });
+        current = { columns, parsed };
+        live.innerHTML = `<p class="muted">${statsLine(parsed.stats)}</p>${previewTable(parsed)}`;
+      } catch (err) {
+        live.innerHTML = `<p class="muted">${esc(err.message)}</p>`;
+      }
+      go.disabled = !current || !form.querySelector('[name=pos_name]').value.trim();
+    };
+    form.addEventListener('change', refresh);
+    form.querySelector('[name=pos_name]').addEventListener('input', refresh);
+    refresh();
+    step.querySelector('.pos-cancel').addEventListener('click', () => (step.innerHTML = ''));
+    step.querySelector('.pos-go').addEventListener('click', () => {
+      if (!current) return;
+      const name = form.querySelector('[name=pos_name]').value.trim();
+      const saveAs = { name, columns: current.columns, date_order: form.querySelector('[name=date_order]').value, signature: info.signature };
+      upload({ id: 'custom', name }, current.parsed, saveAs);
+    });
+  }
+
+  container.querySelector('.pos-upload-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    file = e.target.file.files[0];
+    if (!file) return;
+    msg('');
+    step.innerHTML = '<p class="muted">กำลังอ่านไฟล์...</p>';
+    try {
+      if (!window.PosParse) throw new Error('ตัวอ่านไฟล์ยังโหลดไม่เสร็จ ลองใหม่อีกครั้ง');
+      text = PosParse.decode(await file.arrayBuffer());
+      info = PosParse.inspect(text, saved);
+    } catch (err) {
+      step.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+      return;
+    }
+    const choice = e.target.source.value;
+    if (choice === 'custom') return showMapping(null);
+    if (choice === 'auto') {
+      const found = [...saved, ...builtins].find((p) => PosParse.profileFits(p, info.header));
+      return found ? showConfirm(found) : showMapping(null, 'ไม่รู้จักรูปแบบไฟล์นี้ — จับคู่คอลัมน์ครั้งเดียว แล้วระบบจะจำไว้');
+    }
+    const picked = [...saved, ...builtins].find((p) => p.id === choice);
+    if (picked && PosParse.profileFits(picked, info.header)) return showConfirm(picked);
+    showMapping(picked, `ไฟล์นี้ไม่ตรงกับรูปแบบของ ${picked ? picked.name : 'POS ที่เลือก'} — ตรวจการจับคู่คอลัมน์ด้านล่าง`);
   });
 }
 

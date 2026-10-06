@@ -183,6 +183,7 @@ CREATE TABLE IF NOT EXISTS pos_uploads (
   company_id INT NOT NULL,
   filename VARCHAR(255) NOT NULL,
   pos_format VARCHAR(32) NOT NULL DEFAULT 'generic',
+  pos_name VARCHAR(100) NOT NULL DEFAULT 'Foodstory',
   date_from DATE NULL,
   date_to DATE NULL,
   line_count INT NOT NULL DEFAULT 0,
@@ -203,6 +204,7 @@ CREATE TABLE IF NOT EXISTS pos_sales_daily (
   pos_code VARCHAR(64) NOT NULL DEFAULT '',
   pos_group VARCHAR(255) NOT NULL DEFAULT '',
   pos_category VARCHAR(255) NOT NULL DEFAULT '',
+  pos_system VARCHAR(100) NOT NULL DEFAULT 'Foodstory',
   qty DECIMAL(14,3) NOT NULL DEFAULT 0,
   net_sales DECIMAL(14,2) NOT NULL DEFAULT 0,
   gross_sales DECIMAL(14,2) NOT NULL DEFAULT 0,
@@ -224,5 +226,21 @@ CREATE TABLE IF NOT EXISTS pos_menu_map (
   ignore_menu BOOLEAN NOT NULL DEFAULT FALSE,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (company_id, pos_key),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
+-- A company's own POS file layout, saved the first time it maps the columns
+-- by hand, so the next file from that POS uploads without asking again.
+-- columns_json: { role: header name } for date, menu, qty, net, branch, ...
+CREATE TABLE IF NOT EXISTS pos_profiles (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  company_id INT NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  columns_json TEXT NOT NULL,
+  date_order VARCHAR(3) NOT NULL DEFAULT 'dmy',
+  header_signature TEXT NULL,
+  created_by INT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_pos_profile_name (company_id, name),
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;

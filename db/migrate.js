@@ -104,6 +104,18 @@ async function upgradeCompanies() {
   }
 }
 
+// Which POS a file came from, once more than one POS can be uploaded.
+async function upgradePos() {
+  if (!(await columnInfo('pos_uploads', 'pos_name'))) {
+    await pool.query(`ALTER TABLE pos_uploads ADD COLUMN pos_name VARCHAR(100) NOT NULL DEFAULT 'Foodstory'`);
+    console.log('  pos_uploads: added pos_name');
+  }
+  if (!(await columnInfo('pos_sales_daily', 'pos_system'))) {
+    await pool.query(`ALTER TABLE pos_sales_daily ADD COLUMN pos_system VARCHAR(100) NOT NULL DEFAULT 'Foodstory'`);
+    console.log('  pos_sales_daily: added pos_system');
+  }
+}
+
 async function upgradeDashboards() {
   if (!(await columnInfo('dashboards', 'company_id'))) {
     await pool.query(`ALTER TABLE dashboards ADD COLUMN company_id INT NULL, ADD INDEX idx_dashboards_company (company_id)`);
@@ -225,6 +237,7 @@ async function main() {
   await upgradeCompanies();
   await upgradeUsers();
   await upgradeDashboards();
+  await upgradePos();
   await upgradeCache();
   // First run with the saved-data fallback: every cache that has rows today
   // becomes the "last good" copy, so the fallback works before the next sync.

@@ -21,6 +21,32 @@ Foodstory POS has no API, but it exports sales as CSV. The **POS sales** feature
    - It is rebuilt on upload, on mapping changes, after recipes sync, and when Refresh is pressed. Refresh has no cooldown for this source.
    - It uses no FMH quota, apart from the small `menu-costing|by_menu` recipe pull when that is not cached yet.
 
+## Other POS systems (file layouts)
+
+The upload form starts with **ไฟล์มาจาก POS**. The options are:
+
+- detect from the file (default)
+- Foodstory (built in)
+- any layout the company has saved
+- **POS อื่น — จับคู่คอลัมน์เอง**
+
+When no layout fits the file, the user maps the columns once.
+
+- Required fields: sale date, menu, quantity, net sales.
+- Optional fields: branch, menu code, gross, discount, category, group.
+- The form is pre-filled from common column names. A date column is found from its values when its name is unknown, and the date order (d/m/y vs m/d/y) is guessed from the data.
+- A live preview of the first rows updates as columns are picked.
+- The mapping is saved as a named layout in `pos_profiles`, per company. Files with the same headers are then recognised automatically.
+
+The reader also handles:
+
+- comma, semicolon or tab delimiters
+- title lines above the header row
+- Excel serial dates and Buddhist-era years
+- `(10)` written as a negative amount
+
+Each upload and each row records which POS it came from (`pos_uploads.pos_name`, `pos_system` on the report rows). All POS feed the same widgets, so a group running two POS sees one picture.
+
 ## Numbers
 
 - COGS = quantity sold × the current FMH recipe cost per serving (Σ ingredient `total_cost`).
@@ -62,4 +88,4 @@ Demo Co's FMH recipes also include the 116 menus of the Foodstory sample export 
 
 ## Tests
 
-`node scripts/test-pos.js [foodstory.csv]` runs 44 checks against a running server.
+`node scripts/test-pos.js [foodstory.csv]` runs 64 checks against a running server.

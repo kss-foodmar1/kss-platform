@@ -431,3 +431,12 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
 .pos-map-table .pos-via { font-size: 12px; margin-left: 6px; }
 .pos-map-table tr.pos-unmatched td:first-child { border-left: 3px solid var(--brass); }
 .widget-note { margin-top: 8px; }
+.pos-source { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.pos-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin: 10px 0; display: flex; flex-direction: column; gap: 8px; }
+.pos-card p { margin: 0; }
+.pos-map-form { gap: 10px 16px; }
+.pos-map-form .field { min-width: 0; }
+.pos-map-form select, .pos-map-form input { width: 100%; }
+.pos-sample { display: block; font-size: 12px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pos-profiles { margin: 10px 0; font-size: 13px; }
+.pos-profiles summary { cursor: pointer; font-weight: 600; }
