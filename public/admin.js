@@ -635,6 +635,11 @@ async function renderCompanyDetail(main, companyId) {
     <section class="admin-card">
       <h2>5. การชำระเงินและอายุการใช้งาน</h2>
       <div class="billing"></div>
+    </section>
+
+    <section class="admin-card">
+      <h2>6. ยอดขาย POS (Foodstory และ POS ที่ไม่มี API)</h2>
+      <div class="pos-panel"></div>
     </section>`;
 
   main.querySelector('.view-dashboards').addEventListener('click', () => viewCompanyDashboards(companyId));
@@ -699,6 +704,7 @@ async function renderCompanyDetail(main, companyId) {
   renderComposer(main.querySelector('.composer'), companyId);
   renderUserManager(main.querySelector('.company-users'), { companyId });
   renderBillingPanel(main.querySelector('.billing'), companyId);
+  renderPosPanel(main.querySelector('.pos-panel'), companyId);
 }
 
 // ---------- FMH quota: where the rows went ----------
@@ -914,14 +920,194 @@ async function renderMyDashboards(main, companyId) {
         <p class="muted">สร้าง dashboard เลือก widget จาก catalog และจัดลำดับได้เอง ผู้ใช้ที่ดูอย่างเดียวจะเห็นเฉพาะ dashboard ที่คุณให้สิทธิ์ (ปุ่ม 👥)</p>
       </div>
     </div>
-    <section class="admin-card"><div class="composer"></div></section>`;
+    <section class="admin-card"><div class="composer"></div></section>
+    <section class="admin-card" id="pos-sales">
+      <h2>ยอดขาย POS (Foodstory และ POS ที่ไม่มี API)</h2>
+      <div class="pos-panel"></div>
+    </section>`;
   renderComposer(main.querySelector('.composer'), companyId);
+  renderPosPanel(main.querySelector('.pos-panel'), companyId);
+  if (adminState.focus === 'pos') {
+    adminState.focus = null;
+    main.querySelector('#pos-sales').scrollIntoView({ block: 'start' });
+  }
+}
+
+// ---------- POS sales file: upload + match menus to FMH recipes ----------
+// The file is read and totalled in the browser (pos-parse.js): only daily
+// totals per branch + menu are sent, never bill numbers, customer names or
+// phone numbers. Matching is by menu name; what doesn't match is fixed here
+// once and remembered.
+const POS_STATUS = { matched: 'จับคู่แล้ว', unmatched: 'ยังไม่จับคู่', ignored: 'ไม่คิดต้นทุน' };
+const baht = (n) => '฿' + Number(n || 0).toLocaleString('th-TH', { maximumFractionDigits: 0 });
+const thDate = (iso) => (iso ? new Date(iso + 'T00:00:00').toLocaleDateString(I18N.locale(), { day: 'numeric', month: 'short', year: 'numeric' }) : '–');
+
+async function renderPosPanel(container, companyId, view = { filter: 'unmatched' }, flash = '') {
+  if (!container.innerHTML) container.innerHTML = '<p class="muted">กำลังโหลด...</p>';
+  let o;
+  try {
+    o = await api(`/api/pos/companies/${companyId}`);
+  } catch (err) {
+    container.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    return;
+  }
+  const s = o.summary;
+  const counts = { all: o.menus.length };
+  o.menus.forEach((m) => (counts[m.status] = (counts[m.status] || 0) + 1));
+  if (view.filter === 'unmatched' && !counts.unmatched) view.filter = 'all';
+  const shown = o.menus.filter((m) => view.filter === 'all' || m.status === view.filter);
+  const recipeOptions = o.fmh_menus.map((m) => `<option value="${esc(m.name)}">${esc(m.name)} (฿${Number(m.cost).toLocaleString('th-TH', { maximumFractionDigits: 2 })})</option>`).join('');
+
+  container.innerHTML = `
+    <p class="helper-text" style="margin-top:0;">สำหรับร้านที่ POS ไม่มี API (เช่น Foodstory): export ไฟล์ยอดขายรายบิลแบบละเอียดเป็น CSV แล้วอัปโหลดที่นี่ ระบบจับคู่ชื่อเมนูกับสูตรใน FMH เพื่อคิดต้นทุนและกำไรขั้นต้น ไฟล์ถูกอ่านในเครื่องของคุณ ส่งขึ้นระบบเฉพาะยอดรวมรายวันต่อเมนู — ชื่อลูกค้าและเบอร์โทรไม่ถูกส่ง</p>
+    <form class="inline-form pos-upload-form">
+      <input type="file" name="file" accept=".csv,text/csv" required aria-label="ไฟล์ยอดขาย CSV">
+      <button type="submit" class="btn small primary">อัปโหลดไฟล์ยอดขาย</button>
+    </form>
+    <div class="pos-msg">${flash}</div>
+    ${
+      o.demo_data
+        ? '<p class="muted"><span class="demo-pill">ข้อมูลตัวอย่าง</span> ยังไม่มีไฟล์จริง — ใช้ไฟล์ POS ตัวอย่างของร้านเดโม อัปโหลดไฟล์จริงเมื่อไรจะใช้ไฟล์นั้นแทน</p>'
+        : ''
+    }
+    ${
+      !o.fmh_menus.length
+        ? '<div class="warn-msg">ยังไม่มีสูตรเมนูจาก FMH ในระบบ — ต้องเชื่อม FMH API Key ก่อน ระบบจะดึงสูตรให้เองเมื่อมีการอัปโหลดหรือ sync</div>'
+        : ''
+    }
+    ${
+      s.date_from
+        ? `<div class="pos-summary">
+             <div><span class="muted">ช่วงข้อมูล</span><strong>${esc(thDate(s.date_from))} – ${esc(thDate(s.date_to))}</strong></div>
+             <div><span class="muted">ยอดขายสุทธิ</span><strong>${baht(s.net_sales)}</strong></div>
+             <div><span class="muted">จับคู่สูตรได้</span><strong>${s.coverage_pct == null ? '–' : s.coverage_pct + '%'}</strong><span class="muted">ของยอดขายอาหาร</span></div>
+             <div><span class="muted">เมนูที่ยังไม่จับคู่</span><strong>${s.unmatched_menus}</strong></div>
+           </div>`
+        : '<p class="muted">ยังไม่มีไฟล์ยอดขาย</p>'
+    }
+    ${
+      o.uploads.length
+        ? `<h3 class="pos-h3">ไฟล์ที่อัปโหลด</h3>
+           <table class="mini-table"><thead><tr><th>ไฟล์</th><th>ช่วงวันที่</th><th class="num">ยอดสุทธิ</th><th>อัปโหลดเมื่อ</th><th></th></tr></thead><tbody>${o.uploads
+             .map(
+               (u) => `<tr data-id="${u.id}"><td>${esc(u.filename)}${u.pos_format === 'foodstory' ? ' <span class="muted">· Foodstory</span>' : ''}</td>
+                 <td>${esc(thDate(u.date_from))} – ${esc(thDate(u.date_to))}</td>
+                 <td class="num">${baht(u.net_sales)}</td>
+                 <td>${esc(fmtDateTime(u.created_at))}${u.uploaded_by_email ? `<br><span class="muted">${esc(u.uploaded_by_email)}</span>` : ''}</td>
+                 <td><button type="button" class="btn small danger pos-del">ลบ</button></td></tr>`
+             )
+             .join('')}</tbody></table>`
+        : ''
+    }
+    ${
+      o.menus.length
+        ? `<h3 class="pos-h3">จับคู่เมนู POS กับสูตร FMH</h3>
+           <p class="helper-text" style="margin-top:0;">ชื่อที่ตรงกัน (ไม่สนช่องว่าง ตัวพิมพ์ และวงเล็บ) จับคู่ให้อัตโนมัติ ที่เหลือเลือกสูตรครั้งเดียว ระบบจำไว้ใช้กับไฟล์ต่อไป รายการที่ไม่ใช่อาหาร เช่น ค่าส่ง ค่าบริการ ให้กด "ไม่ใช่อาหาร" เพื่อไม่นับใน COGS %</p>
+           <div class="pos-filter" role="group" aria-label="แสดง">
+             ${['unmatched', 'matched', 'ignored', 'all']
+               .map((f) => `<button type="button" class="range-chip${view.filter === f ? ' active' : ''}" data-f="${f}">${f === 'all' ? 'ทั้งหมด' : POS_STATUS[f]} (${counts[f] || 0})</button>`)
+               .join('')}
+           </div>
+           <div class="table-scroll"><table class="mini-table pos-map-table"><thead><tr><th>เมนูใน POS</th><th class="num">ยอดขาย</th><th>สูตรใน FMH</th><th class="num">ต้นทุน/จาน</th><th></th></tr></thead><tbody>${shown
+             .map(
+               (m) => `<tr data-name="${esc(m.pos_menu_name)}" class="pos-${m.status}">
+                 <td>${esc(m.pos_menu_name)}${m.pos_category ? `<br><span class="muted">${esc(m.pos_category)}</span>` : ''}</td>
+                 <td class="num">${baht(m.net_sales)}<br><span class="muted">${Number(m.qty).toLocaleString('th-TH')} จาน</span></td>
+                 <td>${
+                   m.status === 'ignored'
+                     ? '<span class="muted">ไม่ใช่อาหาร — ไม่คิดต้นทุน</span>'
+                     : `<select class="pos-pick" aria-label="สูตรใน FMH"><option value="">— ${m.status === 'matched' ? 'เลิกจับคู่' : 'เลือกสูตร'} —</option>${recipeOptions}</select>
+                        ${m.status === 'matched' && m.via === 'name' ? '<span class="muted pos-via">ชื่อตรงกัน</span>' : ''}
+                        ${m.status === 'unmatched' && m.suggestion ? `<button type="button" class="btn small ghost pos-suggest" data-s="${esc(m.suggestion)}">ใช้ "${esc(m.suggestion)}"?</button>` : ''}`
+                 }</td>
+                 <td class="num">${m.unit_cost == null ? '–' : '฿' + Number(m.unit_cost).toLocaleString('th-TH', { maximumFractionDigits: 2 })}</td>
+                 <td>${
+                   m.status === 'ignored' || (m.via === 'manual' && m.status !== 'unmatched')
+                     ? '<button type="button" class="btn small ghost pos-reset">ยกเลิก</button>'
+                     : '<button type="button" class="btn small ghost pos-ignore">ไม่ใช่อาหาร</button>'
+                 }</td></tr>`
+             )
+             .join('')}</tbody></table></div>`
+        : ''
+    }`;
+
+  // Selected recipe per row (set after render so the option text stays plain).
+  container.querySelectorAll('tr[data-name]').forEach((tr) => {
+    const m = o.menus.find((x) => x.pos_menu_name === tr.dataset.name);
+    const sel = tr.querySelector('.pos-pick');
+    if (sel && m && m.status === 'matched') sel.value = m.fmh_menu_name;
+  });
+
+  const msg = (html) => (container.querySelector('.pos-msg').innerHTML = html);
+  const save = async (body) => {
+    try {
+      await api(`/api/pos/companies/${companyId}/map`, { method: 'PUT', body: JSON.stringify(body) });
+      renderPosPanel(container, companyId, view);
+    } catch (err) {
+      msg(`<div class="error-msg">${esc(err.message)}</div>`);
+    }
+  };
+  container.querySelectorAll('.pos-filter .range-chip').forEach((b) =>
+    b.addEventListener('click', () => renderPosPanel(container, companyId, { filter: b.dataset.f }))
+  );
+  container.querySelectorAll('.pos-pick').forEach((sel) =>
+    sel.addEventListener('change', () => save({ pos_menu_name: sel.closest('tr').dataset.name, fmh_menu_name: sel.value || null }))
+  );
+  container.querySelectorAll('.pos-suggest').forEach((b) =>
+    b.addEventListener('click', () => save({ pos_menu_name: b.closest('tr').dataset.name, fmh_menu_name: b.dataset.s }))
+  );
+  container.querySelectorAll('.pos-ignore').forEach((b) =>
+    b.addEventListener('click', () => save({ pos_menu_name: b.closest('tr').dataset.name, ignore: true }))
+  );
+  container.querySelectorAll('.pos-reset').forEach((b) =>
+    b.addEventListener('click', () => save({ pos_menu_name: b.closest('tr').dataset.name, fmh_menu_name: null, ignore: false }))
+  );
+  container.querySelectorAll('.pos-del').forEach((b) =>
+    b.addEventListener('click', async () => {
+      if (!confirm('ลบไฟล์นี้? ยอดขายของวันที่อยู่ในไฟล์นี้จะหายจาก dashboard')) return;
+      try {
+        await api(`/api/pos/companies/${companyId}/uploads/${b.closest('tr').dataset.id}`, { method: 'DELETE' });
+        renderPosPanel(container, companyId, view);
+      } catch (err) {
+        msg(`<div class="error-msg">${esc(err.message)}</div>`);
+      }
+    })
+  );
+
+  container.querySelector('.pos-upload-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const file = e.target.file.files[0];
+    if (!file) return;
+    const btn = e.target.querySelector('button');
+    btn.disabled = true;
+    msg('<p class="muted">กำลังอ่านไฟล์...</p>');
+    try {
+      if (!window.PosParse) throw new Error('ตัวอ่านไฟล์ยังโหลดไม่เสร็จ ลองใหม่อีกครั้ง');
+      const parsed = PosParse.aggregate(PosParse.decode(await file.arrayBuffer()));
+      const st = parsed.stats;
+      msg(`<p class="muted">อ่านได้ ${st.lines.toLocaleString('th-TH')} รายการ · ${st.menus} เมนู · ${st.branches.length} สาขา — กำลังอัปโหลด...</p>`);
+      const r = await api(`/api/pos/companies/${companyId}/uploads`, {
+        method: 'POST',
+        body: JSON.stringify({ filename: file.name, format: parsed.format, rows: parsed.rows }),
+      });
+      renderPosPanel(
+        container,
+        companyId,
+        { filter: 'unmatched' },
+        `<div class="ok-msg">อัปโหลดแล้ว: ${esc(thDate(r.date_from))} – ${esc(thDate(r.date_to))} · ${st.lines.toLocaleString('th-TH')} รายการ · ${st.branches.map(esc).join(', ')} · ยอดสุทธิ ${baht(r.net_sales)}${r.replaced ? ' · แทนที่ข้อมูลเดิมของวันเดียวกันแล้ว' : ''}${st.skipped ? ` · ข้าม ${st.skipped} แถวที่ไม่ใช่รายการขาย` : ''}</div>`
+      );
+    } catch (err) {
+      btn.disabled = false;
+      msg(`<div class="error-msg">${esc(err.message)}</div>`);
+    }
+  });
 }
 
 // ---------- step 2: pick widgets for one dashboard from the catalog ----------
 // Catalog groups in the order a client usually thinks about them, with Thai names.
 const CAT_ORDER = [
   ['Cost Control', 'ต้นทุนและกำไรขั้นต้น'],
+  ['POS COGS', 'ต้นทุนจากยอดขาย POS (อัปโหลดไฟล์ เช่น Foodstory)'],
   ['Cross-report', 'เทียบข้ามรายงาน (ซื้อ × ขาย × สูตร)'],
   ['Menu Costing', 'เมนูและสูตรอาหาร'],
   ['Actual vs Theoretical', 'ใช้จริงเทียบตามสูตร'],

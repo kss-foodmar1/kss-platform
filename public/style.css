@@ -417,3 +417,17 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
 .admin-view.company-mode { grid-template-columns: 1fr; }
 .admin-view.company-mode .admin-sidebar { display: none; }
 .demo-pill { display: inline-block; background: #fff3c4; color: #6b5310; border: 1px solid #e8c55a; border-radius: 999px; padding: 1px 9px; font-size: 12px; font-weight: 700; margin-right: 6px; }
+
+/* POS sales upload + menu matching */
+.pos-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 14px 0; }
+.pos-summary > div { background: var(--cream); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pos-summary .muted { font-size: 12px; }
+.pos-summary strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.pos-h3 { margin: 20px 0 8px; font-size: 15px; }
+.pos-filter { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.pos-map-table td { vertical-align: middle; }
+.pos-map-table select { max-width: 260px; width: 100%; }
+.pos-map-table .pos-suggest { margin-top: 6px; }
+.pos-map-table .pos-via { font-size: 12px; margin-left: 6px; }
+.pos-map-table tr.pos-unmatched td:first-child { border-left: 3px solid var(--brass); }
+.widget-note { margin-top: 8px; }

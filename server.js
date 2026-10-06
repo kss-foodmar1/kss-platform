@@ -34,7 +34,7 @@ const app = express();
 // browser has never seen cannot be served from cache. The stamp is the newest
 // mtime among the shell files, so it changes exactly when they do and stays
 // stable across restarts that changed nothing.
-const SHELL_FILES = ['app.js', 'admin.js', 'style.css', 'index.html', 'i18n.js', 'i18n-en.js'];
+const SHELL_FILES = ['app.js', 'admin.js', 'style.css', 'index.html', 'i18n.js', 'i18n-en.js', 'pos-parse.js'];
 const ASSET_VERSION = (() => {
   try {
     const newest = SHELL_FILES.reduce((max, f) => {
@@ -49,7 +49,7 @@ const ASSET_VERSION = (() => {
 
 const SHELL_HTML = (() => {
   const raw = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
-  return raw.replace(/(src|href)="\/(app\.js|admin\.js|style\.css|i18n\.js|i18n-en\.js)"/g, `$1="/$2?v=${ASSET_VERSION}"`);
+  return raw.replace(/(src|href)="\/(app\.js|admin\.js|style\.css|i18n\.js|i18n-en\.js|pos-parse\.js)"/g, `$1="/$2?v=${ASSET_VERSION}"`);
 })();
 
 function sendShell(res) {
@@ -58,7 +58,8 @@ function sendShell(res) {
 }
 
 // Keep the raw bytes of webhook bodies: Omise's signature is over them.
-app.use(express.json({ verify: (req, res, buf) => { if (req.originalUrl.startsWith('/api/webhooks/')) req.rawBody = buf; } }));
+// 20mb: a POS upload is daily totals, but a few months of a large chain adds up.
+app.use(express.json({ limit: '20mb', verify: (req, res, buf) => { if (req.originalUrl.startsWith('/api/webhooks/')) req.rawBody = buf; } }));
 app.use(cookieParser());
 
 // The shell is served from memory with versioned asset URLs, so it never comes
@@ -81,6 +82,7 @@ app.use('/api/dashboards', dashboardRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/admin/billing', billingRoutes.adminRouter);
 app.use('/api/admin', adminRoutes);
+app.use('/api/pos', require('./routes/pos'));
 app.use('/api/pay', billingRoutes.publicRouter);
 app.use('/api/webhooks', billingRoutes.webhookRouter);
 app.get('/pay/:token', (req, res) => {

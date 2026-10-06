@@ -173,3 +173,56 @@ CREATE TABLE IF NOT EXISTS fmh_sync_errors (
   failed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (company_id, cache_key)
 ) DEFAULT CHARSET=utf8mb4;
+
+-- POS sales uploaded from a file (Foodstory and other POS with no API).
+-- Stored as daily totals per branch + menu — the browser aggregates the export
+-- before upload, so bill numbers, customer names and phone numbers never reach
+-- the server. A new upload replaces the days (per branch) it covers.
+CREATE TABLE IF NOT EXISTS pos_uploads (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  company_id INT NOT NULL,
+  filename VARCHAR(255) NOT NULL,
+  pos_format VARCHAR(32) NOT NULL DEFAULT 'generic',
+  date_from DATE NULL,
+  date_to DATE NULL,
+  line_count INT NOT NULL DEFAULT 0,
+  net_sales DECIMAL(14,2) NOT NULL DEFAULT 0,
+  uploaded_by INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX (company_id),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS pos_sales_daily (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  company_id INT NOT NULL,
+  upload_id INT NOT NULL,
+  sale_date DATE NOT NULL,
+  branch VARCHAR(255) NOT NULL,
+  menu_name VARCHAR(255) NOT NULL,
+  pos_code VARCHAR(64) NOT NULL DEFAULT '',
+  pos_group VARCHAR(255) NOT NULL DEFAULT '',
+  pos_category VARCHAR(255) NOT NULL DEFAULT '',
+  qty DECIMAL(14,3) NOT NULL DEFAULT 0,
+  net_sales DECIMAL(14,2) NOT NULL DEFAULT 0,
+  gross_sales DECIMAL(14,2) NOT NULL DEFAULT 0,
+  discount DECIMAL(14,2) NOT NULL DEFAULT 0,
+  line_count INT NOT NULL DEFAULT 0,
+  INDEX (company_id, sale_date),
+  INDEX (upload_id),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (upload_id) REFERENCES pos_uploads(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
+-- How a POS menu name maps onto an FMH recipe, when the names differ.
+-- fmh_menu_name NULL + ignore = TRUE: not a dish (bag fee, service charge).
+CREATE TABLE IF NOT EXISTS pos_menu_map (
+  company_id INT NOT NULL,
+  pos_key VARCHAR(255) NOT NULL,
+  pos_menu_name VARCHAR(255) NOT NULL,
+  fmh_menu_name VARCHAR(255) NULL,
+  ignore_menu BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (company_id, pos_key),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;

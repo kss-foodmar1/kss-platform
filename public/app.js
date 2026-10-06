@@ -687,6 +687,18 @@ class DashboardView {
     if (this.hasDateSource) this.bindRange(header);
   }
 
+  // A custom range picked from code (the POS "show the file's days" button).
+  setRange(startIso, endIso) {
+    this.rangeDays = null;
+    this.range = { start: startIso, end: endIso };
+    this.wrap.querySelectorAll('.range-chip').forEach((c) => c.classList.remove('active'));
+    const s = this.wrap.querySelector('.range-start');
+    const e = this.wrap.querySelector('.range-end');
+    if (s) s.value = startIso;
+    if (e) e.value = endIso;
+    this.renderWidgets();
+  }
+
   bindRange(header) {
     const start = header.querySelector('.range-start');
     const end = header.querySelector('.range-end');
@@ -777,7 +789,7 @@ class DashboardView {
     const keyMissing = errors.some((r) => r.code === 'FMH_KEY_MISSING');
     const syncedTimes = ok.map((r) => r.meta && r.meta.synced_at).filter(Boolean).sort();
     const latest = ok
-      .filter((r) => r.meta && r.meta.quota)
+      .filter((r) => r.meta && r.meta.quota && r.meta.quota.monthly_row_limit !== undefined)
       .sort((a, b) => String(b.meta.synced_at).localeCompare(String(a.meta.synced_at)))[0];
 
     this.statusEl.innerHTML = '';
@@ -882,6 +894,14 @@ class DashboardView {
       if (!res) return;
       if (res.error) {
         body.innerHTML = `<p class="muted">${esc(res.code === 'FMH_KEY_MISSING' ? 'ยังไม่มีข้อมูล' : res.error)}</p>`;
+        if (res.code === 'POS_NO_UPLOAD' && isCompanyAdmin()) {
+          body.insertAdjacentHTML('beforeend', '<button type="button" class="btn small primary">อัปโหลดไฟล์ยอดขาย POS</button>');
+          body.querySelector('button').addEventListener('click', () => {
+            adminState.selected = { type: 'my-dashboards', id: state.user.company_id };
+            adminState.focus = 'pos';
+            openAdminConsole();
+          });
+        }
         return;
       }
       const cfg = widget.config || {};
@@ -935,6 +955,16 @@ class DashboardView {
               ? 'ไม่พบข้อมูลในช่วงวันที่เลือก'
               : 'รายงานนี้ไม่มีข้อมูลสำหรับบริษัทนี้'
         )}</p>`;
+        // An uploaded POS file covers the days it covers, which are often not
+        // "the last 30 days": say which days it has and offer to jump there.
+        const pos = res.meta && res.meta.quota && res.meta.quota.pos;
+        if (dated && pos && pos.date_to && !raw.length) {
+          body.insertAdjacentHTML(
+            'beforeend',
+            `<p class="muted">ไฟล์ยอดขาย POS มีข้อมูลวันที่ ${esc(pos.date_from)} ถึง ${esc(pos.date_to)}</p><button type="button" class="btn small ghost">ดูช่วงวันที่ของไฟล์</button>`
+          );
+          body.querySelector('button').addEventListener('click', () => this.setRange(pos.date_from, pos.date_to));
+        }
         return;
       }
       const renderer = RENDERERS[widget.chart_type];
@@ -944,6 +974,9 @@ class DashboardView {
       }
       try {
         renderer(body, rows, cfg);
+        // A note on how to read the widget. Renderers that place it themselves
+        // (range) are left alone.
+        if (cfg.foot && widget.chart_type !== 'range') body.insertAdjacentHTML('beforeend', `<p class="widget-foot widget-note">${esc(cfg.foot)}</p>`);
       } catch (err) {
         console.error('Widget render failed', widget, err);
         body.innerHTML = `<p class="muted">แสดงผล widget นี้ไม่สำเร็จ (${esc(err.message)})</p>`;

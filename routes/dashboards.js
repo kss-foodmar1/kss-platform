@@ -121,7 +121,20 @@ router.get(
     const health = await getSyncHealth(dashboard.company_id, source, grouping);
     const wantSaved = req.query.saved === '1';
     const saved = wantSaved ? await getSaved(dashboard.company_id, source, grouping) : null;
-    const cached = saved || (await getCached(dashboard.company_id, source, grouping));
+    let cached = saved || (await getCached(dashboard.company_id, source, grouping));
+    // A computed report costs nothing to build, so build it on first view
+    // rather than waiting for the nightly run (demo POS file, new widget).
+    if (!cached && cfg.local) {
+      await syncOne(dashboard.company_id, source, null).catch((err) => console.error(`Local build failed (${dashboard.company_id}/${source}):`, err.message));
+      cached = await getCached(dashboard.company_id, source, null);
+    }
+    if (!cached && cfg.local) {
+      return res.status(409).json({
+        error: 'ยังไม่มีไฟล์ยอดขาย POS — ผู้ดูแลของบริษัทอัปโหลดได้ที่ ✎ จัดการ Dashboard → ยอดขาย POS',
+        code: 'POS_NO_UPLOAD',
+        health,
+      });
+    }
     if (!cached) {
       const [[company]] = await pool.query(`SELECT fmh_api_key_enc, data_source FROM companies WHERE id = ?`, [dashboard.company_id]);
       const connected = company && (company.fmh_api_key_enc || company.data_source === 'demo');
@@ -176,7 +189,9 @@ router.post(
         `SELECT synced_at FROM fmh_report_cache WHERE company_id = ? AND cache_key = ?`,
         [dashboard.company_id, key]
       );
-      const elapsed = row ? Date.now() - new Date(row.synced_at).getTime() : Infinity;
+      // A computed report (POS sales) costs no quota, so it has no cooldown.
+      const local = !!(FMH_REPORTS[source] || {}).local;
+      const elapsed = row && !local ? Date.now() - new Date(row.synced_at).getTime() : Infinity;
       if (elapsed < REFRESH_COOLDOWN_MS) {
         shortestWaitMs = Math.min(shortestWaitMs, REFRESH_COOLDOWN_MS - elapsed);
         results[key] = { ok: false, skipped: true };
