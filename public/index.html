@@ -21,6 +21,69 @@
 
 <!-- LOGIN SCREEN -->
 <div id="login-screen" class="login-screen">
+  <!-- Shown only where the server marks the page login-hero-on (production);
+       hidden on phones, where the form comes first. -->
+  <aside class="login-hero" aria-hidden="true">
+    <div class="login-hero-brand">KSS <span>Dashboard</span></div>
+    <div class="login-hero-copy">
+      <p class="login-hero-kicker">Procurement · Central kitchen · POS</p>
+      <h2 class="login-hero-title" data-no-i18n>Accelerate data to insights you can act on</h2>
+      <p class="login-hero-sub">ข้อมูลจัดซื้อ ครัวกลาง และยอดขายหน้าร้าน รวมเป็นภาพเดียวที่บอกว่าต้องทำอะไรต่อ</p>
+    </div>
+    <svg class="login-hero-art" viewBox="0 0 560 400" role="presentation" focusable="false">
+      <defs>
+        <linearGradient id="lhGlow" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#A9812F" stop-opacity=".55"/><stop offset="1" stop-color="#BE4229" stop-opacity="0"/></linearGradient>
+        <linearGradient id="lhArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#E7C77A" stop-opacity=".45"/><stop offset="1" stop-color="#E7C77A" stop-opacity="0"/></linearGradient>
+      </defs>
+      <ellipse cx="300" cy="210" rx="250" ry="170" fill="none" stroke="#F3EEDF" stroke-opacity=".12"/>
+      <circle cx="460" cy="120" r="84" fill="url(#lhGlow)"/>
+      <!-- main dashboard window -->
+      <g transform="translate(70 70) rotate(-4)">
+        <rect width="360" height="250" rx="18" fill="#F3EEDF"/>
+        <rect x="18" y="16" width="120" height="10" rx="5" fill="#1B2B22" opacity=".85"/>
+        <circle cx="318" cy="21" r="5" fill="#BE4229"/><circle cx="334" cy="21" r="5" fill="#A9812F"/>
+        <!-- KPI tiles -->
+        <g font-family="Plus Jakarta Sans, sans-serif" font-weight="700">
+          <rect x="18" y="40" width="100" height="56" rx="10" fill="#fff"/><text x="30" y="62" font-size="9" fill="#6b7268" font-weight="600">SALES</text><text x="30" y="84" font-size="17" fill="#1B2B22">฿4.8M</text>
+          <rect x="128" y="40" width="100" height="56" rx="10" fill="#fff"/><text x="140" y="62" font-size="9" fill="#6b7268" font-weight="600">COGS</text><text x="140" y="84" font-size="17" fill="#1B2B22">32.4%</text>
+          <rect x="238" y="40" width="104" height="56" rx="10" fill="#1B2B22"/><text x="250" y="62" font-size="9" fill="#E7C77A" font-weight="600">GROSS MARGIN</text><text x="250" y="84" font-size="17" fill="#fff">+3.1 pts</text>
+        </g>
+        <!-- trend -->
+        <rect x="18" y="108" width="210" height="124" rx="10" fill="#fff"/>
+        <path d="M30 210 L62 196 L94 200 L126 176 L158 182 L190 150 L216 140 L216 222 L30 222 Z" fill="url(#lhArea)"/>
+        <path d="M30 210 L62 196 L94 200 L126 176 L158 182 L190 150 L216 140" fill="none" stroke="#A9812F" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M30 196 L62 200 L94 188 L126 192 L158 170 L190 174 L216 162" fill="none" stroke="#2F6FB0" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="1 6"/>
+        <g fill="#e8e2cf"><rect x="30" y="124" width="60" height="6" rx="3"/><rect x="30" y="136" width="36" height="5" rx="2.5"/></g>
+        <!-- heatmap -->
+        <rect x="238" y="108" width="104" height="124" rx="10" fill="#fff"/>
+        <g transform="translate(250 122)">
+          <rect width="16" height="16" rx="3" fill="#F3EEDF"/><rect x="20" width="16" height="16" rx="3" fill="#F3EEDF"/><rect x="40" width="16" height="16" rx="3" fill="#F3EEDF"/><rect x="60" width="16" height="16" rx="3" fill="#f3c9bd"/>
+          <rect y="20" width="16" height="16" rx="3" fill="#F3EEDF"/><rect x="20" y="20" width="16" height="16" rx="3" fill="#F3EEDF"/><rect x="40" y="20" width="16" height="16" rx="3" fill="#F3EEDF"/><rect x="60" y="20" width="16" height="16" rx="3" fill="#F3EEDF"/>
+          <rect y="40" width="16" height="16" rx="3" fill="#F3EEDF"/><rect x="20" y="40" width="16" height="16" rx="3" fill="#f3c9bd"/><rect x="40" y="40" width="16" height="16" rx="3" fill="#BE4229"/><rect x="60" y="40" width="16" height="16" rx="3" fill="#BE4229"/>
+          <rect y="60" width="16" height="16" rx="3" fill="#F3EEDF"/><rect x="20" y="60" width="16" height="16" rx="3" fill="#F3EEDF"/><rect x="40" y="60" width="16" height="16" rx="3" fill="#F3EEDF"/><rect x="60" y="60" width="16" height="16" rx="3" fill="#F3EEDF"/>
+          <rect y="80" width="16" height="16" rx="3" fill="#F3EEDF"/><rect x="20" y="80" width="16" height="16" rx="3" fill="#F3EEDF"/><rect x="40" y="80" width="16" height="16" rx="3" fill="#f3c9bd"/><rect x="60" y="80" width="16" height="16" rx="3" fill="#F3EEDF"/>
+        </g>
+      </g>
+      <!-- floating insight card -->
+      <g transform="translate(330 250) rotate(3)">
+        <rect width="200" height="92" rx="14" fill="#fff" stroke="#e8e2cf"/>
+        <rect x="14" y="14" width="26" height="26" rx="8" fill="#BE4229"/>
+        <path d="M27 20 v8 M27 32 v1.5" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+        <text x="50" y="26" font-family="Plus Jakarta Sans, sans-serif" font-size="10" font-weight="700" fill="#BE4229">INSIGHT</text>
+        <text x="50" y="40" font-family="Kanit, sans-serif" font-size="12" font-weight="600" fill="#1B2B22">สาขาบางนา ควรตรวจ</text>
+        <text x="14" y="62" font-family="Kanit, sans-serif" font-size="10.5" fill="#6b7268">ซื้อจากครัวกลาง 74% ของค่ากลาง</text>
+        <text x="14" y="78" font-family="Kanit, sans-serif" font-size="10.5" fill="#6b7268">3 เดือนติด · ไก่หมัก ซอสผัด</text>
+      </g>
+      <!-- source chips -->
+      <g font-family="Plus Jakarta Sans, sans-serif" font-size="10" font-weight="700" letter-spacing=".06em">
+        <g transform="translate(20 330)"><rect width="88" height="28" rx="14" fill="#F3EEDF" fill-opacity=".1" stroke="#F3EEDF" stroke-opacity=".3"/><circle cx="16" cy="14" r="4" fill="#E7C77A"/><text x="26" y="18" fill="#F3EEDF">FMH</text></g>
+        <g transform="translate(116 330)"><rect width="88" height="28" rx="14" fill="#F3EEDF" fill-opacity=".1" stroke="#F3EEDF" stroke-opacity=".3"/><circle cx="16" cy="14" r="4" fill="#9cc0e6"/><text x="26" y="18" fill="#F3EEDF">POS</text></g>
+        <g transform="translate(212 330)"><rect width="100" height="28" rx="14" fill="#F3EEDF" fill-opacity=".1" stroke="#F3EEDF" stroke-opacity=".3"/><circle cx="16" cy="14" r="4" fill="#e89a86"/><text x="26" y="18" fill="#F3EEDF">RECIPES</text></g>
+      </g>
+      <path d="M512 186 l4 10 l10 4 l-10 4 l-4 10 l-4 -10 l-10 -4 l10 -4z" fill="#E7C77A"/>
+      <path d="M40 120 l3 7 l7 3 l-7 3 l-3 7 l-3 -7 l-7 -3 l7 -3z" fill="#F3EEDF" opacity=".5"/>
+    </svg>
+  </aside>
   <div class="login-card">
     <button type="button" class="lang-toggle login-lang" data-no-i18n aria-label="Language / ภาษา"></button>
     <h1>KSS Dashboard</h1>
