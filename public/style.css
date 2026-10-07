@@ -535,3 +535,9 @@ html.login-hero-on #login-screen > .login-card { flex: 0 0 400px; max-width: 400
   html.login-hero-on #login-screen .login-hero { display: none; }
   html.login-hero-on #login-screen .login-card { margin: 0; }
 }
+
+/* KSS admin: the company list stays in view while the page scrolls, so the
+   selected company is always visible. Desktop only; phones stack it on top. */
+@media (min-width: 901px) {
+  .admin-sidebar { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto; box-sizing: border-box; }
+}
