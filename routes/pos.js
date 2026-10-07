@@ -71,6 +71,18 @@ router.delete(
   })
 );
 
+// Branch purchase audit: which FMH Sales Analysis customer is which POS branch.
+router.get('/companies/:id/ck-branches', send(async (req, res) => res.json(await require('../lib/ckAudit').overview(req.companyId))));
+router.put(
+  '/companies/:id/ck-branches',
+  send(async (req, res) => {
+    const ck = require('../lib/ckAudit');
+    const { fmh_customer, pos_branch, ignore } = req.body || {};
+    await ck.setMap(req.companyId, { fmh_customer, pos_branch: pos_branch || null, ignore: !!ignore });
+    res.json({ ok: true, overview: await ck.overview(req.companyId) });
+  })
+);
+
 router.put(
   '/companies/:id/map',
   send(async (req, res) => {

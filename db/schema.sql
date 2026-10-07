@@ -310,3 +310,16 @@ CREATE TABLE IF NOT EXISTS fmh_file_rows (
   INDEX (upload_id),
   FOREIGN KEY (upload_id) REFERENCES fmh_file_uploads(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;
+
+-- Branch purchase audit (lib/ckAudit.js): which FMH Sales Analysis customer
+-- is which POS branch. Guessed from the names; a row here is a person's
+-- choice (a branch, or "not a branch" for an outside buyer).
+CREATE TABLE IF NOT EXISTS ck_branch_map (
+  company_id INT NOT NULL,
+  fmh_customer VARCHAR(255) NOT NULL,
+  pos_branch VARCHAR(255) NULL,
+  ignore_customer BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (company_id, fmh_customer),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
