@@ -779,6 +779,7 @@ async function renderCompanyDetail(main, companyId) {
     <section class="admin-card">
       <h2>6. ยอดขาย POS (Foodstory และ POS ที่ไม่มี API)</h2>
       <div class="pos-panel"></div>
+      <div class="ck-branch-panel"></div>
     </section>
 
     <section class="admin-card" id="fmh-files">
@@ -849,6 +850,7 @@ async function renderCompanyDetail(main, companyId) {
   renderUserManager(main.querySelector('.company-users'), { companyId });
   renderBillingPanel(main.querySelector('.billing'), companyId);
   renderPosPanel(main.querySelector('.pos-panel'), companyId);
+  renderCkBranchPanel(main.querySelector('.ck-branch-panel'), companyId);
   renderFmhFilesPanel(main.querySelector('.fmh-files-panel'), companyId);
   if (adminState.focus === 'fmh-files') {
     adminState.focus = null;
@@ -1091,10 +1093,12 @@ async function renderMyDashboards(main, companyId) {
     <section class="admin-card" id="pos-sales">
       <h2>ยอดขาย POS (Foodstory และ POS ที่ไม่มี API)</h2>
       <div class="pos-panel"></div>
+      <div class="ck-branch-panel"></div>
     </section>`;
   renderComposer(main.querySelector('.composer'), companyId);
   renderFmhFilesPanel(main.querySelector('.fmh-files-panel'), companyId);
   renderPosPanel(main.querySelector('.pos-panel'), companyId);
+  renderCkBranchPanel(main.querySelector('.ck-branch-panel'), companyId);
   const nameForm = main.querySelector('.company-name-form');
   nameForm.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1248,6 +1252,49 @@ async function renderFmhFilesPanel(container, companyId, flash = '') {
         renderFmhFilesPanel(container, companyId);
       } catch (err) {
         msg(`<div class="error-msg">${esc(err.message)}</div>`);
+      }
+    })
+  );
+}
+// ---------- Branch purchase audit: FMH customer ↔ POS branch ----------
+// The audit compares what each POS branch sells with what the CK sold to the
+// matching FMH Sales Analysis customer. Names are matched by the word after
+// "สาขา"; anything else is set here once (or marked "not a branch").
+async function renderCkBranchPanel(container, companyId) {
+  if (!container) return;
+  let o;
+  try {
+    o = await api(`/api/pos/companies/${companyId}/ck-branches`);
+  } catch (err) {
+    container.innerHTML = '';
+    return;
+  }
+  if (!o.has_pos || !o.has_ck) {
+    container.innerHTML = '';
+    return;
+  }
+  const opts = (sel) => `<option value="">— ไม่ได้จับคู่ —</option>${o.pos_branches.map((b) => `<option value="${esc(b)}"${b === sel ? ' selected' : ''}>${esc(b)}</option>`).join('')}<option value="__ignore"${sel === '__ignore' ? ' selected' : ''}>ไม่ใช่สาขา (ลูกค้าภายนอก)</option>`;
+  const mapped = o.customers.filter((c) => c.branch).length;
+  container.innerHTML = `
+    <h3 class="pos-h3">ตรวจสาขา: ลูกค้าใน FMH Sales คือสาขาไหนใน POS</h3>
+    <p class="helper-text" style="margin-top:0;">ใช้กับ widget กลุ่ม "ตรวจสาขา" — เทียบยอดที่ครัวกลางขายให้แต่ละสาขากับยอดขายหน้าร้านของสาขานั้น ระบบจับคู่จากชื่อหลังคำว่า "สาขา" ให้ก่อน (จับคู่แล้ว ${mapped} จาก ${o.customers.length})</p>
+    <div class="table-scroll"><table class="mini-table"><thead><tr><th>ลูกค้าใน FMH Sales Analysis</th><th class="num">ยอดซื้อจากครัวกลาง</th><th>สาขาใน POS</th><th></th></tr></thead><tbody>${o.customers
+      .map((c) => `<tr data-c="${esc(c.customer)}"><td>${esc(c.customer)}</td><td class="num">${baht(c.ck_value)}</td>
+        <td><select class="ckb-pick" aria-label="สาขาใน POS">${opts(c.ignored ? '__ignore' : c.branch || '')}</select></td>
+        <td class="muted">${c.via === 'name' ? 'ชื่อตรงกัน' : c.via === 'manual' ? 'ตั้งเอง' : ''}</td></tr>`)
+      .join('')}</tbody></table></div>
+    <div class="ckb-msg"></div>`;
+  container.querySelectorAll('.ckb-pick').forEach((sel) =>
+    sel.addEventListener('change', async () => {
+      const v = sel.value;
+      try {
+        await api(`/api/pos/companies/${companyId}/ck-branches`, {
+          method: 'PUT',
+          body: JSON.stringify({ fmh_customer: sel.closest('tr').dataset.c, pos_branch: v && v !== '__ignore' ? v : null, ignore: v === '__ignore' }),
+        });
+        renderCkBranchPanel(container, companyId);
+      } catch (err) {
+        container.querySelector('.ckb-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
       }
     })
   );
@@ -1598,6 +1645,7 @@ async function renderPosPanel(container, companyId, view = { filter: 'unmatched'
 const CAT_ORDER = [
   ['Cost Control', 'ต้นทุนและกำไรขั้นต้น'],
   ['POS COGS', 'ต้นทุนจากยอดขาย POS (อัปโหลดไฟล์ เช่น Foodstory)'],
+  ['Branch Audit', 'ตรวจสาขา: ซื้อจากครัวกลางสมส่วนกับยอดขายไหม'],
   ['Cross-report', 'เทียบข้ามรายงาน (ซื้อ × ขาย × สูตร)'],
   ['Menu Costing', 'เมนูและสูตรอาหาร'],
   ['Actual vs Theoretical', 'ใช้จริงเทียบตามสูตร'],

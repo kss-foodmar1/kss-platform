@@ -935,6 +935,18 @@ window.I18N_EN = {
     'จำนวนใบสั่งของแต่ละสินค้าแยกตามวันที่สั่ง ใช้กำหนดรอบสั่งของประจำ และหาสินค้าที่สั่งกระจัดกระจายจนรวมรอบได้': 'Number of POs per product by order weekday — use it to set regular order days and find scattered orders that could be combined',
     'แถวคือ 20 สินค้าที่สั่งบ่อยที่สุด · ตัวเลขคือจำนวนใบสั่ง': 'Rows are the 20 most-ordered products · figures are PO counts',
     'ยอดขาย POS สาขา × วัน': 'POS sales — branch × day',
+    // ---------- branch purchase audit ----------
+    'ตรวจสาขา: ซื้อจากครัวกลางสมส่วนกับยอดขายไหม': 'Branch audit: are CK purchases in line with sales?',
+    'ตรวจสาขา: ภาพรวมเดือนล่าสุด': 'Branch audit: latest month',
+    'ตรวจสาขา: สัดส่วนซื้อจากครัวกลาง สาขา × เดือน': 'Branch audit: CK purchases ÷ sales, branch × month',
+    'ตรวจสาขา: สาขาเรียงตามความน่าสงสัย': 'Branch audit: branches to check first',
+    'ตรวจสาขา: สัดส่วนซื้อจากครัวกลางรายเดือน': 'Branch audit: CK share of sales by month',
+    'ตรวจสาขา: ควรใช้ตามสูตร vs สั่งจากครัวกลาง': 'Branch audit: recipe need vs ordered from CK',
+    'ตรวจสาขา: สั่งต่อการขาย 1,000 ชิ้น (ของหลัก)': 'Branch audit: units ordered per 1,000 items sold',
+    'ตรวจสาขา: ลูกค้าใน FMH Sales คือสาขาไหนใน POS': 'Branch audit: which POS branch is each FMH Sales customer',
+    'ควรตรวจ': 'Check', 'เฝ้าดู': 'Watch', 'ปกติ': 'Normal', 'เทียบไม่ได้': 'No comparison',
+    'ค่ากลาง': 'Median', 'ล่าสุด เทียบค่ากลาง': 'Latest vs median',
+    'ไม่ใช่สาขา (ลูกค้าภายนอก)': 'Not a branch (outside buyer)', '— ไม่ได้จับคู่ —': '— not matched —', 'ตั้งเอง': 'Set manually',
     // ---------- history from FMH export files ----------
     'ข้อมูลย้อนหลังจากไฟล์ FMH (เกิน 90 วัน)': 'History from FMH files (beyond 90 days)',
     '7. ข้อมูลย้อนหลังจากไฟล์ FMH (เกิน 90 วัน)': '7. History from FMH files (beyond 90 days)',

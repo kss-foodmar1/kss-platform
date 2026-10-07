@@ -2112,7 +2112,18 @@ function renderHeatmap(body, rows, cfg) {
   const colLabel = (ck) => (cfg.col_date ? bucketLabel(ck, cfg.bucket || 'day') : ck);
   const short = (v) => fmtCompact(v, cfg.format);
   const shade = (step, list) => `background:${list[step]};color:${step >= 4 ? '#fff' : '#1b2b22'}`;
-  let html = `<table class="heat-table"><thead><tr><th class="heat-row">${esc(cfg.row_label || '')}</th>${colKeys.map((ck) => `<th>${esc(colLabel(ck))}</th>`).join('')}<th>${scale === 'diverging_row' ? 'เฉลี่ย' : 'รวม'}</th></tr></thead><tbody>`;
+  // threshold_col: each cell against its column's median (a month across
+  // branches); below `threshold` × median is flagged, far below is darker.
+  const thr = Number(cfg.threshold) || 0.85;
+  const colMed = new Map();
+  if (scale === 'threshold_col') {
+    colKeys.forEach((ck) => {
+      const v = rowKeys.map(([rk]) => val.get(rk + '\u0001' + ck)).filter((x) => x !== undefined).sort((a, b) => a - b);
+      if (v.length >= 3) colMed.set(ck, v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2);
+    });
+  }
+  const lastCol = colKeys[colKeys.length - 1];
+  let html = `<table class="heat-table"><thead><tr><th class="heat-row">${esc(cfg.row_label || '')}</th>${colKeys.map((ck) => `<th>${esc(colLabel(ck))}</th>`).join('')}<th>${scale === 'diverging_row' ? 'เฉลี่ย' : scale === 'threshold_col' ? 'ล่าสุด เทียบค่ากลาง' : 'รวม'}</th></tr></thead><tbody>`;
   rowKeys.forEach(([rk, , rowValue]) => {
     const vals = colKeys.map((ck) => val.get(rk + '\u0001' + ck));
     const present = vals.filter((v) => v !== undefined);
@@ -2123,8 +2134,18 @@ function renderHeatmap(body, rows, cfg) {
       const tip = `${rk} · ${colLabel(colKeys[i])}: ${v === undefined ? 'ไม่มีข้อมูล' : fmtValue(v, cfg.format)}${scale === 'diverging_row' && v !== undefined ? ` (${v >= avg ? '+' : ''}${fmtValue(v - avg, cfg.format)} จากค่าเฉลี่ยของแถว)` : ''}`;
       if (v === undefined) return `<td class="heat-empty" title="${esc(tip)}">–</td>`;
       let style;
+      if (scale === 'threshold_col') {
+        const med = colMed.get(colKeys[i]);
+        const r = med ? v / med : 1;
+        style = r < thr - 0.1 ? shade(5, HEAT_PALETTES.red) : r < thr ? shade(2, HEAT_PALETTES.red) : 'background:var(--cream);color:var(--ink)';
+        const tip2 = med ? `${tip} · ค่ากลาง ${fmtValue(med, cfg.format)} (${Math.round(r * 100)}%)` : tip;
+        return `<td style="${style}" title="${esc(tip2)}">${esc(short(v))}</td>`;
+      }
       if (scale === 'diverging_row') {
-        const t = Math.min(1, Math.abs(v - avg) / dev);
+        // diverge_rel: shade by % away from the row average (0.3 = full) with
+        // a dead zone, so a 10-vs-11 row doesn't look like an alarm.
+        const rel = cfg.diverge_rel ? Math.abs(v - avg) / Math.max(1e-9, Math.abs(avg)) : null;
+        const t = rel === null ? Math.min(1, Math.abs(v - avg) / dev) : rel < cfg.diverge_rel / 3 ? 0 : Math.min(1, rel / cfg.diverge_rel);
         const step = Math.min(6, Math.round(t * 5));
         style = step === 0 ? 'background:var(--cream);color:var(--ink)' : shade(step, v < avg ? HEAT_PALETTES.red : HEAT_PALETTES.blue);
       } else {
@@ -2133,9 +2154,12 @@ function renderHeatmap(body, rows, cfg) {
         style = shade(step, pal);
       }
       return `<td style="${style}" title="${esc(tip)}">${esc(short(v))}</td>`;
-    }).join('')}<td class="heat-total">${esc(short(scale === 'diverging_row' ? avg : rowValue))}</td></tr>`;
+    }).join('')}<td class="heat-total">${esc(scale === 'threshold_col' ? (() => { const v = val.get(rk + '\u0001' + lastCol); const m = colMed.get(lastCol); return v !== undefined && m ? Math.round((v / m) * 100) + '%' : '–'; })() : short(scale === 'diverging_row' ? avg : rowValue))}</td></tr>`;
   });
-  if (cfg.col_totals !== false && scale !== 'diverging_row' && !/pct/.test(cfg.format || '')) {
+  if (scale === 'threshold_col') {
+    html += `<tr class="heat-sum"><th class="heat-row">ค่ากลาง</th>${colKeys.map((ck) => `<td>${colMed.has(ck) ? esc(short(colMed.get(ck))) : '–'}</td>`).join('')}<td></td></tr>`;
+  }
+  if (cfg.col_totals !== false && scale !== 'diverging_row' && scale !== 'threshold_col' && !/pct/.test(cfg.format || '')) {
     const colTotals = colKeys.map((ck) => rowKeys.reduce((a, [rk]) => a + (val.get(rk + '\u0001' + ck) || 0), 0));
     html += `<tr class="heat-sum"><th class="heat-row">รวม</th>${colTotals.map((v) => `<td>${esc(short(v))}</td>`).join('')}<td>${esc(short(colTotals.reduce((a, b) => a + b, 0)))}</td></tr>`;
   }
@@ -2146,7 +2170,9 @@ function renderHeatmap(body, rows, cfg) {
   body.appendChild(wrap);
   // The key: what light and dark mean, with the values at either end.
   const swatches = (list) => list.map((c) => `<i style="background:${c}"></i>`).join('');
-  const legend = scale === 'diverging_row'
+  const legend = scale === 'threshold_col'
+    ? `<span class="heat-ramp"><i style="background:${HEAT_PALETTES.red[5]}"></i></span><span>ต่ำกว่า ${Math.round((thr - 0.1) * 100)}% ของค่ากลางเดือนนั้น</span><span class="heat-ramp"><i style="background:${HEAT_PALETTES.red[2]}"></i></span><span>ต่ำกว่า ${Math.round(thr * 100)}%</span><span class="heat-ramp"><i style="background:var(--cream)"></i></span><span>ปกติ</span><span class="muted">· ช่อง – คือไม่มีข้อมูล</span>`
+    : scale === 'diverging_row'
     ? `<span>ต่ำกว่าค่าเฉลี่ยของแถว</span><span class="heat-ramp">${swatches([...HEAT_PALETTES.red.slice(1, 6)].reverse())}<i style="background:var(--cream)"></i>${swatches(HEAT_PALETTES.blue.slice(1, 6))}</span><span>สูงกว่า</span>`
     : `<span>${esc(scale === 'row' ? 'น้อยสุดในแถว' : short(gMin))}</span><span class="heat-ramp">${swatches(pal)}</span><span>${esc(scale === 'row' ? 'มากสุดในแถว' : short(gMax))}</span><span class="muted">· ช่อง – คือไม่มีข้อมูล</span>`;
   body.insertAdjacentHTML('beforeend', `<div class="heat-legend">${legend}</div>`);
