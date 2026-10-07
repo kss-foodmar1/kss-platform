@@ -935,6 +935,7 @@ window.I18N_EN = {
     'จำนวนใบสั่งของแต่ละสินค้าแยกตามวันที่สั่ง ใช้กำหนดรอบสั่งของประจำ และหาสินค้าที่สั่งกระจัดกระจายจนรวมรอบได้': 'Number of POs per product by order weekday — use it to set regular order days and find scattered orders that could be combined',
     'แถวคือ 20 สินค้าที่สั่งบ่อยที่สุด · ตัวเลขคือจำนวนใบสั่ง': 'Rows are the 20 most-ordered products · figures are PO counts',
     'ยอดขาย POS สาขา × วัน': 'POS sales — branch × day',
+    'ข้อมูลจัดซื้อ ครัวกลาง และยอดขายหน้าร้าน รวมเป็นภาพเดียวที่บอกว่าต้องทำอะไรต่อ': 'Procurement, central kitchen and front-of-house sales in one picture that tells you what to do next',
     // ---------- branch purchase audit ----------
     'ตรวจสาขา: ซื้อจากครัวกลางสมส่วนกับยอดขายไหม': 'Branch audit: are CK purchases in line with sales?',
     'ตรวจสาขา: ภาพรวมเดือนล่าสุด': 'Branch audit: latest month',

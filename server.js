@@ -48,8 +48,17 @@ const ASSET_VERSION = (() => {
   }
 })();
 
+// Sign-in page style: the illustrated split layout on production, the plain
+// card elsewhere (staging keeps the old look). LOGIN_STYLE=hero|plain wins.
+const LOGIN_HERO = (() => {
+  const set = String(process.env.LOGIN_STYLE || '').toLowerCase();
+  if (set === 'hero' || set === 'plain') return set === 'hero';
+  return String(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT || '').toLowerCase() === 'production';
+})();
+
 const SHELL_HTML = (() => {
-  const raw = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+  let raw = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+  if (LOGIN_HERO) raw = raw.replace('<html lang="th">', '<html lang="th" class="login-hero-on">');
   return raw.replace(/(src|href)="\/(app\.js|admin\.js|style\.css|i18n\.js|i18n-en\.js|pos-parse\.js|fmh-file\.js)"/g, `$1="/$2?v=${ASSET_VERSION}"`);
 })();
 
