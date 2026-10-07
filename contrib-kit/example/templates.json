@@ -1,0 +1,142 @@
+[
+  {
+    "template_key": "cks_overview",
+    "name": "ภาพรวมยอดขายครัวกลาง",
+    "description": "ยอดขาย จำนวนใบสั่ง ยอดเฉลี่ยต่อใบ ยอดเฉลี่ยต่อวัน และจำนวนสินค้าที่ขายได้ในช่วงที่เลือก",
+    "category": "Sales",
+    "report_source": "sales-analysis",
+    "chart_type": "kpi",
+    "config": {
+      "size": "full",
+      "page_filter": "customer",
+      "metrics": [
+        {
+          "label": "ยอดขาย",
+          "format": "currency",
+          "value": {
+            "op": "sum",
+            "field": "total"
+          }
+        },
+        {
+          "label": "ใบสั่งขาย (SO)",
+          "format": "number",
+          "value": {
+            "op": "count_distinct",
+            "field": "so_number"
+          }
+        },
+        {
+          "label": "เฉลี่ยต่อใบสั่ง",
+          "format": "currency",
+          "value": {
+            "op": "div",
+            "a": {
+              "op": "sum",
+              "field": "total"
+            },
+            "b": {
+              "op": "count_distinct",
+              "field": "so_number"
+            }
+          }
+        },
+        {
+          "label": "เฉลี่ยต่อวันที่ส่ง",
+          "format": "currency",
+          "value": {
+            "op": "div",
+            "a": {
+              "op": "sum",
+              "field": "total"
+            },
+            "b": {
+              "op": "count_distinct",
+              "field": "requested_delivery_date"
+            }
+          }
+        },
+        {
+          "label": "สินค้าที่ขายได้",
+          "format": "number",
+          "value": {
+            "op": "count_distinct",
+            "field": "product_code"
+          }
+        }
+      ],
+      "empty_message": "ยังไม่มียอดขายในช่วงนี้"
+    }
+  },
+  {
+    "template_key": "cks_by_customer_trend",
+    "name": "ยอดขายแยกตามลูกค้า ในแต่ละวัน/สัปดาห์/เดือน",
+    "description": "แท่งเดียวเห็นทั้งยอดรวมของช่วงและสัดส่วนของแต่ละลูกค้า สลับวัน สัปดาห์ เดือน ได้ที่ตัว widget",
+    "category": "Sales",
+    "report_source": "sales-analysis",
+    "chart_type": "line",
+    "config": {
+      "size": "full",
+      "rows": 2,
+      "page_filter": "customer",
+      "derived": [
+        {
+          "field": "customer_short",
+          "expr": {
+            "op": "party_short",
+            "from": "customer"
+          }
+        }
+      ],
+      "date_fields": [
+        "requested_delivery_date"
+      ],
+      "bucket": "day",
+      "bucket_toggle": true,
+      "mark": "bar",
+      "stacked": true,
+      "series_by": "customer_short",
+      "value": {
+        "op": "sum",
+        "field": "total"
+      },
+      "top_n": 7,
+      "format": "currency",
+      "empty_message": "ยังไม่มียอดขายในช่วงนี้"
+    }
+  },
+  {
+    "template_key": "cks_top_products",
+    "name": "สินค้าขายดี",
+    "description": "15 อันดับสินค้าที่ทำยอดขายสูงสุดในช่วงที่เลือก",
+    "category": "Sales",
+    "report_source": "sales-analysis",
+    "chart_type": "bar",
+    "config": {
+      "size": "half",
+      "rows": 2,
+      "page_filter": "customer",
+      "derived": [
+        {
+          "field": "product_label",
+          "expr": {
+            "op": "clean_name",
+            "from": "product_name"
+          }
+        }
+      ],
+      "group_by": [
+        "product_label"
+      ],
+      "value": {
+        "op": "sum",
+        "field": "total"
+      },
+      "sort": "desc",
+      "top_n": 15,
+      "format": "currency",
+      "color": "#A9812F",
+      "empty_message": "ยังไม่มียอดขายในช่วงนี้"
+    }
+  }
+]
