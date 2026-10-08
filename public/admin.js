@@ -1283,6 +1283,7 @@ async function renderLinePanel(container, companyId, flash = '') {
   container.innerHTML = `
     <p class="helper-text" style="margin-top:0;">แจ้ง "สาขาที่ควรตรวจสอบ" (จากรายงานตรวจสาขา) เข้ากลุ่ม LINE ของผู้บริหาร ใช้ LINE Official Account ของบริษัทเอง ข้อความที่ตอบเมื่อมีคนพิมพ์ "สถานะ" ในกลุ่มไม่นับโควต้า ส่วนข้อความแจ้งเตือนอัตโนมัติจะนับตามแพ็กเกจของ OA</p>
     <p class="status-line"><span class="dot ${v.ready && v.group_bound && v.enabled ? 'dot-good' : 'dot-off'}" aria-hidden="true"></span> ${esc(state)}${v.last_sent_at ? ` · ส่งล่าสุด ${esc(fmtDateTime(v.last_sent_at))}` : ''}</p>
+    <p class="helper-text line-event">${v.last_event_at ? `Webhook ล่าสุด ${esc(fmtDateTime(v.last_event_at))}: ${esc(v.last_event_note)}` : 'ยังไม่เคยมี LINE เรียก webhook นี้ (ถ้าตั้งค่าแล้ว ให้กด Verify ใน LINE Developers และตรวจว่า Use webhook เปิดอยู่)'}</p>
     <div class="line-msg">${flash}</div>
     <form class="line-form">
       <label class="field-label">Webhook URL (ใส่ใน LINE Developers → Messaging API)</label>

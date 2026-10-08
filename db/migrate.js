@@ -76,6 +76,13 @@ async function upgradeUsers() {
   }
 }
 
+async function upgradeLine() {
+  // last_event_*: what the LINE webhook last did, so a silent bot can be diagnosed from Admin.
+  if (!(await columnInfo('company_line', 'last_event_at'))) {
+    await pool.query(`ALTER TABLE company_line ADD COLUMN last_event_at TIMESTAMP NULL, ADD COLUMN last_event_note VARCHAR(255) NULL`);
+  }
+}
+
 async function upgradeCompanies() {
   if (!(await columnInfo('companies', 'data_source'))) {
     await pool.query(`ALTER TABLE companies ADD COLUMN data_source ENUM('fmh','demo') NOT NULL DEFAULT 'fmh'`);
@@ -277,6 +284,7 @@ async function main() {
   const n = await runSchemaFile();
   console.log(`Schema: ${n} statement(s) applied.`);
   await upgradeCompanies();
+  await upgradeLine();
   await upgradeUsers();
   await upgradeDashboards();
   await upgradePos();

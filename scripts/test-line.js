@@ -35,12 +35,18 @@ const mock = http.createServer((req, res) => {
     return line.handleWebhook(k, raw, sig, JSON.parse(raw.toString()));
   };
   check('wrong signature → 401', (await post([], 'nope')) === 401);
+  let ev = (await line.publicView(id, 'x')).last_event_note;
+  check('wrong signature is explained in Admin', /ลายเซ็นไม่ตรง/.test(ev), ev);
+  check('Verify (no events) → 200 and noted', (await post([])) === 200 && /Verify ผ่าน/.test((await line.publicView(id, 'x')).last_event_note));
   check('unknown key → 404', (await post([], SECRET, 'zzz')) === 404);
   const G1 = { type: 'group', groupId: 'Gexec1' }, G2 = { type: 'group', groupId: 'Gother' };
   check('join accepted', (await post([{ type: 'join', source: G1, replyToken: 'r1' }])) === 200);
   const [[b1]] = await pool.query(`SELECT group_id FROM company_line WHERE company_id = ?`, [id]);
   check('bound to first group', b1.group_id === 'Gexec1');
   check('greeting replied (free reply API)', sent.length === 1 && sent[0].url === '/v2/bot/message/reply' && sent[0].auth === `Bearer ${TOKEN}`);
+  await line.save(id, { access_token: ' ' });
+  await post([{ type: 'message', source: G1, replyToken: 'rx', message: { type: 'text', text: 'hello' } }]);
+  check('ordinary chat in the group is noted, not answered', sent.length === 1 && /ไม่ใช่คำสั่ง/.test((await line.publicView(id, 'x')).last_event_note));
   await post([{ type: 'message', source: G2, replyToken: 'r2', message: { type: 'text', text: 'สถานะ' } }]);
   check('other group ignored (no reply, no rebinding)', sent.length === 1);
   await post([{ type: 'message', source: { type: 'user', userId: 'U1' }, replyToken: 'r3', message: { type: 'text', text: 'สถานะ' } }]);
