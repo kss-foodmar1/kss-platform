@@ -782,6 +782,11 @@ async function renderCompanyDetail(main, companyId) {
       <div class="ck-branch-panel"></div>
     </section>
 
+    <section class="admin-card" id="line-bot">
+      <h2>LINE แจ้งเตือนผู้บริหาร</h2>
+      <div class="line-panel"></div>
+    </section>
+
     <section class="admin-card" id="fmh-files">
       <h2>7. ข้อมูลย้อนหลังจากไฟล์ FMH (เกิน 90 วัน)</h2>
       <div class="fmh-files-panel"></div>
@@ -851,6 +856,7 @@ async function renderCompanyDetail(main, companyId) {
   renderBillingPanel(main.querySelector('.billing'), companyId);
   renderPosPanel(main.querySelector('.pos-panel'), companyId);
   renderCkBranchPanel(main.querySelector('.ck-branch-panel'), companyId);
+  renderLinePanel(main.querySelector('.line-panel'), companyId);
   renderFmhFilesPanel(main.querySelector('.fmh-files-panel'), companyId);
   if (adminState.focus === 'fmh-files') {
     adminState.focus = null;
@@ -1094,11 +1100,16 @@ async function renderMyDashboards(main, companyId) {
       <h2>ยอดขาย POS (Foodstory และ POS ที่ไม่มี API)</h2>
       <div class="pos-panel"></div>
       <div class="ck-branch-panel"></div>
+    </section>
+    <section class="admin-card" id="line-bot">
+      <h2>LINE แจ้งเตือนผู้บริหาร</h2>
+      <div class="line-panel"></div>
     </section>`;
   renderComposer(main.querySelector('.composer'), companyId);
   renderFmhFilesPanel(main.querySelector('.fmh-files-panel'), companyId);
   renderPosPanel(main.querySelector('.pos-panel'), companyId);
   renderCkBranchPanel(main.querySelector('.ck-branch-panel'), companyId);
+  renderLinePanel(main.querySelector('.line-panel'), companyId);
   const nameForm = main.querySelector('.company-name-form');
   nameForm.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1256,6 +1267,60 @@ async function renderFmhFilesPanel(container, companyId, flash = '') {
     })
   );
 }
+// ---------- LINE bot: alerts to the executive group ----------
+// The company brings its own LINE Official Account. Secrets are write-only:
+// once saved only "ends in ...." comes back.
+async function renderLinePanel(container, companyId, flash = '') {
+  if (!container) return;
+  let v;
+  try {
+    v = await api(`/api/line/companies/${companyId}`);
+  } catch (err) {
+    container.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    return;
+  }
+  const state = !v.ready ? 'ยังไม่ได้ใส่ Channel secret / Access token' : !v.group_bound ? 'รอผูกกลุ่ม — เชิญบอทเข้ากลุ่ม LINE แล้วพิมพ์ข้อความ 1 ข้อความ' : v.enabled ? 'เปิดใช้งาน · ส่งสรุปทุกวัน 08:30 เมื่อรายชื่อสาขาที่ควรตรวจเปลี่ยน' : 'ผูกกลุ่มแล้ว · ปิดการส่งอัตโนมัติอยู่';
+  container.innerHTML = `
+    <p class="helper-text" style="margin-top:0;">แจ้ง "สาขาที่ควรตรวจสอบ" (จากรายงานตรวจสาขา) เข้ากลุ่ม LINE ของผู้บริหาร ใช้ LINE Official Account ของบริษัทเอง ข้อความที่ตอบเมื่อมีคนพิมพ์ "สถานะ" ในกลุ่มไม่นับโควต้า ส่วนข้อความแจ้งเตือนอัตโนมัติจะนับตามแพ็กเกจของ OA</p>
+    <p class="status-line"><span class="dot ${v.ready && v.group_bound && v.enabled ? 'dot-good' : 'dot-off'}" aria-hidden="true"></span> ${esc(state)}${v.last_sent_at ? ` · ส่งล่าสุด ${esc(fmtDateTime(v.last_sent_at))}` : ''}</p>
+    <div class="line-msg">${flash}</div>
+    <form class="line-form">
+      <label class="field-label">Webhook URL (ใส่ใน LINE Developers → Messaging API)</label>
+      <input type="text" readonly class="line-webhook" value="${esc(v.webhook_url)}" aria-label="Webhook URL">
+      <label class="field-label">Channel secret ${v.has_secret ? `<span class="muted">(บันทึกแล้ว ${esc(v.secret_hint)})</span>` : ''}</label>
+      <input type="password" class="line-secret" autocomplete="off" placeholder="${v.has_secret ? 'ใส่ใหม่เพื่อเปลี่ยน' : 'Channel secret'}" aria-label="Channel secret">
+      <label class="field-label">Channel access token (long-lived) ${v.has_token ? `<span class="muted">(บันทึกแล้ว ${esc(v.token_hint)})</span>` : ''}</label>
+      <input type="password" class="line-token" autocomplete="off" placeholder="${v.has_token ? 'ใส่ใหม่เพื่อเปลี่ยน' : 'Channel access token'}" aria-label="Channel access token">
+      <label class="check-row"><input type="checkbox" class="line-enabled" ${v.enabled ? 'checked' : ''}> ส่งแจ้งเตือนอัตโนมัติทุกวัน 08:30 (เมื่อมีสาขาที่ควรตรวจและรายการเปลี่ยนจากครั้งก่อน)</label>
+      <div class="btn-row">
+        <button type="submit" class="btn small primary">บันทึก</button>
+        <button type="button" class="btn small ghost line-test" ${v.ready && v.group_bound ? '' : 'disabled'}>ส่งข้อความทดสอบ</button>
+        <button type="button" class="btn small ghost line-send" ${v.ready && v.group_bound ? '' : 'disabled'}>ส่งสรุปสาขาตอนนี้</button>
+        ${v.group_bound ? '<button type="button" class="btn small danger line-unbind">ยกเลิกการผูกกลุ่ม</button>' : ''}
+      </div>
+    </form>`;
+  const show = (html) => { container.querySelector('.line-msg').innerHTML = html; };
+  container.querySelector('.line-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api(`/api/line/companies/${companyId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ channel_secret: container.querySelector('.line-secret').value, access_token: container.querySelector('.line-token').value, enabled: container.querySelector('.line-enabled').checked }),
+      });
+      renderLinePanel(container, companyId, '<div class="ok-msg">บันทึกแล้ว</div>');
+    } catch (err) {
+      show(`<div class="error-msg">${esc(err.message)}</div>`);
+    }
+  });
+  const act = (sel, fn) => { const b = container.querySelector(sel); if (b) b.addEventListener('click', async () => { b.disabled = true; try { await fn(); } catch (err) { show(`<div class="error-msg">${esc(err.message)}</div>`); } b.disabled = false; }); };
+  act('.line-test', async () => { await api(`/api/line/companies/${companyId}/test`, { method: 'POST', body: '{}' }); show('<div class="ok-msg">ส่งข้อความทดสอบแล้ว — ดูในกลุ่ม LINE</div>'); });
+  act('.line-send', async () => {
+    const r = await api(`/api/line/companies/${companyId}/send`, { method: 'POST', body: JSON.stringify({ force: true }) });
+    show(`<div class="ok-msg">${r.sent ? `ส่งแล้ว (${r.flagged} สาขาที่ควรตรวจ)` : esc(r.reason || 'ไม่ได้ส่ง')}</div>`);
+  });
+  act('.line-unbind', async () => { await api(`/api/line/companies/${companyId}/group`, { method: 'DELETE' }); renderLinePanel(container, companyId, '<div class="ok-msg">ยกเลิกการผูกกลุ่มแล้ว — เชิญบอทเข้ากลุ่มใหม่ได้</div>'); });
+}
+
 // ---------- Branch purchase audit: FMH customer ↔ POS branch ----------
 // The audit compares what each POS branch sells with what the CK sold to the
 // matching FMH Sales Analysis customer. Names are matched by the word after

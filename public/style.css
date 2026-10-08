@@ -541,3 +541,12 @@ html.login-hero-on #login-screen > .login-card { flex: 0 0 400px; max-width: 400
 @media (min-width: 901px) {
   .admin-sidebar { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto; box-sizing: border-box; }
 }
+
+/* LINE bot panel (Admin) */
+.line-form { display: flex; flex-direction: column; gap: 6px; max-width: 560px; }
+.line-form .field-label { font-size: 12px; font-weight: 600; margin-top: 8px; }
+.line-form input[type="text"], .line-form input[type="password"] { width: 100%; box-sizing: border-box; }
+.line-form .line-webhook { color: var(--muted); }
+.line-form .check-row { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin-top: 10px; }
+.line-form .btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.line-msg:empty { display: none; }

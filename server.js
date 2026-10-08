@@ -100,6 +100,8 @@ app.use('/api/pos', require('./routes/pos'));
 app.use('/api/fmh-files', require('./routes/fmhFiles'));
 app.use('/api/announcements', require('./routes/announcements'));
 app.use('/api/pay', billingRoutes.publicRouter);
+app.use('/api/webhooks/line', require('./routes/line').webhookRouter);
+app.use('/api/line', require('./routes/line').router);
 app.use('/api/webhooks', billingRoutes.webhookRouter);
 app.get('/pay/:token', (req, res, next) => {
   if (!require('./lib/omise').paymentsEnabled()) return next();
@@ -164,6 +166,14 @@ cron.schedule(
       console.error('Billing expiry check failed:', e.message);
     }
   },
+  { timezone: 'Asia/Bangkok' }
+);
+
+// LINE bot: 08:30 every day, send the branch alert to each bound group when
+// the flagged list changed (see lib/line.js).
+cron.schedule(
+  '30 8 * * *',
+  () => require('./lib/line').runDaily(process.env.PUBLIC_BASE_URL ? process.env.PUBLIC_BASE_URL.replace(/\/$/, '') : '').catch((e) => console.error('LINE daily failed:', e.message)),
   { timezone: 'Asia/Bangkok' }
 );
 

@@ -323,3 +323,20 @@ CREATE TABLE IF NOT EXISTS ck_branch_map (
   PRIMARY KEY (company_id, fmh_customer),
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;
+
+-- LINE bot (lib/line.js): one LINE Official Account per company. The channel
+-- secret and access token are the company's own, encrypted at rest. The bot
+-- binds to the first group that talks to it (group_id); last_alert_key is the
+-- fingerprint of the last alert sent, so an unchanged list is not sent again.
+CREATE TABLE IF NOT EXISTS company_line (
+  company_id INT NOT NULL PRIMARY KEY,
+  webhook_key VARCHAR(40) NOT NULL UNIQUE,
+  channel_secret_enc TEXT NULL,
+  access_token_enc TEXT NULL,
+  group_id VARCHAR(64) NULL,
+  enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  last_alert_key VARCHAR(64) NULL,
+  last_sent_at TIMESTAMP NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
