@@ -54,6 +54,7 @@ const mock = http.createServer((req, res) => {
   await post([{ type: 'message', source: G1, replyToken: 'r4', message: { type: 'text', text: 'สถานะ' } }]);
   const st = sent[sent.length - 1];
   check('"สถานะ" in bound group answers with flagged branch', sent.length === 2 && st.body.messages[0].text.includes('บางนา'), JSON.stringify(st.body));
+  check('status text explains a missing side', /ยังไม่มียอดขาย POS/.test(line.statusText({ month: null, flagged: [], missing: { pos: true, ck: false } })) && /ครัวกลาง/.test(line.statusText({ month: null, flagged: [], missing: { pos: false, ck: true } })));
   const a1 = await line.sendAlert(id, { base: 'https://app.test' });
   const p = sent[sent.length - 1];
   check('alert pushed to the group as flex', a1.sent && p.url === '/v2/bot/message/push' && p.body.to === 'Gexec1' && p.body.messages[0].type === 'flex' && p.body.messages[0].altText.includes('บางนา'), JSON.stringify(a1));
