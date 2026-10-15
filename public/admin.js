@@ -1278,6 +1278,12 @@ async function renderFmhFilesPanel(container, companyId, flash = '') {
           <td class="muted">${esc(x.fmh_menu)}</td></tr>`
       )
       .join('')}</tbody></table>
+    ${o.archive && o.archive.length ? `
+    <h3 class="sub-h">ประวัติที่ระบบเก็บไว้ให้อัตโนมัติ</h3>
+    <p class="helper-text">ทุกครั้งที่ดึงข้อมูลจาก FMH ระบบเก็บข้อมูลแต่ละวันไว้ในคลังของบริษัทนี้ เมื่อวันไหนเลยช่วง 90 วันที่ FMH ส่งให้ได้ ข้อมูลของวันนั้นยังอยู่ (เก็บ 2 ปี) จึงดูย้อนหลังได้ยาวขึ้นเรื่อย ๆ โดยไม่ต้องอัปโหลดไฟล์ และไม่ใช้โควตา FMH เพิ่ม · รายงานที่เป็นยอดรวมทั้งช่วง (เช่น COGS ตามเมนู, สต็อกคงเหลือ) เก็บแบบนี้ไม่ได้</p>
+    <table class="mini-table fmh-archive"><thead><tr><th>รายงาน</th><th>มีข้อมูลตั้งแต่</th><th>จำนวนวัน</th><th>ขนาด</th></tr></thead><tbody>
+      ${o.archive.map((a) => `<tr><td>${esc(a.name)}</td><td>${esc(thDate(a.first_day))}</td><td>${a.days.toLocaleString('th-TH')}</td><td class="muted">${a.bytes > 1048576 ? (a.bytes / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(a.bytes / 1024)) + ' KB'}</td></tr>`).join('')}
+    </tbody></table>` : ''}
     <form class="inline-form fmh-file-form">
       <label class="pos-source">รายงาน
         <select name="source" aria-label="รายงาน">

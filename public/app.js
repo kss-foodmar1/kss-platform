@@ -1292,7 +1292,7 @@ class DashboardView {
     const info = this.sources[key];
     if (!r || r.error || !info || !info.date_field) return null;
     const h = r.meta && r.meta.history;
-    if (h && (h.file_from || h.api_from)) return h.file_from || h.api_from;
+    if (h && (h.archive_from || h.file_from || h.api_from)) return [h.archive_from, h.file_from, h.api_from].filter(Boolean).sort()[0];
     let min = null;
     (r.data || []).forEach((row) => {
       const d = row[info.date_field] ? String(row[info.date_field]).slice(0, 10) : null;
@@ -1432,6 +1432,13 @@ class DashboardView {
         `<div class="fmh-sync-line history-line"><span>ข้อมูลย้อนหลังจากไฟล์ FMH: ${hist.map((h) => `${esc(h.label)} ตั้งแต่ ${esc(dayLabel(h.file_from))}`).join(' · ')}</span></div>` +
           gaps.map((h) => `<div class="warn-msg">${esc(h.label)}: ยังไม่มีข้อมูลช่วง ${esc(dayLabel(nextDay(h.file_to)))} – ${esc(dayLabel(prevDay(h.api_from)))} — อัปโหลดไฟล์ของช่วงนี้เพิ่ม</div>`).join('')
       );
+    }
+    // Days kept automatically after they leave the API window (lib/fmhArchive.js).
+    const arch = Object.entries(this.results)
+      .filter(([, r]) => r && !r.error && r.meta && r.meta.history && r.meta.history.archive_from)
+      .map(([k, r]) => ({ label: (this.sources[k] || {}).label || k, from: r.meta.history.archive_from }));
+    if (arch.length && !this.useSaved) {
+      bar.insertAdjacentHTML('beforeend', `<div class="fmh-sync-line history-line"><span>ประวัติที่ระบบเก็บไว้ให้อัตโนมัติ (เกิน 90 วันของ FMH): ${arch.map((h) => `${esc(h.label)} ตั้งแต่ ${esc(dayLabel(h.from))}`).join(' · ')}</span></div>`);
     }
     if (this.fileCapable && (isCompanyAdmin() || isSuper()) && !this.useSaved && this.dashboard.data_source !== 'demo') {
       const line = bar.querySelector('.history-line') || bar.querySelector('.fmh-sync-line');

@@ -476,3 +476,17 @@ CREATE TABLE IF NOT EXISTS ai_taught (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) DEFAULT CHARSET=utf8mb4;
+
+-- Rolling history beyond FMH's ~90-day API window (lib/fmhArchive.js): the API
+-- rows of each report, filed one calendar day at a time, kept two years.
+CREATE TABLE IF NOT EXISTS fmh_archive (
+  company_id INT NOT NULL,
+  source VARCHAR(50) NOT NULL,
+  day DATE NOT NULL,
+  data_gz MEDIUMBLOB NOT NULL,
+  row_count INT NOT NULL DEFAULT 0,
+  row_hash CHAR(40) NOT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (company_id, source, day),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
