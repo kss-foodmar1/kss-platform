@@ -106,6 +106,10 @@ const mock = http.createServer((req, res) => {
     await pool.query(`DELETE FROM company_line WHERE company_id = ?`, [bare.id]);
   }
   await sm.save(id, ['cks_sales', 'purchases']);
+  const [[sd]] = await pool.query(`SELECT summary_day FROM company_line WHERE company_id = ?`, [id]);
+  check('first digest of the day marks the numbers as sent', sd.summary_day === require('../lib/alerts').bkkToday(), String(sd.summary_day));
+  await sm.save(bare ? bare.id : id, ['wastage']);
+  if (bare) check('API cannot save a family no dashboard uses', (await sm.view(bare.id)).every((x) => !x.selected));
   await line.unbindGroup(id);
   let err = null; try { await line.sendAlert(id); } catch (e) { err = e; }
   check('no group → clear error', err && /ผูกกลุ่ม/.test(err.message));

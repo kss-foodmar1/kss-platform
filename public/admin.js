@@ -1425,9 +1425,9 @@ async function renderLinePanel(container, companyId, flash = '') {
         ${(v.summaries || []).map((s) => `
           <label class="check-row sum-row${s.available ? '' : ' is-off'}" ${s.available ? '' : 'title="ยังไม่มี widget ในแดชบอร์ดไหนใช้ข้อมูลนี้ — เพิ่ม widget ที่เกี่ยวข้องก่อนจึงจะเลือกได้"'}>
             <input type="checkbox" class="s-pick" value="${esc(s.key)}" ${s.selected ? 'checked' : ''} ${s.available ? '' : 'disabled'}>
-            <span>${esc(s.name)} <span class="muted">· ${esc(s.desc)}</span>${s.available ? '' : ' <span class="sum-off-note">(ยังไม่มี widget นี้ในแดชบอร์ด)</span>'}</span>
+            <span>${esc(s.name)} <span class="muted">· ${esc(s.desc)}</span>${s.available ? '' : ' <br><span class="sum-off-note">ยังไม่มี widget นี้ในแดชบอร์ด — เพิ่ม widget ก่อนจึงจะเลือกได้</span>'}</span>
           </label>`).join('')}
-        <p class="helper-text">ตัวเลขคำนวณจากข้อมูลเดียวกับ widget บนแดชบอร์ด ถ้าไม่มีแดชบอร์ดไหนใช้ widget ของหัวข้อนั้น หัวข้อจะเป็นสีเทาและไม่ถูกส่ง ส่งวันละครั้ง ไม่เพิ่มจำนวนข้อความ</p>
+        <p class="helper-text">ตัวเลขคำนวณจากข้อมูลเดียวกับ widget บนแดชบอร์ด ถ้าไม่มีแดชบอร์ดไหนใช้ widget ของหัวข้อนั้น หัวข้อจะเป็นสีเทาและไม่ถูกส่ง ส่งวันละครั้ง · <b>ทุกคนในกลุ่ม LINE เห็นตัวเลขรวมทุกสาขา</b> จึงไม่ควรเลือกหัวข้อที่ไม่อยากให้ทั้งกลุ่มเห็น</p>
       </fieldset>
       <div class="btn-row">
         <button type="submit" class="btn small primary">บันทึก</button>
