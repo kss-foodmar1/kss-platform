@@ -1206,14 +1206,14 @@ class DashboardView {
     const mixed = this.filterFields.includes('customer') && this.filterFields.some((f) => f !== 'customer');
     const LABEL = {
       customer: [mixed ? 'ลูกค้าครัวกลาง' : 'ลูกค้า', 'ทุกราย'],
-      branch: [mixed ? 'สาขา (ฝั่งซื้อ)' : 'สาขา', 'ทุกสาขา'],
-      supplier: [mixed ? 'ซัพพลายเออร์ (ฝั่งซื้อ)' : 'ซัพพลายเออร์', 'ทุกเจ้า'],
+      branch: [mixed ? 'สาขาที่สั่งซื้อ' : 'สาขา', 'ทุกสาขา'],
+      supplier: [mixed ? 'ซัพพลายเออร์ที่ซื้อ' : 'ซัพพลายเออร์', 'ทุกเจ้า'],
     };
     const useNote = (f) => {
       const names = [...new Set(this.filterUse[f] || [])];
       if (!names.length) return '';
       const total = this.widgets.length;
-      return `<details class="pf-use"><summary>ใช้กับ ${names.length}${names.length === total ? ' (ทั้งหมด)' : ` จาก ${total}`} widget</summary><span>${names.map(esc).join(' · ')}</span></details>`;
+      return `<details class="pf-use"><summary>กรองได้ ${(this.filterUse[f] || []).length}${(this.filterUse[f] || []).length === total ? ' (ทั้งหมด)' : ` จาก ${total}`} รายการ</summary><span>${names.map(esc).join(' · ')}</span></details>`;
     };
     const show = (f, v) => (f === 'customer' ? partyShort(v) : String(v));
     const groups = this.filterFields.map((f) => {

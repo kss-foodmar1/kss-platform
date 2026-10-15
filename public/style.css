@@ -1204,3 +1204,16 @@ body.arranging-on .ai-fab { display: none; }
   .widget-grid:not(.arranging) .widget-card:has(.report-table) { grid-column: span 6; }
   .report-table td:first-child, .report-table th:first-child { white-space: nowrap; }
 }
+
+@media (max-width: 760px) {
+  .kpi-row .kpi-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .widget-card.rows-2 .heat-scroll, .widget-card.rows-3 .heat-scroll { max-height: none; }
+  .heat-table th.heat-row { max-width: 104px; }
+  .heat-table td { padding: 4px 4px; min-width: 42px; }
+  .heat-scroll { -webkit-overflow-scrolling: touch; box-shadow: inset -14px 0 10px -12px rgba(var(--shadow-ink), .18); }
+}
+@media (max-width: 700px) {
+  .pf-use summary { min-height: 44px; padding: 0 12px; }
+  .widget-grid:not(.arranging) { padding-bottom: 76px; }
+  .table-scroll table.report-table.nums-many td.num::before { font-size: 12px; color: var(--ink-2); }
+}
