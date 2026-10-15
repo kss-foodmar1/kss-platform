@@ -131,7 +131,7 @@ function uomReport(name, prof) {
   console.log(`\nตรวจข้อมูล FMH ที่ cache ไว้ของบริษัท: ${co.name} (id ${co.id})`);
 
   const [cached] = await pool.query(
-    `SELECT cache_key, data_json, synced_at FROM fmh_report_cache WHERE company_id = ?`,
+    `SELECT cache_key, data_json, data_gz, synced_at FROM fmh_report_cache WHERE company_id = ?`,
     [companyId]
   );
   const data = {};
@@ -140,7 +140,7 @@ function uomReport(name, prof) {
 
   cached.forEach((row) => {
     let rows = [];
-    try { rows = JSON.parse(row.data_json) || []; } catch { rows = []; }
+    try { rows = require('../lib/cacheBlob').unpack(row) || []; } catch { rows = []; }
     data[row.cache_key] = rows;
   });
 

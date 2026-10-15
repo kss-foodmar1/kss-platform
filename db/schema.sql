@@ -133,12 +133,16 @@ CREATE TABLE IF NOT EXISTS app_settings (
 
 -- Cached FMH report data per company — filled by the daily 1am sync plus
 -- on-demand refreshes, so dashboard page views never spend FMH quota. Cached
+-- Rows live gzipped in data_gz (lib/cacheBlob.js); data_json is the pre-gzip
+-- column, '' on every row written since.
 -- per company (not per dashboard): every widget of a company that uses the
 -- same report source shares one cached copy.
 CREATE TABLE IF NOT EXISTS fmh_report_cache (
   company_id INT NOT NULL,
   cache_key VARCHAR(50) NOT NULL,
   data_json LONGTEXT NOT NULL,
+  data_gz LONGBLOB NULL,
+  row_count INT NULL,
   quota_json TEXT,
   synced_at TIMESTAMP NOT NULL,
   PRIMARY KEY (company_id, cache_key)
@@ -163,6 +167,8 @@ CREATE TABLE IF NOT EXISTS fmh_cache_saved (
   company_id INT NOT NULL,
   cache_key VARCHAR(128) NOT NULL,
   data_json LONGTEXT NOT NULL,
+  data_gz LONGBLOB NULL,
+  row_count INT NULL,
   quota_json TEXT NULL,
   synced_at TIMESTAMP NOT NULL,
   PRIMARY KEY (company_id, cache_key)
