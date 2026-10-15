@@ -1736,10 +1736,14 @@ function renderLine(body, rows, cfg) {
   // Periods with no rows stay on the axis as gaps. Skipping them drew June
   // straight into September when a month of history was missing.
   keys = continuousBuckets(keys, cfg.bucket || 'week');
+  // The current week / month is still filling up: its point would read as a drop.
+  const bk = cfg.bucket || 'week';
+  const partialLast = (bk === 'week' || bk === 'month') && keys.length > 1 && keys[keys.length - 1] === bucketKey(localIso(new Date()), bk);
   const wrap = document.createElement('div');
   wrap.className = 'chart-wrap';
   wrap.innerHTML = '<canvas></canvas>';
   body.appendChild(wrap);
+  if (partialLast) body.insertAdjacentHTML('beforeend', `<p class="chart-note">ช่วงสุดท้าย (เส้นประ) ยังไม่ครบ${bk === 'week' ? 'สัปดาห์' : 'เดือน'} ตัวเลขยังขึ้นได้อีก</p>`);
   // `series_by` makes one series per value of a field (a line per category),
   // the largest first; the rest fold into one, so the legend stays readable.
   let series = cfg.series || [];
@@ -1796,6 +1800,7 @@ function renderLine(body, rows, cfg) {
           pointStyle: ['circle', 'rect', 'triangle', 'rectRot', 'crossRot', 'star'][si % 6],
           borderDash: si >= 2 ? [6, 4] : undefined,
           pointRadius: si ? 4 : 3,
+          segment: partialLast ? { borderDash: (c) => (c.p1DataIndex === keys.length - 1 ? [3, 4] : si >= 2 ? [6, 4] : undefined) } : undefined,
           pointHoverRadius: 6,
           pointBorderColor: cssv('--surface'),
           pointBorderWidth: 1.5,
@@ -1826,7 +1831,9 @@ function renderLine(body, rows, cfg) {
 }
 
 function renderTable(body, rows, cfg) {
-  const columns = cfg.columns && cfg.columns.length ? cfg.columns : Object.keys(rows[0]).map((field) => ({ field }));
+  // A column empty on every row (e.g. LINE before anyone is notified) is noise: leave it out.
+  const columns = (cfg.columns && cfg.columns.length ? cfg.columns : Object.keys(rows[0]).map((field) => ({ field })))
+    .filter((c) => c.share_of || rows.some((r) => r[c.field] != null && r[c.field] !== ''));
   // A column that is another column's share of its total (each customer's
   // percent of sales) — a total the row layer, which sees one row, cannot know.
   columns.filter((c) => c.share_of).forEach((c) => {
@@ -1839,7 +1846,7 @@ function renderTable(body, rows, cfg) {
   const SEV = { 'สูง': 'high', 'กลาง': 'mid', 'ต่ำ': 'low', high: 'high', medium: 'mid', low: 'low', 'ใหม่': 'new' };
   const pillCols = new Set(columns.filter((c) => {
     const vals = rows.map((r) => r[c.field]).filter((v) => v != null && v !== '');
-    return vals.length && vals.every((v) => typeof v === 'string' && SEV[v.trim().toLowerCase()] || SEV[v]);
+    return vals.length && new Set(vals).size > 1 && vals.every((v) => typeof v === 'string' && SEV[v.trim().toLowerCase()] || SEV[v]);
   }).map((c) => c.field));
   // Long lists open short: the first rows are what to act on today; the rest is one click away.
   const PREVIEW = cfg.preview_rows || 8;

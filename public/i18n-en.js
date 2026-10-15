@@ -5,6 +5,7 @@
 // (product names, suppliers, branches) is never touched.
 window.I18N_EN = {
   exact: {
+    'กำลังโหลด': 'Loading',
     // ---------- left menu, settings tabs, Widget library ----------
     'เมนู': 'Menu',
     'เมนูหลัก': 'Main menu',
@@ -139,7 +140,7 @@ window.I18N_EN = {
     'บริษัทนี้ยังไม่มี dashboard — สร้างได้ใน Admin Console': 'This company has no dashboards yet — create one in the Admin Console',
     'ยังไม่มี dashboard ที่คุณเข้าถึงได้ กรุณาติดต่อผู้ดูแลระบบ': 'You do not have access to any dashboard yet. Please contact your administrator',
     'ยังไม่ได้ตั้งค่า FMH API Key ของบริษัทนี้ — ตั้งค่าได้ใน Admin Console': 'This company has no FMH API key yet — set it in the Admin Console',
-    'ยังไม่ได้ตั้งค่า FMH API Key — กดปุ่ม ⚙️ มุมขวาบนเพื่อใส่ Key': 'No FMH API key yet — click ⚙️ at the top right to add it',
+    'ยังไม่ได้ตั้งค่า FMH API Key — กดปุ่ม ตั้งค่า มุมขวาบนเพื่อใส่ Key': 'No FMH API key yet — click Settings at the top right to add it',
     'ระบบยังไม่ได้เชื่อมข้อมูล FMH — กรุณาติดต่อผู้ดูแลระบบของบริษัท': 'FMH data is not connected yet — please contact your company administrator',
     'dashboard นี้ยังไม่มี widget': 'This dashboard has no widgets yet',
     'ช่วงวันที่': 'Date range',
@@ -1081,6 +1082,9 @@ window.I18N_EN = {
 
   // {0}, {1}... match any text and are carried across.
   patterns: [
+    ['แสดงอีก {0} แถว', 'Show {0} more rows'],
+    ['ย่อเหลือ {0} แถวแรก', 'Show first {0} rows only'],
+    ['ช่วงสุดท้าย (เส้นประ) ยังไม่ครบ{0} ตัวเลขยังขึ้นได้อีก', 'The last period (dashed) is not complete yet; it can still rise'],
     ['เหลือ {0} คำถามวันนี้ · AI อาจผิดพลาดได้ ตรวจกับตัวเลขบนกราฟเสมอ', '{0} questions left today · AI can be wrong; check against the charts'],
     ['พร้อมแสดง {0} widget', '{0} widgets ready'],
     ['ข้าม {0} widget: {1}', 'Skips {0}: {1}'],
