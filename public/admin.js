@@ -103,7 +103,8 @@ async function renderUserManager(container, scope) {
                    <option value="client" ${u.role === 'client' ? 'selected' : ''}>ผู้ใช้งาน</option>
                    <option value="company_admin" ${u.role === 'company_admin' ? 'selected' : ''}>Admin บริษัท</option>
                  </select>
-                 <button type="button" class="btn small ghost toggle-access">Dashboard ▾</button>`
+                 <button type="button" class="btn small ghost toggle-access">Dashboard ▾</button>
+                 <label class="home-branch"><span>สาขาประจำ</span><input type="text" maxlength="120" value="${esc(u.home_branch || '')}" placeholder="ทุกสาขา" aria-label="สาขาประจำของ ${esc(u.display_name)}"></label>`
           }
           <button type="button" class="btn small ghost toggle-reset">รีเซ็ตรหัส</button>
           <button type="button" class="btn small danger delete-user" ${self ? 'disabled' : ''}>ลบ</button>
@@ -116,6 +117,20 @@ async function renderUserManager(container, scope) {
       </form>
       <div class="user-subpanel access-panel hidden"></div>`;
     list.appendChild(wrap);
+
+    const hb = wrap.querySelector('.home-branch input');
+    if (hb) {
+      hb.addEventListener('change', async () => {
+        try {
+          await api(`/api/users/${u.id}/home-branch${qs}`, { method: 'PATCH', body: JSON.stringify({ home_branch: hb.value }) });
+          hb.classList.add('saved');
+          setTimeout(() => hb.classList.remove('saved'), 1200);
+        } catch (err) {
+          hb.value = u.home_branch || '';
+          alert(`บันทึกสาขาไม่สำเร็จ: ${err.message}`);
+        }
+      });
+    }
 
     const roleSelect = wrap.querySelector('.user-role-select');
     if (roleSelect) {

@@ -52,11 +52,11 @@ router.get(
     if (!scope) return res.status(400).json({ error: 'company_id required' });
     const [rows] = scope.kss
       ? await pool.query(
-          `SELECT id, email, display_name, role, must_change_password, created_at
+          `SELECT id, email, display_name, home_branch, role, must_change_password, created_at
            FROM users WHERE role = 'kss_superadmin' ORDER BY created_at DESC`
         )
       : await pool.query(
-          `SELECT id, email, display_name, role, must_change_password, created_at
+          `SELECT id, email, display_name, home_branch, role, must_change_password, created_at
            FROM users WHERE company_id = ? AND role <> 'kss_superadmin' ORDER BY created_at DESC`,
           [scope.companyId]
         );
@@ -108,6 +108,20 @@ router.post(
       loaded.target.id,
     ]);
     res.json({ ok: true });
+  })
+);
+
+// A user's own branch (branch manager): dashboards open filtered to it. Empty = all branches.
+router.patch(
+  '/:id/home-branch',
+  requireAuth,
+  requireCompanyAdmin,
+  wrap(async (req, res) => {
+    const loaded = await loadTargetUser(req, res);
+    if (!loaded) return;
+    const v = String((req.body || {}).home_branch || '').trim().slice(0, 120);
+    await pool.query(`UPDATE users SET home_branch = ? WHERE id = ?`, [v || null, loaded.target.id]);
+    res.json({ ok: true, home_branch: v || null });
   })
 );
 

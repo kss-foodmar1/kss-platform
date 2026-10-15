@@ -958,7 +958,7 @@ class DashboardView {
         ${
           !this.preview && (isSuper() || isCompanyAdmin())
             ? `<div class="dash-actions">
-                 <button type="button" class="btn small ghost dash-edit">จัดเรียง / แก้ไข</button>
+                 <button type="button" class="btn small ghost dash-edit"><svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="18" height="7" rx="1.5"/></svg>จัดเรียง</button>
                  <button type="button" class="btn small primary dash-add">+ เพิ่ม Widget</button>
                </div>`
             : ''
@@ -981,14 +981,22 @@ class DashboardView {
     if (!this.preview) bindDashSwitcher(header.querySelector('.dash-switch-wrap'), this.dashboard.id);
     const editBtn = header.querySelector('.dash-edit');
     if (editBtn) {
-      editBtn.addEventListener('click', () => {
+      editBtn.addEventListener('click', () => this.arrange());
+      this.openPicker = () => {
         adminState.selected = { type: 'picker', id: this.dashboard.company_id, dashboardId: this.dashboard.id };
         if (!isSuper()) state.navCurrent = { kind: 'dashboard', id: this.dashboard.id };
         openAdminConsole();
-      });
+      };
       header.querySelector('.dash-add').addEventListener('click', () => openLibrary({ dashboardId: this.dashboard.id }));
     }
 
+    if (!this.preview) {
+      this.todayEl = document.createElement('section');
+      this.todayEl.className = 'today-card';
+      this.todayEl.hidden = true;
+      this.wrap.appendChild(this.todayEl);
+      this.renderToday();
+    }
     this.statusEl = document.createElement('div');
     this.wrap.appendChild(this.statusEl);
     // A page-wide filter (customer, for the CK sales widgets): any widget can
@@ -1002,6 +1010,9 @@ class DashboardView {
       (Array.isArray(pf) ? pf : pf ? [pf] : []).forEach((f) => { if (!this.filterFields.includes(f)) this.filterFields.push(f); });
     });
     this.filters = {}; // field -> chosen value
+    // A branch manager opens on their own branch (users.home_branch); they can still pick "ทุกสาขา".
+    const home = state.user && state.user.home_branch;
+    if (home && this.filterFields.includes('branch')) this.filters.branch = home;
     this.bucketPick = new Map();
     this.filterEl = document.createElement('div');
     this.filterEl.className = 'page-filter';
@@ -1023,6 +1034,7 @@ class DashboardView {
     this.cards = this.widgets.map((w) => {
       const card = document.createElement('section');
       card.className = `widget-card size-${w.config.size || 'half'} widget-${w.chart_type}${[2, 3].includes(Number(w.config.rows)) ? ` rows-${w.config.rows}` : ''}`;
+      card.dataset.wid = w.id;
       card.innerHTML = `<div class="widget-head"><h3 class="widget-title">${esc(w.title)}</h3>${
         this.preview ? '' : '<button type="button" class="widget-explain" aria-expanded="false" title="กราฟนี้บอกอะไร"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>อธิบาย</button>'
       }</div><div class="explain-box" hidden></div><div class="widget-body">${SKELETON}</div>`;
@@ -1350,7 +1362,7 @@ class DashboardView {
                ? '<span class="demo-pill">ข้อมูลตัวอย่าง</span> <span class="muted">ข้อมูลตัวอย่างสำหรับเดโม — ไม่ใช่ข้อมูลจริงและไม่ใช้โควตา FMH</span>'
                : oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
            }</span>
-           <span class="sync-actions">${toggle}${keyMissing ? '' : '<button type="button" class="btn small ghost fmh-refresh-btn">Refresh ด่วน</button>'}</span>
+           <span class="sync-actions">${toggle}${keyMissing ? '' : '<button type="button" class="btn small ghost fmh-refresh-btn">ดึงข้อมูลใหม่</button>'}</span>
          </div>
          ${
            failed.length
@@ -1427,7 +1439,7 @@ class DashboardView {
           await this.load();
         } catch (err) {
           btn.disabled = false;
-          btn.textContent = 'Refresh ด่วน';
+          btn.textContent = 'ดึงข้อมูลใหม่';
           const note = document.createElement('div');
           note.className = 'inline-note';
           note.textContent = err.message;
@@ -1436,6 +1448,222 @@ class DashboardView {
         }
       });
     }
+  }
+
+  // ---- "เช้านี้ต้องทำ": the most urgent open alerts across the company, with รับทราบ / มอบหมาย ----
+  async renderToday() {
+    const box = this.todayEl;
+    let data;
+    try { data = await api(`/api/dashboards/${this.dashboard.id}/today`); } catch (e) { box.hidden = true; return; }
+    // A branch manager sees their branch's items plus company-wide ones.
+    const home = state.user && state.user.home_branch;
+    if (home) data.items = data.items.filter((i) => !i.branch || i.branch === home);
+    const open = data.items.filter((i) => !i.ack_status);
+    const taken = data.items.filter((i) => i.ack_status);
+    if (!data.items.length) { box.hidden = true; return; }
+    box.hidden = false;
+    const fold = `kss_today_fold_${this.dashboard.id}_${data.day}`;
+    let folded = false;
+    try { folded = localStorage.getItem(fold) === '1'; } catch (e) { /* private window */ }
+    const sevCls = { 'วิกฤต': 'crit', 'สูง': 'high', 'กลาง': 'mid' };
+    const money = (v) => (v ? '฿' + Math.round(v).toLocaleString('th-TH') : '');
+    const people = data.people || [];
+    const item = (it, i) => `<li class="today-item" data-i="${i}">
+        <span class="sev-pill sev-${sevCls[it.severity] || 'mid'}">${esc(it.severity)}</span>
+        <div class="today-main"><b>${esc(it.subject || it.detail)}</b><span>${esc(it.subject ? it.detail : '')}</span>
+          <span class="today-meta">${[it.branch, it.age_days != null ? `ค้าง ${it.age_days} วัน` : '', money(it.impact)].filter(Boolean).map(esc).join(' · ')}${it.handled ? ` · <em>${esc(it.handled)}</em>` : ''}</span></div>
+        <div class="today-acts">${
+          it.ack_status
+            ? '<button type="button" class="btn small ghost t-clear">ยกเลิก</button>'
+            : '<button type="button" class="btn small ghost t-ack">รับทราบ</button><button type="button" class="btn small ghost t-assign">มอบหมาย</button>'
+        }${it.source && this.widgets.some((w) => w.report_source === it.source) ? '<button type="button" class="link-btn t-go">ดูในรายการ</button>' : ''}</div>
+        <form class="today-assign" hidden><label class="sr-only" for="ta-${i}">มอบหมายให้</label><input id="ta-${i}" list="today-people-${this.dashboard.id}" placeholder="ชื่อผู้รับผิดชอบ" maxlength="80" required><button type="submit" class="btn small primary">มอบหมาย</button></form>
+      </li>`;
+    const all = [...open, ...taken];
+    box.innerHTML = `<div class="today-head">
+        <div><h2>เช้านี้ต้องทำ</h2><p>${open.length ? `${open.length} เรื่องยังไม่มีคนรับ` : 'ทุกเรื่องมีคนรับแล้ว'}${taken.length ? ` · รับแล้ว ${taken.length}` : ''}</p></div>
+        <button type="button" class="icon-mini today-fold" aria-expanded="${!folded}" title="${folded ? 'แสดง' : 'ย่อ'}">${folded ? '▾' : '▴'}</button>
+      </div>
+      <div class="today-body"${folded ? ' hidden' : ''}>
+        <ul class="today-list">${open.slice(0, 5).map((it) => item(it, all.indexOf(it))).join('') || '<li class="today-empty">ไม่มีเรื่องค้างที่ยังไม่มีคนรับ</li>'}</ul>
+        ${open.length > 5 ? `<p class="today-more">และอีก ${open.length - 5} เรื่องในตารางตัวเตือนด้านล่าง</p>` : ''}
+        ${taken.length ? `<details class="today-taken"><summary>รับแล้ว ${taken.length} เรื่อง</summary><ul class="today-list">${taken.map((it) => item(it, all.indexOf(it))).join('')}</ul></details>` : ''}
+        <datalist id="today-people-${this.dashboard.id}">${people.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+        <p class="today-msg" role="status"></p>
+      </div>`;
+    box.querySelector('.today-fold').addEventListener('click', () => {
+      try { localStorage.setItem(fold, folded ? '0' : '1'); } catch (e) { /* private window */ }
+      this.renderToday();
+    });
+    const send = async (it, body) => {
+      try {
+        await api(`/api/dashboards/${this.dashboard.id}/today/ack`, { method: 'POST', body: JSON.stringify({ watcher: it.watcher, finding_key: it.finding_key, ...body }) });
+        await this.renderToday();
+      } catch (err) { const m = box.querySelector('.today-msg'); if (m) m.textContent = err.message; }
+    };
+    box.querySelectorAll('.today-item').forEach((li) => {
+      const it = all[Number(li.dataset.i)];
+      const q = (sel) => li.querySelector(sel);
+      if (q('.t-ack')) q('.t-ack').addEventListener('click', () => send(it, { action: 'ack' }));
+      if (q('.t-clear')) q('.t-clear').addEventListener('click', () => send(it, { action: 'clear' }));
+      if (q('.t-assign')) q('.t-assign').addEventListener('click', () => { const f = q('.today-assign'); f.hidden = !f.hidden; if (!f.hidden) f.querySelector('input').focus(); });
+      q('.today-assign').addEventListener('submit', (e) => { e.preventDefault(); send(it, { action: 'assign', to: q('.today-assign input').value.trim() }); });
+      if (q('.t-go')) q('.t-go').addEventListener('click', () => {
+        const w = this.widgets.find((x) => x.report_source === it.source);
+        const el = w && this.wrap.querySelector(`.widget-card[data-wid="${w.id}"]`);
+        if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1600); }
+      });
+    });
+  }
+
+  // ---- Arrange mode: drag cards on a 6-column grid, snap width to ⅓ / ½ / full and height to 1-3 rows ----
+  arrange() {
+    const grid = this.wrap.querySelector('.widget-grid');
+    if (!grid || this.arranging) return;
+    this.arranging = true;
+    const SIZES = [['third', 2, '⅓'], ['half', 3, '½'], ['full', 6, 'เต็มแถว']];
+    const sizeOf = (c) => (c.classList.contains('size-full') ? 'full' : c.classList.contains('size-third') ? 'third' : 'half');
+    const rowsOf = (c) => (c.classList.contains('rows-3') ? 3 : c.classList.contains('rows-2') ? 2 : 1);
+    const cards = () => [...grid.querySelectorAll('.widget-card')];
+    const before = cards().map((c) => ({ el: c, size: sizeOf(c), rows: rowsOf(c) }));
+    let dirty = false;
+
+    const bar = document.createElement('div');
+    bar.className = 'arrange-bar';
+    bar.setAttribute('role', 'region');
+    bar.setAttribute('aria-label', 'โหมดจัดเรียง');
+    bar.innerHTML = `<div class="arrange-text"><b>โหมดจัดเรียง</b><span>ลากที่ <span class="arr-grip-ico" aria-hidden="true">⠿</span> เพื่อย้าย · เลือกความกว้าง ⅓ / ½ / เต็มแถว · ลากมุมขวาล่างเพื่อปรับขนาด</span></div>
+      <div class="arrange-actions"><button type="button" class="btn small ghost arr-picker">เพิ่ม / เอาออก Widget</button><button type="button" class="btn small ghost arr-cancel">ยกเลิก</button><button type="button" class="btn small primary arr-save" disabled>บันทึกการจัดเรียง</button></div>
+      <p class="arrange-msg" role="status"></p>`;
+    grid.before(bar);
+    grid.classList.add('arranging');
+    const markDirty = () => { dirty = true; bar.querySelector('.arr-save').disabled = false; };
+
+    const setSize = (c, size) => {
+      c.classList.remove('size-third', 'size-half', 'size-full');
+      c.classList.add(`size-${size}`);
+      c.querySelectorAll('.arr-size button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.size === size ? 'true' : 'false'));
+    };
+    const setRows = (c, n) => { c.classList.remove('rows-2', 'rows-3'); if (n > 1) c.classList.add(`rows-${n}`); };
+
+    cards().forEach((c) => {
+      const t = (c.querySelector('.widget-title') || {}).textContent || 'widget';
+      const tools = document.createElement('div');
+      tools.className = 'arr-tools';
+      tools.innerHTML = `<button type="button" class="arr-grip" aria-label="ย้าย ${esc(t)} (ใช้ลูกศรซ้าย/ขวาก็ได้)" title="ลากเพื่อย้าย"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg><span>ลากเพื่อย้าย</span></button>
+        <span class="arr-size" role="group" aria-label="ความกว้าง">${SIZES.map(([k, , l]) => `<button type="button" data-size="${k}" aria-pressed="${sizeOf(c) === k}">${l}</button>`).join('')}</span>`;
+      c.prepend(tools);
+      const rz = document.createElement('button');
+      rz.type = 'button';
+      rz.className = 'arr-resize';
+      rz.setAttribute('aria-label', `ปรับขนาด ${t}`);
+      rz.title = 'ลากเพื่อปรับขนาด';
+      c.appendChild(rz);
+      tools.querySelectorAll('.arr-size button').forEach((b) => b.addEventListener('click', () => { setSize(c, b.dataset.size); markDirty(); }));
+      const grip = tools.querySelector('.arr-grip');
+
+      // Move: the card follows the pointer through the grid; others reflow around it.
+      grip.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        grip.setPointerCapture(e.pointerId);
+        c.classList.add('arr-dragging');
+        const move = (ev) => {
+          const under = document.elementsFromPoint(ev.clientX, ev.clientY).find((n) => n.classList && n.classList.contains('widget-card') && n !== c);
+          if (!under) return;
+          const r = under.getBoundingClientRect();
+          const after = ev.clientY > r.bottom - r.height / 3 || (ev.clientX > r.left + r.width / 2 && ev.clientY > r.top + r.height / 3);
+          const ref = after ? under.nextSibling : under;
+          if (ref !== c && ref !== c.nextSibling) { grid.insertBefore(c, ref); markDirty(); }
+          if (ev.clientY < 80) window.scrollBy(0, -18); else if (ev.clientY > innerHeight - 80) window.scrollBy(0, 18);
+        };
+        const up = () => {
+          c.classList.remove('arr-dragging');
+          grip.removeEventListener('pointermove', move);
+          grip.removeEventListener('pointerup', up);
+          grip.removeEventListener('pointercancel', up);
+        };
+        grip.addEventListener('pointermove', move);
+        grip.addEventListener('pointerup', up);
+        grip.addEventListener('pointercancel', up);
+      });
+      grip.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); if (c.previousElementSibling) { grid.insertBefore(c, c.previousElementSibling); markDirty(); grip.focus(); } }
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); if (c.nextElementSibling) { grid.insertBefore(c.nextElementSibling, c); markDirty(); grip.focus(); } }
+      });
+
+      // Resize: drag the corner; width snaps to 2 / 3 / 6 of 6 columns, height to 1-3 rows.
+      rz.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        rz.setPointerCapture(e.pointerId);
+        c.classList.add('arr-resizing');
+        const g = grid.getBoundingClientRect();
+        const col = (g.width - 5 * 16) / 6 + 16;
+        const top = c.getBoundingClientRect().top;
+        const move = (ev) => {
+          const span = (ev.clientX - c.getBoundingClientRect().left) / col;
+          const size = span < 2.5 ? 'third' : span < 4.5 ? 'half' : 'full';
+          const h = ev.clientY - top;
+          const rows = h < 450 ? 1 : h < 660 ? 2 : 3;
+          if (size !== sizeOf(c)) { setSize(c, size); markDirty(); }
+          if (rows !== rowsOf(c)) { setRows(c, rows); markDirty(); }
+        };
+        const up = () => { c.classList.remove('arr-resizing'); rz.removeEventListener('pointermove', move); rz.removeEventListener('pointerup', up); };
+        rz.addEventListener('pointermove', move);
+        rz.addEventListener('pointerup', up);
+      });
+      rz.addEventListener('keydown', (e) => {
+        const order = ['third', 'half', 'full'];
+        const i = order.indexOf(sizeOf(c));
+        if (e.key === 'ArrowRight' && i < 2) { setSize(c, order[i + 1]); markDirty(); }
+        else if (e.key === 'ArrowLeft' && i > 0) { setSize(c, order[i - 1]); markDirty(); }
+        else if (e.key === 'ArrowDown' && rowsOf(c) < 3) { setRows(c, rowsOf(c) + 1); markDirty(); }
+        else if (e.key === 'ArrowUp' && rowsOf(c) > 1) { setRows(c, rowsOf(c) - 1); markDirty(); }
+        else return;
+        e.preventDefault();
+      });
+    });
+
+    const exit = () => {
+      this.arranging = false;
+      bar.remove();
+      grid.classList.remove('arranging');
+      grid.querySelectorAll('.arr-tools, .arr-resize').forEach((n) => n.remove());
+    };
+    bar.querySelector('.arr-cancel').addEventListener('click', () => {
+      before.forEach(({ el, size, rows }) => { grid.appendChild(el); setSize(el, size); setRows(el, rows); });
+      exit();
+    });
+    bar.querySelector('.arr-picker').addEventListener('click', () => {
+      if (dirty) { bar.querySelector('.arrange-msg').textContent = 'บันทึกหรือยกเลิกการจัดเรียงก่อน แล้วค่อยเพิ่ม / เอาออก widget'; return; }
+      exit();
+      this.openPicker();
+    });
+    bar.querySelector('.arr-save').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.textContent = 'กำลังบันทึก...';
+      const items = cards().map((c) => ({ id: Number(c.dataset.wid), size: sizeOf(c), rows: rowsOf(c) }));
+      try {
+        await api(`/api/admin/dashboards/${this.dashboard.id}/arrange`, { method: 'PUT', body: JSON.stringify({ items }) });
+        const byId = new Map(this.widgets.map((w) => [w.id, w]));
+        this.widgets = items.map((it) => {
+          const w = byId.get(it.id);
+          w.config = { ...w.config, size: it.size };
+          if (it.rows > 1) w.config.rows = it.rows; else delete w.config.rows;
+          return w;
+        });
+        exit();
+        this.renderWidgets();
+      } catch (err) {
+        bar.querySelector('.arrange-msg').textContent = err.message;
+        btn.disabled = false;
+        btn.textContent = 'บันทึกการจัดเรียง';
+      }
+    });
+    bar.querySelector('.arr-grip, .arr-save');
+    const first = grid.querySelector('.arr-grip');
+    if (first) first.focus({ preventScroll: true });
+    bar.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
   renderWidgets() {
@@ -1852,7 +2080,7 @@ function renderTable(body, rows, cfg) {
   let sort = cfg.sort_by ? { ...cfg.sort_by } : null; // { field, dir }
   const limit = cfg.top_n || 200;
   // Severity columns (สูง / กลาง / ต่ำ) read as coloured pills, so the eye finds what needs action first.
-  const SEV = { 'สูง': 'high', 'กลาง': 'mid', 'ต่ำ': 'low', high: 'high', medium: 'mid', low: 'low', 'ใหม่': 'new' };
+  const SEV = { 'วิกฤต': 'crit', critical: 'crit', 'สูง': 'high', 'กลาง': 'mid', 'ต่ำ': 'low', high: 'high', medium: 'mid', low: 'low', 'ใหม่': 'new' };
   const pillCols = new Set(columns.filter((c) => {
     const vals = rows.map((r) => r[c.field]).filter((v) => v != null && v !== '');
     if (!vals.length || !vals.every((v) => typeof v === 'string' && SEV[v.trim().toLowerCase()] || SEV[v])) return false;

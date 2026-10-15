@@ -18,7 +18,7 @@ async function requireAuth(req, res, next) {
   }
   try {
     const [[user]] = await pool.query(
-      `SELECT u.id, u.email, u.display_name, u.role, u.company_id, c.status AS company_status,
+      `SELECT u.id, u.email, u.display_name, u.home_branch, u.role, u.company_id, c.status AS company_status,
               c.self_serve, c.subscription_ends_at, c.data_purged_at, c.data_source
        FROM users u LEFT JOIN companies c ON c.id = u.company_id
        WHERE u.id = ?`,

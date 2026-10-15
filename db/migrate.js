@@ -308,6 +308,22 @@ async function upgradeAiFeedback() {
   }
 }
 
+async function upgradeHomeBranch() {
+  // A branch manager's own branch: their dashboards open filtered to it.
+  if (!(await columnInfo('users', 'home_branch'))) {
+    await pool.query(`ALTER TABLE users ADD COLUMN home_branch VARCHAR(120) NULL`);
+    console.log('  users: added home_branch');
+  }
+}
+
+async function upgradeAlertAck() {
+  // "รับทราบ / มอบหมาย" on an alert: who took it, so it stops looking new every morning.
+  if (!(await columnInfo('alert_events', 'ack_status'))) {
+    await pool.query(`ALTER TABLE alert_events ADD COLUMN ack_status VARCHAR(12) NULL, ADD COLUMN ack_to VARCHAR(80) NULL, ADD COLUMN ack_name VARCHAR(120) NULL, ADD COLUMN ack_at TIMESTAMP NULL`);
+    console.log('  alert_events: added ack columns');
+  }
+}
+
 async function upgradeCacheGzip() {
   // The report caches held their rows as plain JSON text, twice (live + saved),
   // and filled the small MySQL volume. Move every row into gzip (lib/cacheBlob.js),
@@ -350,6 +366,8 @@ async function main() {
   await upgradeCache();
   await upgradeCacheGzip();
   await upgradeAiFeedback();
+  await upgradeAlertAck();
+  await upgradeHomeBranch();
   // First run with the saved-data fallback: every cache that has rows today
   // becomes the "last good" copy, so the fallback works before the next sync.
   const [bf] = await pool.query(

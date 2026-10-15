@@ -140,6 +140,34 @@ router.get(
   })
 );
 
+// "เช้านี้ต้องทำ": open alerts of the dashboard's company, most urgent first,
+// and who has taken each one. Anyone who can see the dashboard may take one.
+router.get(
+  '/:id/today',
+  requireAuth,
+  wrap(async (req, res) => {
+    const dashboard = await getDashboardForUser(req.user, req.params.id);
+    if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
+    const t = await require('../lib/alerts').today(dashboard.company_id);
+    const [people] = await pool.query(`SELECT display_name FROM users WHERE company_id = ? ORDER BY display_name LIMIT 100`, [dashboard.company_id]).catch(() => [[]]);
+    res.json({ ...t, people: people.map((p) => p.display_name).filter(Boolean) });
+  })
+);
+router.post(
+  '/:id/today/ack',
+  requireAuth,
+  wrap(async (req, res) => {
+    const dashboard = await getDashboardForUser(req.user, req.params.id);
+    if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
+    const { watcher, finding_key: key, action, to } = req.body || {};
+    if (!['ack', 'assign', 'clear'].includes(action)) return res.status(400).json({ error: 'action ไม่ถูกต้อง' });
+    if (action === 'assign' && !String(to || '').trim()) return res.status(400).json({ error: 'ระบุชื่อผู้รับผิดชอบ' });
+    if (!watcher || !key) return res.status(400).json({ error: 'ไม่พบรายการนี้' });
+    await require('../lib/alerts').ack(dashboard.company_id, String(watcher), String(key), action, to, req.user);
+    res.json({ ok: true });
+  })
+);
+
 router.get(
   '/:id',
   requireAuth,

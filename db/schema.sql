@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(255) UNIQUE NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   display_name VARCHAR(255) NOT NULL,
+  home_branch VARCHAR(120) NULL,
   role ENUM('kss_superadmin','company_admin','client') NOT NULL DEFAULT 'client',
   company_id INT NULL,
   must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
@@ -369,6 +370,10 @@ CREATE TABLE IF NOT EXISTS alert_events (
   sig VARCHAR(64) NOT NULL DEFAULT '',
   sent_sig VARCHAR(64) NULL,
   sent_at TIMESTAMP NULL,
+  ack_status VARCHAR(12) NULL,
+  ack_to VARCHAR(80) NULL,
+  ack_name VARCHAR(120) NULL,
+  ack_at TIMESTAMP NULL,
   PRIMARY KEY (company_id, watcher, finding_key),
   INDEX (company_id, last_seen),
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
