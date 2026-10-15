@@ -93,6 +93,32 @@ const ok = async (name, fn) => { try { await fn(); pass++; console.log('PASS  ' 
     assert.ok(r.body.list.some((x) => x.question === 'ราคาไข่วันนี้' && x.kind === 'miss'));
     assert.ok(r.body.totals.miss >= 1 && r.body.totals.down >= 1);
   });
+  await ok('private text is scrubbed, answers with numbers are not stored, a 👎 keeps its reason', async () => {
+    await req('kss', 'POST', '/api/ai/feedback', { dashboard_id: dReal, kind: 'down', question: 'โทร 0812345678 หรือ a.b@x.com ยอด', answer: 'ยอด ฿12,000 ของ ABC', source: 'data', reason: 'ตัวเลขไม่ถูก' });
+    const [row] = await q(`SELECT question, answer, reason FROM ai_feedback WHERE question LIKE '%ยอด' ORDER BY id DESC LIMIT 1`);
+    assert.ok(!/0812345678|a\.b@x\.com/.test(row.question), row.question);
+    assert.strictEqual(row.answer, '');
+    assert.strictEqual(row.reason, 'ตัวเลขไม่ถูก');
+  });
+  await ok('misses can be marked done and come back under done', async () => {
+    assert.strictEqual((await req('kss', 'POST', '/api/ai/misses/status', { question: 'ราคาไข่วันนี้', status: 'done' })).status, 200);
+    const open = (await req('kss', 'GET', '/api/ai/misses?days=1&status=open')).body.list;
+    const done = (await req('kss', 'GET', '/api/ai/misses?days=1&status=done')).body.list;
+    assert.ok(!open.some((x) => x.question === 'ราคาไข่วันนี้'));
+    assert.ok(done.some((x) => x.question === 'ราคาไข่วันนี้' && x.companies));
+    assert.strictEqual((await req('viewer', 'POST', '/api/ai/misses/status', { question: 'x', status: 'done' })).status, 403);
+  });
+  await ok('taught answers: staff write, everyone reads active ones only', async () => {
+    const r = await req('kss', 'POST', '/api/ai/taught', { phrases: 'ไข่ราคาเท่าไร\nราคาไข่วันนี้', answer: 'ดูใน **widget ราคา**' });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual((await req('viewer', 'POST', '/api/ai/taught', { phrases: 'x', answer: 'y' })).status, 403);
+    assert.strictEqual((await req('kss', 'POST', '/api/ai/taught', { phrases: '', answer: 'y' })).status, 400);
+    const seen = (await req('viewer', 'GET', '/api/ai/taught')).body.list;
+    assert.ok(seen.some((x) => x.id === r.body.id && x.phrases.length === 2));
+    await req('kss', 'POST', '/api/ai/taught', { id: r.body.id, phrases: 'ไข่ราคาเท่าไร', answer: 'x', active: false });
+    assert.ok(!(await req('viewer', 'GET', '/api/ai/taught')).body.list.some((x) => x.id === r.body.id));
+    assert.strictEqual((await req('kss', 'DELETE', `/api/ai/taught/${r.body.id}`)).status, 200);
+  });
   console.log(`\n${pass} passed${process.exitCode ? ', some failed' : ', 0 failed'}`);
   await db.end();
   fake.close();

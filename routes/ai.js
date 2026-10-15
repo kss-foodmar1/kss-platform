@@ -41,8 +41,20 @@ router.post(
   })
 );
 
+// What reaches our database from a question is text a customer typed: strip
+// emails and long digit runs (phone / ID / account numbers) first.
+const scrub = (t) =>
+  String(t || '')
+    .replace(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g, '[อีเมล]')
+    .replace(/\d[\d\s-]{6,}\d/g, '[ตัวเลข]')
+    .replace(/\s+/g, ' ')
+    .trim();
+const REASONS = ['ไม่ตรงเรื่อง', 'ตัวเลขไม่ถูก', 'ไม่ครบ', 'อ่านไม่เข้าใจ'];
+
 // 👍/👎 on an answer, or a question the chat could not answer (kind=miss).
 // Works with or without AI; anyone who can see the dashboard may send it.
+// Only the question is kept: an answer built from the customer's numbers is
+// not stored (a built-in FAQ answer is, so KSS can see which one missed).
 router.post(
   '/feedback',
   wrap(async (req, res) => {
@@ -50,36 +62,97 @@ router.post(
     const d = await getDashboardForUser(req.user, b.dashboard_id);
     if (!d) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
     const kind = ['up', 'down', 'miss'].includes(b.kind) ? b.kind : null;
-    const question = String(b.question || '').trim().slice(0, 500);
+    const question = scrub(b.question).slice(0, 500);
     if (!kind || !question) return res.status(400).json({ error: 'ข้อมูลไม่ครบ' });
     const source = ['data', 'faq', 'ai', 'none'].includes(b.source) ? b.source : '';
+    const answer = source === 'faq' ? scrub(b.answer).slice(0, 600) : '';
+    const reason = kind === 'down' && REASONS.includes(b.reason) ? b.reason : null;
     await pool.query(
-      `INSERT INTO ai_feedback (company_id, user_id, dashboard_id, kind, source, question, answer) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [d.company_id, req.user.id || null, d.id, kind, source, question, String(b.answer || '').replace(/\s+/g, ' ').trim().slice(0, 600)]
+      `INSERT INTO ai_feedback (company_id, user_id, dashboard_id, kind, source, question, answer, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [d.company_id, req.user.id || null, d.id, kind, source, question, answer, reason]
     );
     res.json({ ok: true });
   })
 );
 
-// KSS staff: what people asked that the chat could not answer, or answered badly.
+const staffOnly = (req, res, next) =>
+  req.user.role === 'kss_superadmin' ? next() : res.status(403).json({ error: 'เฉพาะทีม KSS' });
+
+// KSS staff: questions the chat could not answer, or answered badly.
+//   ?days=14&status=open|done
 router.get(
   '/misses',
+  staffOnly,
   wrap(async (req, res) => {
-    if (req.user.role !== 'kss_superadmin') return res.status(403).json({ error: 'เฉพาะทีม KSS' });
     const days = Math.min(90, Math.max(1, Number(req.query.days) || 14));
+    const status = req.query.status === 'done' ? 'done' : 'open';
     const [rows] = await pool.query(
-      `SELECT question, kind, COUNT(*) AS n, MAX(created_at) AS last_at, MAX(answer) AS answer
-         FROM ai_feedback
-        WHERE kind IN ('miss','down') AND created_at >= (NOW() - INTERVAL ? DAY)
-        GROUP BY question, kind ORDER BY n DESC, last_at DESC LIMIT 40`,
-      [days]
+      `SELECT f.question, f.kind, f.source, COUNT(*) AS n, MAX(f.created_at) AS last_at,
+              MAX(f.answer) AS answer, GROUP_CONCAT(DISTINCT f.reason) AS reasons,
+              GROUP_CONCAT(DISTINCT c.name SEPARATOR ', ') AS companies
+         FROM ai_feedback f JOIN companies c ON c.id = f.company_id
+        WHERE f.kind IN ('miss','down') AND f.status = ? AND f.created_at >= (NOW() - INTERVAL ? DAY)
+        GROUP BY f.question, f.kind, f.source ORDER BY n DESC, last_at DESC LIMIT 100`,
+      [status, days]
     );
     const [[t]] = await pool.query(
       `SELECT SUM(kind='up') AS up, SUM(kind='down') AS down, SUM(kind='miss') AS miss
          FROM ai_feedback WHERE created_at >= (NOW() - INTERVAL ? DAY)`,
       [days]
     );
-    res.json({ days, list: rows, totals: { up: Number(t.up) || 0, down: Number(t.down) || 0, miss: Number(t.miss) || 0 } });
+    res.json({ days, status, list: rows, totals: { up: Number(t.up) || 0, down: Number(t.down) || 0, miss: Number(t.miss) || 0 } });
+  })
+);
+
+// Mark a question handled (or open again): every row with that question.
+router.post(
+  '/misses/status',
+  staffOnly,
+  wrap(async (req, res) => {
+    const q = String((req.body || {}).question || '').slice(0, 500);
+    const status = (req.body || {}).status === 'open' ? 'open' : 'done';
+    if (!q) return res.status(400).json({ error: 'ข้อมูลไม่ครบ' });
+    await pool.query(`UPDATE ai_feedback SET status = ? WHERE question = ? AND kind IN ('miss','down')`, [status, q]);
+    res.json({ ok: true });
+  })
+);
+
+// Taught answers. Everyone signed in reads the active ones (the chat matches
+// them like its built-in FAQ); only KSS staff change them.
+router.get(
+  '/taught',
+  wrap(async (req, res) => {
+    const staff = req.user.role === 'kss_superadmin';
+    const [rows] = await pool.query(
+      `SELECT id, phrases, answer, active FROM ai_taught ${staff ? '' : 'WHERE active = TRUE'} ORDER BY id DESC LIMIT 300`
+    );
+    res.json({ list: rows.map((r) => ({ id: r.id, phrases: r.phrases.split('\n').filter(Boolean), answer: r.answer, active: !!r.active })) });
+  })
+);
+router.post(
+  '/taught',
+  staffOnly,
+  wrap(async (req, res) => {
+    const b = req.body || {};
+    const phrases = (Array.isArray(b.phrases) ? b.phrases : String(b.phrases || '').split('\n'))
+      .map((x) => String(x).trim().slice(0, 200)).filter(Boolean).slice(0, 8);
+    const answer = String(b.answer || '').trim().slice(0, 1500);
+    if (!phrases.length || !answer) return res.status(400).json({ error: 'ใส่อย่างน้อย 1 คำถามและคำตอบ' });
+    const active = b.active === false ? 0 : 1;
+    if (b.id) {
+      await pool.query(`UPDATE ai_taught SET phrases = ?, answer = ?, active = ? WHERE id = ?`, [phrases.join('\n'), answer, active, Number(b.id)]);
+      return res.json({ ok: true, id: Number(b.id) });
+    }
+    const [r] = await pool.query(`INSERT INTO ai_taught (phrases, answer, active, created_by) VALUES (?, ?, ?, ?)`, [phrases.join('\n'), answer, active, req.user.id || null]);
+    res.json({ ok: true, id: r.insertId });
+  })
+);
+router.delete(
+  '/taught/:id',
+  staffOnly,
+  wrap(async (req, res) => {
+    await pool.query(`DELETE FROM ai_taught WHERE id = ?`, [Number(req.params.id)]);
+    res.json({ ok: true });
   })
 );
 

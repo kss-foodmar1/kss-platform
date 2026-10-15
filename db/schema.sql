@@ -448,7 +448,21 @@ CREATE TABLE IF NOT EXISTS ai_feedback (
   source VARCHAR(10) NOT NULL DEFAULT '',
   question VARCHAR(500) NOT NULL,
   answer VARCHAR(600) NOT NULL DEFAULT '',
+  reason VARCHAR(30) NULL,
+  status ENUM('open','done') NOT NULL DEFAULT 'open',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_ai_feedback_kind (kind, created_at),
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
+-- Answers KSS staff teach the chat from the Admin Console (no code change):
+-- phrases = one question phrasing per line, answer = plain text with **bold**.
+CREATE TABLE IF NOT EXISTS ai_taught (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  phrases VARCHAR(1000) NOT NULL,
+  answer TEXT NOT NULL,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by INT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) DEFAULT CHARSET=utf8mb4;

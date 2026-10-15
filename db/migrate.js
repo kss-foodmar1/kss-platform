@@ -300,6 +300,14 @@ async function dropLegacyReportsTable() {
   console.log('  renamed legacy reports table -> reports_legacy_backup');
 }
 
+async function upgradeAiFeedback() {
+  // ai_feedback shipped first without these (a 👎 reason, and a "handled" mark).
+  if (!(await columnInfo('ai_feedback', 'reason'))) {
+    await pool.query(`ALTER TABLE ai_feedback ADD COLUMN reason VARCHAR(30) NULL, ADD COLUMN status ENUM('open','done') NOT NULL DEFAULT 'open'`);
+    console.log('  ai_feedback: added reason, status');
+  }
+}
+
 async function upgradeCacheGzip() {
   // The report caches held their rows as plain JSON text, twice (live + saved),
   // and filled the small MySQL volume. Move every row into gzip (lib/cacheBlob.js),
@@ -341,6 +349,7 @@ async function main() {
   await upgradeAnnouncements();
   await upgradeCache();
   await upgradeCacheGzip();
+  await upgradeAiFeedback();
   // First run with the saved-data fallback: every cache that has rows today
   // becomes the "last good" copy, so the fallback works before the next sync.
   const [bf] = await pool.query(

@@ -913,8 +913,19 @@ html.login-hero-on #login-screen > .login-card { flex: 0 0 400px; max-width: 400
 .ai-send:disabled { opacity: .5; cursor: wait; }
 .ai-note { margin: 0; padding: 0 14px 10px; font-size: 11.5px; color: var(--muted); }
 @media (max-width: 520px) {
-  .ai-panel { right: 8px; left: 8px; width: auto; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); height: calc(100vh - 150px); }
+  /* Phone: the chat is a full-screen sheet, controls are 44px. */
+  .ai-panel { inset: 0; width: auto; height: auto; max-height: none; border-radius: 0; border: 0; padding-top: env(safe-area-inset-top, 0px); z-index: 60; }
+  .ai-panel .ai-head { padding-top: 12px; }
+  body.ai-sheet-open { overflow: hidden; }
+  body.ai-sheet-open .ai-fab { display: none; }
   .ai-fab span { display: none; } .ai-fab { width: 52px; height: 52px; padding: 0; justify-content: center; }
+  .ai-panel .ai-close { width: 44px; height: 44px; }
+  .ai-panel .ai-misses, .ai-panel .ai-go, .ai-panel .ai-chip, .ai-panel .ai-reason { min-height: 44px; }
+  .ai-panel .ai-thumb { width: 44px; height: 44px; }
+  .ai-panel .ai-send { width: 46px; height: 46px; }
+  .ai-form { padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+  .ai-form input { min-height: 46px; font-size: 16px; }
+  .ai-msg { max-width: 94%; }
 }
 
 .ai-head-act { display: inline-flex; align-items: center; gap: 6px; }
@@ -931,4 +942,13 @@ html.login-hero-on #login-screen > .login-card { flex: 0 0 400px; max-width: 400
 .ai-thumb { width: 36px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 .ai-thumb:hover { background: #f1ecdc; color: var(--ink); }
 .ai-thanks { margin-left: auto; }
+/* A Gemini answer must look different from a rule / FAQ answer. */
+.ai-msg.by-ai { background: #fff9ec; border: 1px solid #e8d49a; border-left: 4px solid var(--brass); }
+.ai-tag { display: inline-flex; align-items: center; gap: 5px; margin-bottom: 6px; padding: 2px 8px; border-radius: var(--pill-radius); background: #f6e7bd; color: #6b4a00; font-size: 11.5px; font-weight: 700; }
+.ai-why { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; font-size: 12.5px; color: var(--ink); }
+.ai-reason { min-height: 34px; padding: 0 10px; border: 1px solid #e3cf9f; border-radius: var(--pill-radius); background: var(--white); color: var(--ink); font: inherit; font-size: 12.5px; cursor: pointer; }
+.ai-reason:hover { background: #fbf3e2; }
+.ai-reason.skip { border-color: transparent; background: transparent; color: var(--muted); }
+.ai-reason:focus-visible { outline: 3px solid var(--brass); outline-offset: 2px; }
+.ai-meta { flex-wrap: wrap; }
 @media (prefers-reduced-motion: reduce) { .ai-fab { transition: none; } .ai-msg.typing span { animation: none; } }

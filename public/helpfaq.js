@@ -13,7 +13,7 @@ const HELP_FAQ = [
   {
     id: 'add_widget',
     q: ['เพิ่ม widget ยังไง', 'อยากได้กราฟเพิ่ม', 'เพิ่มกราฟ', 'หา widget', 'ใส่ widget', 'มี widget อะไรบ้าง', 'คลัง widget'],
-    a: 'เปิด **คลัง Widget** แล้วเลือกจากคำถามที่อยากรู้ เช่น “สินค้าไหนราคาขึ้น” — ดูตัวอย่างจากข้อมูลจริงของบริษัทได้ก่อน แล้วกด **เพิ่มเข้า Dashboard** เลือก Dashboard ที่ต้องการ',
+    a: 'เพิ่ม widget 3 ขั้น:\n1. กดปุ่มด้านล่างเพื่อเปิด **คลัง Widget**\n2. เลือกการ์ดที่ตรงกับคำถามที่อยากรู้ (เช่น “สินค้าไหนราคาขึ้น”) จะเห็นตัวอย่างจากข้อมูลจริงของบริษัทก่อน\n3. กด **เพิ่มเข้า Dashboard** แล้วเลือกว่าจะใส่ใน Dashboard ไหน',
     go: [['เปิดคลัง Widget', 'library']],
     ask: 'การเพิ่ม widget ทำได้โดยผู้ดูแลบริษัทของคุณ ลองบอกว่าอยากรู้เรื่องอะไร เขาจะเลือกจากคลัง Widget ให้',
   },
@@ -61,7 +61,7 @@ const HELP_FAQ = [
   },
   {
     id: 'plan',
-    q: ['แพ็กเกจ', 'ชำระเงิน', 'ต่ออายุ', 'ราคา', 'ใบเสร็จ', 'บัตรเครดิต', 'หมดอายุเมื่อไหร่'],
+    q: ['ดูแพ็กเกจ', 'ราคาแพ็กเกจ', 'ค่าบริการรายปี', 'ต่ออายุแพ็กเกจ', 'ชำระเงินค่าบริการ', 'บัตรเครดิตที่ผูกไว้', 'ใบเสร็จค่าบริการ', 'แพ็กเกจหมดอายุเมื่อไหร่'],
     a: 'ดูแพ็กเกจ วันหมดอายุ และบัตรที่ผูกไว้ได้ที่ **ตั้งค่า › แพ็กเกจและการชำระเงิน** (แสดงเฉพาะบริษัทที่สมัครเอง)',
     go: [['ไปที่แพ็กเกจ', 'settings:plan']],
     ask: 'เรื่องแพ็กเกจและการชำระเงินสอบถามผู้ดูแลบริษัทของคุณ',
@@ -88,6 +88,56 @@ const HELP_FAQ = [
     id: 'explain_btn',
     q: ['ปุ่มอธิบาย', 'อธิบายกราฟ', 'กราฟนี้บอกอะไร', 'อ่านกราฟยังไง', 'ตัวเลขนี้แปลว่าอะไร'],
     a: 'กดปุ่ม **อธิบาย** ที่มุมของแต่ละ widget จะสรุปว่าตอนนี้ตัวเลขบอกอะไร โดยคำนวณจากตัวเลขเดียวกับที่เห็นบนกราฟ และแนะนำสิ่งที่ควรทำต่อ หรือถามผมเรื่อง widget นั้นได้เลย',
+    go: [],
+  },
+  // ---- ความหมายทางธุรกิจ (ตอบแบบหลักทั่วไป ไม่ใช่ตัวเลขของบริษัท) ----
+  {
+    id: 'foodcost',
+    q: ['food cost ที่ดีควรกี่เปอร์เซ็นต์', 'food cost ควรเท่าไหร่', 'ต้นทุนอาหารควรกี่ %', 'cogs ควรเท่าไร', 'เป้า food cost'],
+    a: 'ไม่มีตัวเลขเดียวที่ใช้ได้ทุกร้าน ขึ้นกับประเภทร้านและราคาขาย โดยทั่วไปร้านอาหารมักตั้งต้นทุนวัตถุดิบไว้ราว 30–35% ของยอดขาย (หลักทั่วไป ไม่ใช่มาตรฐาน) แนะนำให้ตั้ง **เป้าของร้านเอง** ต่อเมนูหรือสาขา แล้วดูว่าเมนู/สาขาไหนเกินเป้า และแนวโน้มหลายเดือนไปทางไหน มากกว่าดูตัวเลขเดือนเดียว',
+    go: [['ดู widget ต้นทุนเมนู', 'library']],
+    ask: 'ถ้าอยากตั้งเป้า food cost ต่อเมนูหรือสาขา ปรึกษาผู้ดูแลบริษัทของคุณได้',
+  },
+  {
+    id: 'gm_two',
+    q: ['gm ตามสูตรกับจ่ายจริงต่างกันยังไง', 'กำไรตามสูตรกับกำไรจริง', 'gm จ่ายจริงคืออะไร', 'ทำไมกำไรจริงต่ำกว่าตามสูตร'],
+    a: '- **GM ตามสูตร** = กำไรที่ควรได้ถ้าทำตามสูตรและราคาวัตถุดิบในสูตรเป๊ะ บอกว่าเมนูออกแบบมาดีแค่ไหน\n- **GM จ่ายจริง** = คิดจากของที่ซื้อ/ใช้จริง บอกว่าครัวทำได้จริงแค่ไหน\nส่วนต่างเกิดได้จากสูตรหรือราคาในสูตรล้าหลัง หน่วยแปลงผิด ผลผลิตหลังตัดแต่ง การนับสต็อก ของเสียที่ไม่ได้บันทึก หรือของหายจริง ไล่ตรวจสาเหตุเหล่านี้ก่อน',
+    go: [],
+  },
+  {
+    id: 'three_way',
+    q: ['3-way match คืออะไร', 'three way match', 'po grn invoice ต่างกันยังไง', 'po grn invoice คืออะไร', 'ทำไมต้องเทียบ po grn invoice'],
+    a: 'คือการเทียบเอกสาร 3 ใบของการซื้อ:\n- **PO** = สั่งอะไร เท่าไร\n- **GRN** = รับของจริงอะไร เท่าไร\n- **Invoice** = ซัพพลายเออร์เรียกเก็บอะไร เท่าไร\nควรตรงกัน ถ้า GRN ต่ำกว่า PO คือส่งขาด ถ้า Invoice สูงกว่า GRN คือวางบิลเกินของที่รับ ก่อนจ่ายเงินควรให้ 3 ใบตรงกันหรือมีใบลดหนี้รองรับ',
+    go: [],
+  },
+  {
+    id: 'credit_note',
+    q: ['ใบลดหนี้คืออะไร', 'ใบลดหนี้ทำไมต้องตาม', 'ใบลดหนี้ซัพพลายเออร์'],
+    a: '**ใบลดหนี้** คือเอกสารที่ซัพพลายเออร์ออกเพื่อลดยอดที่เรียกเก็บ เช่น ส่งขาด ของไม่ได้คุณภาพ หรือวางบิลเกิน ถ้าไม่ได้ใบลดหนี้ ยอดค้างจ่ายจะสูงกว่าที่ควร widget กลุ่ม “คุณภาพซัพพลายเออร์” ช่วยดูว่าเจ้าไหนต้องตาม',
+    go: [],
+  },
+  {
+    id: 'stock_variance',
+    q: ['ส่วนต่างการนับสต็อกคืออะไร', 'ของเสียกับส่วนต่างสต็อก', 'นับสต็อกไม่ตรงทำไง', 'ทำไมสต็อกไม่ตรง'],
+    a: '- **ของเสีย** = ของที่บันทึกว่าทิ้ง/เสียหาย\n- **ส่วนต่างการนับ** = ของที่นับจริงไม่ตรงกับในระบบ โดยไม่มีบันทึกอธิบาย\nส่วนต่างที่ไม่มีบันทึกคือจุดที่ควรเข้าไปดูก่อน: การรับของ การเบิก การเตรียมของ หรือการนับรอบก่อนหน้าคลาดเคลื่อน',
+    go: [],
+  },
+  {
+    id: 'not_match_fmh',
+    q: ['ทำไมเลขไม่ตรงกับ fmh', 'ตัวเลขไม่ตรง fmh', 'ยอดไม่ตรงกับในระบบ', 'เลขไม่ตรงกับบัญชี'],
+    a: 'ลองเช็ก 4 จุด: (1) ช่วงวันที่และตัวกรองสาขา/ซัพพลายเออร์ที่เลือกอยู่ตรงกับที่เทียบไหม (2) เอกสารที่ยังไม่ปิดหรือถูกยกเลิก (3) ข้อมูลที่เก็บไว้ล่าสุดตอนไหน — ลองกด “Refresh ด่วน” ด้านบน (4) แต่ละ widget นับต่างกัน เช่นตาม **วันที่สั่ง** หรือ **วันที่รับ** กด “อธิบาย” เพื่อดูว่า widget นั้นนับอะไร ถ้ายังต่าง ส่งตัวอย่างเอกสารให้ทีม KSS ตรวจ',
+    go: [],
+  },
+  {
+    id: 'partial_period',
+    q: ['เดือนนี้ยังไม่จบเทียบได้ไหม', 'สัปดาห์ล่าสุดตกทำไม', 'ยอดเดือนนี้น้อยกว่าเดือนที่แล้ว', 'เดือนล่าสุดดูต่ำ'],
+    a: 'เดือนหรือสัปดาห์ที่ยังไม่จบมีข้อมูลไม่เต็มช่วง เทียบกับช่วงที่ครบแล้วจะดูเหมือนตก ทั้งที่ยังไม่ตก ปุ่ม **อธิบาย** จึงเทียบถึงช่วงที่ครบล่าสุดและบอกไว้ ถ้าจะเทียบจริง ให้เทียบ “ช่วงเดียวกันของเดือนก่อน” หรือรอให้เดือนปิด',
+    go: [],
+  },
+  {
+    id: 'data_fresh',
+    q: ['ข้อมูลอัปเดตล่าสุดเมื่อไร', 'ข้อมูลเป็นปัจจุบันไหม', 'ข้อมูลเก่าไหม', 'refresh ข้อมูล', 'รีเฟรชข้อมูล'],
+    a: 'ข้อมูลบนหน้าคือรายงานที่ระบบดึงจาก FMH ไว้ล่าสุด ถ้าต้องการให้ใหม่ที่สุดตอนนี้ กด **Refresh ด่วน** ด้านบนของ Dashboard ส่วน **ใช้ข้อมูลที่เก็บไว้** จะเปิดเร็วกว่าแต่เป็นรอบดึงล่าสุด',
     go: [],
   },
   {
@@ -121,10 +171,10 @@ function hpScore(qn, pn) {
   return hpDice(qn, pn);
 }
 
-function helpFaq(question) {
+function helpFaq(question, extra) {
   const qn = hpNorm(question);
   let best = null;
-  HELP_FAQ.forEach((e) => {
+  HELP_FAQ.concat(extra || []).forEach((e) => {
     const sc = Math.max(...e.q.map((p) => hpScore(qn, hpNorm(p))));
     if (!best || sc > best.sc) best = { e, sc };
   });
@@ -133,21 +183,24 @@ function helpFaq(question) {
 
 // ---- the page ------------------------------------------------------------
 // parts: { head: [lines], widgets: [{ id, title, facts: [..] }] }
-const HP_ANOMALY = /ผิดปกติ|น่าห่วง|รีบดู|เสี่ยง|ต้องดู|ปัญหา|แย่|เกินกว่า|ขาด|ลดลง|ลดลง|เพิ่มขึ้น|แพงขึ้น/;
+const HP_PROBLEM_Q = /ผิดปกติ|น่าห่วง|รีบดู|เสี่ยง|ต้องดู|ปัญหา|แย่|ต้องแก้|เรื่องด่วน/;
+// Facts the explain rules write when something crosses a line they can check.
+const HP_PROBLEM_FACT = /เกินเป้า|ต่ำกว่าเป้า|ระดับ “สูง”|ห่างเกิน|ส่วนใหญ่ของทั้งหมด|ไม่กี่รายการ/;
+const HP_TREND_Q = /เพิ่มขึ้น|ลดลง|ขึ้นไหม|ลงไหม|แนวโน้ม|ตกไหม|ตกหรือเปล่า/;
+const HP_TREND_FACT = /เพิ่มขึ้น|ลดลง|ทรงตัว/;
 const HP_SUMMARY = /สรุป|ภาพรวม|overview|หน้านี้มีอะไร|เล่าให้ฟัง/;
 const HP_STATE = /ช่วงวันที่|ตัวกรองอะไร|กรองอะไร|กำลังดูอะไร|ดูข้อมูลช่วงไหน/;
 
+// kind: 'widget' (a widget is named — beats a FAQ match) | 'page' (general)
 function helpFromPage(question, parts) {
   if (!parts || !parts.widgets || !parts.widgets.length) return null;
   const qn = hpNorm(question);
   const ws = parts.widgets.filter((w) => w.facts.length);
-  if (HP_STATE.test(question)) {
-    return { text: parts.head.join('\n'), source: 'data', go: [] };
-  }
+  if (HP_STATE.test(question)) return { text: parts.head.join('\n'), source: 'data', go: [], kind: 'page' };
   if (HP_SUMMARY.test(question) && ws.length) {
     const lines = ws.slice(0, 8).map((w) => `- **${w.title}**: ${w.facts[0]}`);
     const more = ws.length > 8 ? `\n(และอีก ${ws.length - 8} widget — กด “อธิบาย” ที่แต่ละตัวเพื่อดูต่อ)` : '';
-    return { text: `${parts.head[0]} · ${parts.head.slice(1).join(' · ')}\n${lines.join('\n')}${more}`.replace(' · \n', '\n'), source: 'data', go: [] };
+    return { text: `${parts.head[0]} · ${parts.head.slice(1).join(' · ')}\n${lines.join('\n')}${more}`.replace(' · \n', '\n'), source: 'data', go: [], kind: 'page' };
   }
   // A widget named in the question (title or any word of it).
   const scored = ws
@@ -163,25 +216,44 @@ function helpFromPage(question, parts) {
   if (scored.length) {
     const top = scored.slice(0, 2);
     const text = top.map((x) => `**${x.w.title}**\n${x.w.facts.slice(0, 4).map((f) => '- ' + f).join('\n')}`).join('\n\n');
-    return { text, source: 'data', go: [] };
+    return { text, source: 'data', go: [], kind: 'widget' };
   }
-  if (HP_ANOMALY.test(question)) {
+  // "What's off / is it going up" — generic, or about a subject that must
+  // actually be on this page (otherwise "ราคาหมูขึ้นไหม" would get a trend of
+  // some other number).
+  const isProblem = HP_PROBLEM_Q.test(question), isTrend = HP_TREND_Q.test(question);
+  if (isProblem || isTrend) {
+    const subject = qn.replace(HP_PROBLEM_Q, '').replace(HP_TREND_Q, '').replace(/อะไร|บ้าง|ไหม|หรือเปล่า|หรือไม่|ที่|ของ|ใน|หน้านี้|ตัวเลข|เรื่อง|มี|จุด|ต้อง|ตอนนี้|ช่วงนี้|เดือนนี้|วันนี้/g, '');
+    const pool = subject.length <= 3 ? ws : ws.filter((w) => hpNorm(w.title + w.facts.join('')).includes(subject));
     const hits = [];
-    ws.forEach((w) => w.facts.forEach((f) => { if (HP_ANOMALY.test(f)) hits.push(`- **${w.title}**: ${f}`); }));
-    if (hits.length) return { text: `จุดที่ควรดูในหน้านี้:\n${hits.slice(0, 6).join('\n')}`, source: 'data', go: [] };
+    const re = isProblem ? HP_PROBLEM_FACT : HP_TREND_FACT;
+    pool.forEach((w) => w.facts.forEach((f) => { if (re.test(f) && (isProblem || /→/.test(f))) hits.push(`- **${w.title}**: ${f}`); }));
+    if (isProblem && (pool.length || subject.length <= 3)) {
+      return {
+        text: hits.length
+          ? `จุดที่ควรดูในหน้านี้ (ตามที่ระบบตรวจจากตัวเลขได้):\n${hits.slice(0, 6).join('\n')}`
+          : 'จากตัวเลขบนหน้านี้ ระบบไม่เห็นจุดที่เกินเกณฑ์หรือเกินเป้า แต่ระบบตรวจได้เฉพาะเรื่องที่ตั้งเกณฑ์ไว้ ลองกด “อธิบาย” ที่ widget หรือดู widget กลุ่มตัวเตือน',
+        source: 'data',
+        go: [],
+        kind: 'page',
+      };
+    }
+    if (isTrend && hits.length) return { text: `แนวโน้มที่เห็นในหน้านี้:\n${hits.slice(0, 6).join('\n')}`, source: 'data', go: [], kind: 'page' };
   }
   return null;
 }
 
-function helpAnswer(question, parts, canSettings) {
+function helpAnswer(question, parts, canSettings, taught) {
   const q = String(question || '').trim();
   if (!q) return null;
-  const f = helpFaq(q);
-  // A page question that names a widget beats a weak FAQ match.
+  const extra = (taught || []).map((t) => ({ id: 't' + t.id, q: t.phrases, a: t.answer, go: [], taught: true }));
+  const f = helpFaq(q, extra);
   const page = helpFromPage(q, parts);
+  // A widget named in the question beats all but a near-exact FAQ match.
+  if (page && page.kind === 'widget' && !(f && f.sc >= 0.95)) return page;
   if (f && (f.sc >= 0.75 || !page)) {
     const e = f.e;
-    const go = canSettings ? e.go.map(([label, act]) => ({ label, act })) : [];
+    const go = canSettings ? (e.go || []).map(([label, act]) => ({ label, act })) : [];
     const text = canSettings || !e.ask ? e.a : e.ask;
     return { text, source: 'faq', go, id: e.id };
   }

@@ -412,6 +412,7 @@ function renderAdminMain() {
   if (sel.type === 'catalog') return renderCatalog(main);
   if (sel.type === 'fmh') return renderFmhDiagnostics(main);
   if (sel.type === 'news') return renderNews(main);
+  if (sel.type === 'ai-questions') return renderAiQuestions(main);
   if (sel.type === 'self-serve') return renderSelfServeAdmin(main);
   if (sel.type === 'staff') {
     main.innerHTML = `<h1 class="admin-h1">ทีม KSS</h1>
@@ -2222,4 +2223,100 @@ async function renderCatalog(main) {
       renderCatalog(main);
     })
   );
+}
+
+
+// Open the Admin Console straight on one of its pages (from the chat).
+async function openAdminView(type) {
+  await openAdminConsole();
+  adminState.selected = { type };
+  renderAdminMain();
+}
+
+// "คำถามจากแชท": what the "ถาม AI" chat could not answer or got a 👎 on, and
+// the answers KSS teaches it. A taught answer is matched like the built-in FAQ.
+async function renderAiQuestions(main, view = {}) {
+  const status = view.status || 'open';
+  main.innerHTML = '<p class="muted">กำลังโหลด...</p>';
+  let m, taught;
+  try {
+    [m, taught] = await Promise.all([api(`/api/ai/misses?days=30&status=${status}`), api('/api/ai/taught')]);
+  } catch (err) {
+    main.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    return;
+  }
+  const t = m.totals;
+  const editing = taught.list.find((x) => x.id === view.editId) || null;
+  const seed = view.seed || '';
+  main.innerHTML = `
+    <h1 class="admin-h1">คำถามจากแชท</h1>
+    <p class="muted">30 วันที่ผ่านมา: 👍 ${t.up} · 👎 ${t.down} · ตอบไม่ได้ ${t.miss} — เก็บเฉพาะข้อความคำถามที่ตัดอีเมลและเลขยาวออกแล้ว ไม่เก็บคำตอบที่มีตัวเลขของลูกค้า</p>
+    <section class="admin-card">
+      <h2>${editing ? 'แก้คำตอบที่สอน' : 'สอนคำตอบใหม่'}</h2>
+      <form class="taught-form">
+        <div class="field"><label for="tf-q">คำถามที่ผู้ใช้อาจถาม (บรรทัดละ 1 แบบ ใส่หลายแบบได้)</label>
+          <textarea id="tf-q" name="phrases" rows="3" maxlength="1000" required>${esc(editing ? editing.phrases.join('\n') : seed)}</textarea></div>
+        <div class="field"><label for="tf-a">คำตอบ (ใช้ **ตัวหนา** และขึ้นบรรทัดใหม่ด้วย - ได้)</label>
+          <textarea id="tf-a" name="answer" rows="5" maxlength="1500" required>${esc(editing ? editing.answer : '')}</textarea></div>
+        <div class="row-actions">
+          <button class="btn primary" type="submit">${editing ? 'บันทึกการแก้ไข' : 'สอนคำตอบนี้'}</button>
+          ${editing ? '<button class="btn small ghost" type="button" data-act="cancel-edit">ยกเลิก</button>' : ''}
+          <span class="muted taught-msg" role="status"></span>
+        </div>
+      </form>
+    </section>
+    <section class="admin-card">
+      <h2>คำถามที่ต้องดู</h2>
+      <div class="settings-tabs" role="tablist">
+        <button type="button" class="settings-tab${status === 'open' ? ' on' : ''}" data-st="open">ยังไม่จัดการ</button>
+        <button type="button" class="settings-tab${status === 'done' ? ' on' : ''}" data-st="done">จัดการแล้ว</button>
+      </div>
+      ${m.list.length ? `<table class="admin-table"><thead><tr><th>คำถาม</th><th>ประเภท</th><th>ครั้ง</th><th>บริษัท</th><th></th></tr></thead><tbody>
+        ${m.list.map((x, i) => `<tr>
+          <td>${esc(x.question)}${x.reasons ? `<div class="muted">เหตุผล: ${esc(x.reasons)}</div>` : ''}</td>
+          <td>${x.kind === 'miss' ? 'ตอบไม่ได้' : '👎'}${{ data: ' <span class="muted">(จากตัวเลขหน้า)</span>', faq: ' <span class="muted">(คู่มือ)</span>', ai: ' <span class="muted">(AI)</span>' }[x.source] || ''}</td>
+          <td>${x.n}</td><td class="muted">${esc(x.companies || '')}</td>
+          <td class="row-actions">
+            ${status === 'open' ? `<button class="btn small ghost" type="button" data-teach="${i}">สอนคำตอบ</button><button class="btn small ghost" type="button" data-done="${i}">เสร็จแล้ว</button>` : `<button class="btn small ghost" type="button" data-reopen="${i}">เปิดใหม่</button>`}
+          </td></tr>`).join('')}
+      </tbody></table>` : `<p class="muted">${status === 'open' ? 'ไม่มีคำถามค้าง' : 'ยังไม่มีรายการที่จัดการแล้ว'}</p>`}
+    </section>
+    <section class="admin-card">
+      <h2>คำตอบที่สอนไว้ (${taught.list.length})</h2>
+      ${taught.list.length ? `<table class="admin-table"><thead><tr><th>คำถาม</th><th>คำตอบ</th><th></th></tr></thead><tbody>
+        ${taught.list.map((x) => `<tr${x.active ? '' : ' class="muted"'}><td>${x.phrases.map(esc).join('<br>')}</td><td>${esc(x.answer.slice(0, 140))}${x.answer.length > 140 ? '…' : ''}</td>
+          <td class="row-actions"><button class="btn small ghost" type="button" data-edit="${x.id}">แก้</button><button class="btn small ghost" type="button" data-toggle="${x.id}">${x.active ? 'ปิด' : 'เปิด'}</button><button class="btn small ghost" type="button" data-del="${x.id}">ลบ</button></td></tr>`).join('')}
+      </tbody></table>` : '<p class="muted">ยังไม่ได้สอนคำตอบ</p>'}
+    </section>`;
+  const reload = (v = {}) => renderAiQuestions(main, { status, ...v });
+  main.querySelectorAll('[data-st]').forEach((b) => b.addEventListener('click', () => renderAiQuestions(main, { status: b.dataset.st })));
+  main.querySelectorAll('[data-teach]').forEach((b) => b.addEventListener('click', () => reload({ seed: m.list[b.dataset.teach].question, from: m.list[b.dataset.teach].question })));
+  const mark = (i, st) => async () => { await api('/api/ai/misses/status', { method: 'POST', body: JSON.stringify({ question: m.list[i].question, status: st }) }); reload(); };
+  main.querySelectorAll('[data-done]').forEach((b) => b.addEventListener('click', mark(b.dataset.done, 'done')));
+  main.querySelectorAll('[data-reopen]').forEach((b) => b.addEventListener('click', mark(b.dataset.reopen, 'open')));
+  main.querySelectorAll('[data-edit]').forEach((b) => b.addEventListener('click', () => reload({ editId: Number(b.dataset.edit) })));
+  main.querySelectorAll('[data-toggle]').forEach((b) => b.addEventListener('click', async () => {
+    const x = taught.list.find((r) => r.id === Number(b.dataset.toggle));
+    await api('/api/ai/taught', { method: 'POST', body: JSON.stringify({ id: x.id, phrases: x.phrases, answer: x.answer, active: !x.active }) });
+    reload();
+  }));
+  main.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+    if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'กดอีกครั้งเพื่อลบ'; return; }
+    await api(`/api/ai/taught/${b.dataset.del}`, { method: 'DELETE' });
+    reload();
+  }));
+  const cancel = main.querySelector('[data-act="cancel-edit"]');
+  if (cancel) cancel.addEventListener('click', () => reload());
+  main.querySelector('.taught-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target, msg = f.querySelector('.taught-msg');
+    try {
+      await api('/api/ai/taught', { method: 'POST', body: JSON.stringify({ id: editing ? editing.id : undefined, phrases: f.phrases.value, answer: f.answer.value }) });
+      if (view.from) await api('/api/ai/misses/status', { method: 'POST', body: JSON.stringify({ question: view.from, status: 'done' }) });
+      aiChat.taught = null;
+      reload();
+    } catch (err) {
+      msg.textContent = err.message;
+    }
+  });
 }

@@ -133,7 +133,7 @@ const LIB_ROLES = [
   ['menu', 'ต้นทุนเมนู', ['Menu Costing', 'Cost Control', 'POS COGS', 'Actual vs Theoretical']],
   ['accounting', 'บัญชี', ['Line Checks', 'Purchasing', 'Price Change', 'Cost Control']],
 ];
-const LIB_PACK_ROLE = { owner_morning: 'owner', purchasing_check: 'purchasing', ck_margin: 'ck', menu_pricing: 'menu', branch_audit: 'branch' };
+const LIB_PACK_ROLE = { owner_morning: 'owner', purchasing_check: 'purchasing', ck_margin: 'ck', menu_pricing: 'menu', branch_audit: 'branch', branch_daily: 'branch', accounting_close: 'accounting', ck_daily: 'ck' };
 const LIB_CHART = {
   kpi: 'ตัวเลขสรุป', bar: 'แท่ง', line: 'เส้น', table: 'ตาราง', sensitivity: 'จำลองราคา', menu_breakdown: 'รายเมนู',
   donut: 'วงกลม', pareto: 'พาเรโต', scatter: 'จุด', treemap: 'กล่อง', range: 'ช่วงราคา', stack: 'แท่งซ้อน',

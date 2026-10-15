@@ -5,10 +5,14 @@
 //      summary of the page (explain.js lines, range, filters), never rows
 //   3. neither can answer: say so, log it as a "miss" for KSS staff to teach.
 // Every answer says which of these it came from and can be rated 👍/👎.
-const aiChat = { dashboardId: null, status: null, history: new Map(), busy: false };
+const aiChat = { dashboardId: null, status: null, history: new Map(), busy: false, taught: null };
 
 const AI_SUGGEST = ['สรุปหน้านี้ให้หน่อย', 'มีอะไรผิดปกติบ้าง', 'ทำไมข้อมูลว่าง', 'เพิ่ม widget ยังไง'];
 const AI_SOURCE = { data: 'คำนวณจากตัวเลขบนหน้านี้', faq: 'คู่มือการใช้งาน', ai: 'ตอบโดย AI (Google Gemini) · อาจคลาดเคลื่อน', none: '' };
+const AI_REASONS = ['ไม่ตรงเรื่อง', 'ตัวเลขไม่ถูก', 'ไม่ครบ', 'อ่านไม่เข้าใจ'];
+// A question about the data / Dashboard (worth a "miss" and a pointer to the
+// widget library) as opposed to small talk or general knowledge.
+const AI_ON_TOPIC = /widget|กราฟ|ตัวเลข|ข้อมูล|ยอด|ราคา|ต้นทุน|ซื้อ|ขาย|สาขา|ซัพพลายเออร์|สต็อก|กำไร|เมนู|ของเสีย|ครัว|สูตร|po|grn|invoice|dashboard|ตั้งค่า|แจ้งเตือน|line|pos|fmh/i;
 const aiCanSettings = () => !!state.user && ['kss_superadmin', 'company_admin'].includes(state.user.role);
 
 // The page as the chat sees it: header lines + each widget's "อธิบาย" facts.
@@ -70,9 +74,9 @@ function aiEnsureDom() {
      </button>
      <section id="ai-panel" class="ai-panel" role="dialog" aria-label="ถาม AI เกี่ยวกับ Dashboard นี้" hidden>
        <header class="ai-head">
-         <div><b>ถาม AI</b><span class="ai-sub">ตอบจากตัวเลขบน Dashboard นี้</span></div>
+         <div><b>ถาม AI</b><span class="ai-sub">ตอบจากตัวเลขบน Dashboard นี้และคู่มือการใช้งาน</span></div>
          <span class="ai-head-act">
-           <button type="button" class="ai-misses" hidden>คำถามที่ตอบไม่ได้</button>
+           <button type="button" class="ai-misses" hidden>จัดการคำถาม</button>
            <button type="button" class="ai-close" aria-label="ปิด">✕</button>
          </span>
        </header>
@@ -89,10 +93,12 @@ function aiEnsureDom() {
   el('ai-fab').addEventListener('click', () => aiToggle());
   const mi = el('ai-panel').querySelector('.ai-misses');
   mi.hidden = !(state.user && state.user.role === 'kss_superadmin');
-  mi.addEventListener('click', aiShowMisses);
+  mi.addEventListener('click', () => { aiToggle(false); if (typeof openAdminView === 'function') openAdminView('ai-questions'); });
   el('ai-panel').querySelector('.ai-log').addEventListener('click', aiLogClick);
   el('ai-panel').querySelector('.ai-close').addEventListener('click', () => aiToggle(false));
-  el('ai-panel').addEventListener('keydown', (e) => { if (e.key === 'Escape') { aiToggle(false); el('ai-fab').focus(); } });
+  el('ai-panel').addEventListener('keydown', aiTrap);
+  // On the document: re-rendering the log can drop focus out of the panel.
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && el('ai-panel') && !el('ai-panel').hidden) aiToggle(false); });
   el('ai-panel').querySelector('.ai-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const input = el('ai-input');
@@ -103,13 +109,28 @@ function aiEnsureDom() {
   });
 }
 
+const aiSheet = () => window.matchMedia('(max-width: 640px)').matches;
 function aiToggle(open) {
   const panel = el('ai-panel');
   const show = open === undefined ? panel.hidden : open;
+  const was = !panel.hidden;
   panel.hidden = !show;
+  panel.setAttribute('aria-modal', String(show && aiSheet()));
   el('ai-fab').setAttribute('aria-expanded', String(show));
   el('ai-fab').classList.toggle('on', show);
+  document.body.classList.toggle('ai-sheet-open', show && aiSheet());
   if (show) { aiRender(); el('ai-input').focus(); }
+  else if (was) el('ai-fab').focus();
+}
+
+// On a phone the panel covers the screen: keep Tab inside it.
+function aiTrap(e) {
+  if (e.key !== 'Tab' || !aiSheet()) return;
+  const f = [...el('ai-panel').querySelectorAll('button:not([hidden]):not(:disabled), input')].filter((n) => n.offsetParent !== null);
+  if (!f.length) return;
+  const first = f[0], last = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 }
 
 function aiMsgHtml(m, i) {
@@ -117,14 +138,21 @@ function aiMsgHtml(m, i) {
   if (m.error) return `<div class="ai-msg model err">${esc(m.text)}</div>`;
   const src = AI_SOURCE[m.source] || '';
   const go = (m.go || []).map((g) => `<button type="button" class="ai-go" data-go="${esc(g.act)}">${esc(g.label)} →</button>`).join('');
-  const rate = m.source === 'none' || m.rated
-    ? m.rated ? `<span class="ai-thanks">${m.rated === 'up' ? 'ขอบคุณครับ' : 'รับทราบ จะนำไปปรับปรุง'}</span>` : ''
-    : `<span class="ai-rate" aria-label="ให้คะแนนคำตอบ">
-         <button type="button" class="ai-thumb" data-rate="up" data-i="${i}" aria-label="ตอบตรง"><svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11v9H4v-9zM7 11l4-8c1.7 0 3 1.3 3 3v3h5.2a2 2 0 0 1 2 2.3l-1.2 7A2 2 0 0 1 18 20H7"/></svg></button>
-         <button type="button" class="ai-thumb" data-rate="down" data-i="${i}" aria-label="ตอบไม่ตรงหรือไม่ครบ"><svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(180deg)"><path d="M7 11v9H4v-9zM7 11l4-8c1.7 0 3 1.3 3 3v3h5.2a2 2 0 0 1 2 2.3l-1.2 7A2 2 0 0 1 18 20H7"/></svg></button>
+  let rate = '';
+  if (m.source !== 'none') {
+    if (m.rated) rate = `<span class="ai-thanks">${m.rated === 'up' ? 'ขอบคุณครับ' : 'รับทราบ จะนำไปปรับปรุง'}</span>`;
+    else if (m.rating === 'down') {
+      rate = `<div class="ai-why" role="group" aria-label="ไม่ตรงเรื่องอะไร"><span>ไม่ตรงเรื่องอะไร</span>${AI_REASONS.map((r) => `<button type="button" class="ai-reason" data-reason="${esc(r)}" data-i="${i}">${esc(r)}</button>`).join('')}<button type="button" class="ai-reason skip" data-reason="" data-i="${i}">ข้าม</button></div>`;
+    } else {
+      rate = `<span class="ai-rate" role="group" aria-label="ให้คะแนนคำตอบ">
+         <button type="button" class="ai-thumb" data-rate="up" data-i="${i}" aria-label="ตอบตรง"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11v9H4v-9zM7 11l4-8c1.7 0 3 1.3 3 3v3h5.2a2 2 0 0 1 2 2.3l-1.2 7A2 2 0 0 1 18 20H7"/></svg></button>
+         <button type="button" class="ai-thumb" data-rate="down" data-i="${i}" aria-label="ตอบไม่ตรงหรือไม่ครบ"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(180deg)"><path d="M7 11v9H4v-9zM7 11l4-8c1.7 0 3 1.3 3 3v3h5.2a2 2 0 0 1 2 2.3l-1.2 7A2 2 0 0 1 18 20H7"/></svg></button>
        </span>`;
-  const meta = src || go || rate ? `<div class="ai-meta">${src ? `<span class="ai-src ${m.source}">${esc(src)}</span>` : ''}${rate}</div>` : '';
-  return `<div class="ai-msg model">${aiFormat(m.text)}${go ? `<div class="ai-gos">${go}</div>` : ''}${meta}</div>`;
+    }
+  }
+  const meta = src || rate ? `<div class="ai-meta">${m.rating === 'down' && !m.rated ? '' : src ? `<span class="ai-src ${m.source}">${esc(src)}</span>` : ''}${rate}</div>` : '';
+  const aiTag = m.source === 'ai' ? '<div class="ai-tag"><svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg>AI สรุปให้ · ตรวจกับตัวเลขบนกราฟ</div>' : '';
+  return `<div class="ai-msg model${m.source === 'ai' ? ' by-ai' : ''}">${aiTag}${aiFormat(m.text)}${go ? `<div class="ai-gos">${go}</div>` : ''}${meta}</div>`;
 }
 
 function aiRender() {
@@ -152,8 +180,8 @@ function aiGo(act) {
   else if (act.startsWith('settings:') && typeof openCompanySettings === 'function') openCompanySettings(act.slice(9));
 }
 
-function aiFeedback(kind, i, question, answer, source) {
-  const body = { dashboard_id: aiChat.dashboardId, kind, question, answer: answer || '', source: source || '' };
+function aiFeedback(kind, i, question, answer, source, reason) {
+  const body = { dashboard_id: aiChat.dashboardId, kind, question, answer: answer || '', source: source || '', reason: reason || '' };
   api('/api/ai/feedback', { method: 'POST', body: JSON.stringify(body) }).catch(() => {});
 }
 
@@ -163,30 +191,20 @@ function aiLogClick(e) {
   if (g) return aiGo(g.dataset.go);
   const t = e.target.closest('[data-rate]');
   if (t) {
-    const i = Number(t.dataset.i), m = msgs[i];
+    const m = msgs[Number(t.dataset.i)];
     if (!m || m.rated) return;
-    m.rated = t.dataset.rate;
-    aiFeedback(t.dataset.rate, i, m.q, m.text, m.source);
+    if (t.dataset.rate === 'up') { m.rated = 'up'; aiFeedback('up', 0, m.q, m.text, m.source); }
+    else m.rating = 'down'; // ask why before sending
+    return aiRender();
+  }
+  const r = e.target.closest('[data-reason]');
+  if (r) {
+    const m = msgs[Number(r.dataset.i)];
+    if (!m || m.rated) return;
+    m.rated = 'down';
+    aiFeedback('down', 0, m.q, m.text, m.source, r.dataset.reason);
     aiRender();
   }
-}
-
-// KSS staff: what people asked that the chat could not answer, or rated down.
-async function aiShowMisses() {
-  const msgs = aiChat.history.get(aiChat.dashboardId) || [];
-  aiChat.history.set(aiChat.dashboardId, msgs);
-  try {
-    const r = await api('/api/ai/misses?days=14');
-    const t = r.totals;
-    const body = r.list.length
-      ? r.list.map((x) => `- ${x.kind === 'miss' ? 'ตอบไม่ได้' : '👎'} ×${x.n}: ${x.question}`).join('\n')
-      : 'ไม่มีคำถามที่ตอบไม่ได้ในช่วงนี้';
-    msgs.push({ role: 'model', source: 'none', text: `**14 วันที่ผ่านมา**: 👍 ${t.up} · 👎 ${t.down} · ตอบไม่ได้ ${t.miss}\n${body}\n\nเติมคำตอบได้ที่ HELP_FAQ ใน public/helpfaq.js`, q: '' });
-  } catch (err) {
-    msgs.push({ role: 'model', text: err.message, error: true });
-  }
-  aiToggle(true);
-  aiRender();
 }
 
 async function aiSend(question) {
@@ -198,22 +216,23 @@ async function aiSend(question) {
   msgs.push({ role: 'user', text: question });
   // 1. FAQ + the page, in the browser.
   let local = null;
-  try { local = helpAnswer(question, aiPageParts(), aiCanSettings()); } catch (e) { local = null; }
+  try { local = helpAnswer(question, aiPageParts(), aiCanSettings(), aiChat.taught); } catch (e) { local = null; }
   if (local) {
     msgs.push({ role: 'model', text: local.text, source: local.source, go: local.go, q: question });
     return aiRender();
   }
   const st = aiChat.status || {};
   // 3. nobody can answer.
+  const onTopic = AI_ON_TOPIC.test(question);
   if (!st.available) {
-    msgs.push({
-      role: 'model',
-      source: 'none',
-      q: question,
-      text: 'ผมยังตอบเรื่องนี้ไม่ได้ครับ ลองถามเรื่องตัวเลขที่อยู่บนหน้านี้ เช่น “สรุปหน้านี้” หรือถามวิธีใช้ เช่น “เพิ่ม widget ยังไง” ได้ หรือถ้าอยากรู้เรื่องที่หน้านี้ยังไม่มี ลองหา widget ที่ตอบเรื่องนั้นในคลัง Widget',
-      go: aiCanSettings() ? [{ label: 'เปิดคลัง Widget', act: 'library' }] : [],
-    });
-    aiFeedback('miss', 0, question, '', 'none');
+    msgs.push(onTopic
+      ? {
+          role: 'model', source: 'none', q: question,
+          text: 'ผมยังตอบเรื่องนี้ไม่ได้ครับ ลองถามเรื่องตัวเลขที่อยู่บนหน้านี้ เช่น “สรุปหน้านี้” หรือถามวิธีใช้ เช่น “เพิ่ม widget ยังไง” ถ้าอยากรู้เรื่องที่หน้านี้ยังไม่มี ลองหา widget ที่ตอบเรื่องนั้นในคลัง Widget ผมจดคำถามนี้ไว้ให้ทีม KSS แล้ว',
+          go: aiCanSettings() ? [{ label: 'เปิดคลัง Widget', act: 'library' }] : [],
+        }
+      : { role: 'model', source: 'none', q: question, text: 'ผมตอบได้เฉพาะเรื่องตัวเลขใน Dashboard และวิธีใช้ Dashboard ครับ', go: [] });
+    if (onTopic) aiFeedback('miss', 0, question, '', 'none');
     return aiRender();
   }
   // 2. Gemini.
@@ -239,6 +258,7 @@ async function aiAttach(dashboard) {
   el('ai-fab').hidden = !!dashboard.preview;
   aiChat.status = null;
   if (!el('ai-panel').hidden) aiRender();
+  if (!aiChat.taught) api('/api/ai/taught').then((r) => { aiChat.taught = r.list || []; }).catch(() => { aiChat.taught = []; });
   try {
     const st = await api(`/api/ai/status?dashboard_id=${dashboard.id}`);
     if (aiChat.dashboardId !== dashboard.id) return;
