@@ -158,6 +158,7 @@
 <div id="app-shell" class="hidden">
   <div class="topbar">
     <div class="topbar-left">
+      <button id="side-toggle" type="button" class="icon-btn side-toggle" aria-label="เมนู" aria-expanded="false" aria-controls="side-nav"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
       <div class="brand">KSS <span>Dashboard</span></div>
       <!-- KSS staff: pick which company's dashboards to view -->
       <label class="company-picker-wrap hidden" id="company-picker-wrap">
@@ -184,11 +185,20 @@
   <!-- Trial / plan status for self-serve companies (public/selfserve.js) -->
   <div id="sub-banner" class="sub-banner hidden" role="status"></div>
 
+  <div class="app-body">
+  <!-- Left menu: dashboards, Widget library, settings (app.js renderSideNav) -->
+  <nav id="side-nav" class="side-nav" aria-label="เมนูหลัก"></nav>
+  <div class="side-scrim" id="side-scrim" hidden></div>
+  <div class="app-main">
+
   <!-- Dashboard view -->
   <div id="dashboard-view">
-    <div id="tabs" class="tabs" role="tablist"></div>
+    <div id="tabs" class="tabs hidden" role="tablist"></div>
     <div id="tab-panel-wrap" class="tab-panel-wrap"></div>
   </div>
+
+  <!-- Widget library (public/library.js) -->
+  <div id="library-view" class="library-view hidden"></div>
 
   <!-- KSS Internal Admin Console (kss_superadmin only) -->
   <div id="admin-view" class="admin-view hidden">
@@ -205,6 +215,8 @@
     </aside>
     <main id="admin-main" class="admin-main"></main>
   </div>
+  </div><!-- .app-main -->
+  </div><!-- .app-body -->
 </div>
 
 <!-- SETTINGS MODAL (company admin) — this company's FMH API key -->
@@ -256,6 +268,7 @@
 
 <script src="/app.js"></script>
 <script src="/admin.js"></script>
+<script src="/library.js"></script>
 <script src="/selfserve.js"></script>
 </body>
 </html>

@@ -490,12 +490,14 @@ async function enterApp() {
   if (state.user.subscription && state.user.subscription.state === 'locked') return showLockScreen();
   el('user-display-name').textContent = state.user.display_name;
   renderSubBanner();
-  el('open-admin-btn').classList.toggle('hidden', !isSuper() && !isCompanyAdmin());
+  // KSS staff keep the Admin Console button; a company admin's settings live
+  // in the left menu (renderSideNav), so the topbar shortcuts go.
+  el('open-admin-btn').classList.toggle('hidden', !isSuper());
   el('open-admin-btn').textContent = adminBtnLabel();
-  el('open-manage-users-btn').classList.toggle('hidden', !isCompanyAdmin());
-  el('open-settings-btn').classList.toggle('hidden', !isCompanyAdmin());
+  el('open-manage-users-btn').classList.add('hidden');
+  el('open-settings-btn').classList.add('hidden');
   el('company-picker-wrap').classList.toggle('hidden', !isSuper());
-  el('company-name').classList.toggle('hidden', isSuper() || !state.user.company_name);
+  el('company-name').classList.add('hidden');
   el('company-name').textContent = (state.user.company_name || '') + (state.user.company_code ? ` · ${state.user.company_code}` : '');
   showScreen('app');
   loadNotifications();
@@ -539,8 +541,117 @@ async function viewCompanyDashboards(companyId, dashboardId) {
 function showDashboardView() {
   el('dashboard-view').classList.remove('hidden');
   el('admin-view').classList.add('hidden');
+  el('library-view').classList.add('hidden');
+  el('app-shell').classList.remove('admin-mode');
   el('open-admin-btn').textContent = adminBtnLabel();
 }
+
+// From anywhere (library, settings, picker) to one dashboard.
+function goDashboard(id) {
+  if (!el('admin-view').classList.contains('hidden')) {
+    if (typeof leavePicker === 'function' && !leavePicker()) return;
+    if (typeof pickerDirty !== 'undefined') pickerDirty = false;
+  }
+  closeSideNav();
+  showDashboardView();
+  selectDashboard(id);
+}
+
+// The dashboard list changed (new one, pack) without leaving the page.
+async function refreshDashboardList() {
+  const qs = isSuper() ? `?company_id=${state.viewCompanyId}` : '';
+  state.dashboards = (await api(`/api/dashboards${qs}`)).dashboards;
+  renderSideNav();
+}
+
+// ---------- left menu ----------
+// Dashboards are listed like pages in Notion; below them the Widget library
+// and (company admins) the settings pages, one item each instead of one long
+// page. On a phone it is a drawer behind the ☰ button.
+const NAV_ICON = {
+  dash: '<path d="M4 5h16M4 12h10M4 19h7"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  library: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  layout: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M10 10v10"/>',
+  data: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
+  bell: '<path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21h4"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.8c1.6.8 2.7 2.5 3 5.2"/>',
+  plan: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>',
+  building: '<path d="M4 21V5l8-2v18M12 9l8 2v10M8 8v1M8 12v1M8 16v1M16 13v1M16 17v1M2 21h20"/>',
+};
+const navIcon = (k) => `<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${NAV_ICON[k]}</svg>`;
+
+function renderSideNav() {
+  const nav = el('side-nav');
+  if (!nav || !state.user) return;
+  const cur = state.navCurrent || {};
+  const admin = isSuper() || isCompanyAdmin();
+  const sub = state.user.subscription;
+  const co = isSuper() ? (state.companies || []).find((c) => c.id === state.viewCompanyId) : null;
+  const coName = isSuper() ? (co ? co.name : '') : state.user.company_name || '';
+  const coCode = isSuper() ? (co && co.company_code) || '' : state.user.company_code || '';
+  const link = (attrs, icon, label, on, extra = '') =>
+    `<button type="button" class="side-link${on ? ' on' : ''}" ${attrs}${on ? ' aria-current="page"' : ''}>${icon ? navIcon(icon) : ''}<span class="side-label">${esc(label)}</span>${extra}</button>`;
+  const settings = [
+    ['dashboards', 'layout', 'จัดการ Dashboard'],
+    ['data', 'data', 'การเชื่อมข้อมูล'],
+    ['alerts', 'bell', 'ตัวเตือน & LINE'],
+    ['users', 'users', 'ผู้ใช้'],
+    ...(sub && sub.self_serve ? [['plan', 'plan', 'แพ็กเกจและการชำระเงิน']] : []),
+  ];
+  nav.innerHTML = `
+    ${coName ? `<div class="side-company"><span class="side-co-mark" aria-hidden="true">${esc(coName.trim().charAt(0) || 'K')}</span><span class="side-co-text"><b>${esc(coName)}</b>${coCode ? `<span>${esc(coCode)}</span>` : ''}</span></div>` : ''}
+    <div class="side-group">
+      <div class="side-title">Dashboard</div>
+      ${state.dashboards.map((d) => link(`data-dash="${d.id}"`, '', d.display_name, cur.kind === 'dashboard' && cur.id === d.id)).join('') || '<p class="side-empty">ยังไม่มี dashboard</p>'}
+      ${admin ? `${link('data-new-dash', 'plus', 'Dashboard ใหม่', false, '')}
+        <form class="side-new-form" hidden><input name="name" maxlength="120" required placeholder="ชื่อ Dashboard" aria-label="ชื่อ Dashboard ใหม่"><button type="submit" class="btn small primary">สร้าง</button></form>` : ''}
+    </div>
+    ${admin ? `<div class="side-group">${link('data-go="library"', 'library', 'คลัง Widget', cur.kind === 'library')}</div>` : ''}
+    ${
+      isCompanyAdmin()
+        ? `<div class="side-group"><div class="side-title">ตั้งค่า</div>${settings.map(([k, ic, label]) => link(`data-settings="${k}"`, ic, label, cur.kind === 'settings' && cur.tab === k)).join('')}</div>`
+        : ''
+    }
+    ${isSuper() && state.viewCompanyId ? `<div class="side-group">${link('data-go="company"', 'building', 'ตั้งค่าบริษัทนี้ (Admin)', false)}</div>` : ''}`;
+
+  nav.querySelectorAll('[data-dash]').forEach((b) => b.addEventListener('click', () => goDashboard(Number(b.dataset.dash))));
+  const lb = nav.querySelector('[data-go="library"]');
+  if (lb) lb.addEventListener('click', () => openLibrary());
+  const cb = nav.querySelector('[data-go="company"]');
+  if (cb) cb.addEventListener('click', () => { closeSideNav(); adminState.selected = { type: 'company', id: state.viewCompanyId }; openAdminConsole(); });
+  nav.querySelectorAll('[data-settings]').forEach((b) => b.addEventListener('click', () => openCompanySettings(b.dataset.settings)));
+  const nb = nav.querySelector('[data-new-dash]');
+  const nf = nav.querySelector('.side-new-form');
+  if (nb && nf) {
+    nb.addEventListener('click', () => { nf.hidden = !nf.hidden; if (!nf.hidden) nf.name.focus(); });
+    nf.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const r = await api(`/api/admin/companies/${state.viewCompanyId}/dashboards`, { method: 'POST', body: JSON.stringify({ display_name: nf.name.value }) });
+        await refreshDashboardList();
+        goDashboard(r.id);
+      } catch (err) {
+        nf.insertAdjacentHTML('beforeend', `<div class="error-msg">${esc(err.message)}</div>`);
+      }
+    });
+  }
+}
+
+function openSideNav() {
+  el('app-shell').classList.add('side-open');
+  el('side-scrim').hidden = false;
+  el('side-toggle').setAttribute('aria-expanded', 'true');
+}
+function closeSideNav() {
+  if (!el('app-shell').classList.contains('side-open')) return;
+  el('app-shell').classList.remove('side-open');
+  el('side-scrim').hidden = true;
+  el('side-toggle').setAttribute('aria-expanded', 'false');
+}
+el('side-toggle').addEventListener('click', () => (el('app-shell').classList.contains('side-open') ? closeSideNav() : openSideNav()));
+el('side-scrim').addEventListener('click', closeSideNav);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSideNav(); });
 
 // KSS staff get the whole Admin Console; a client's company admin gets the
 // same composer and widget picker, for their own company only.
@@ -571,6 +682,7 @@ async function loadDashboards(preferredDashboardId) {
 }
 
 function renderTabs() {
+  renderSideNav();
   const tabsEl = el('tabs');
   tabsEl.innerHTML = '';
   state.dashboards.forEach((d) => {
@@ -592,6 +704,7 @@ function destroyCharts() {
 
 async function selectDashboard(id) {
   state.activeDashboardId = id;
+  state.navCurrent = { kind: 'dashboard', id };
   renderTabs();
   const wrap = el('tab-panel-wrap');
   destroyCharts();
@@ -671,6 +784,12 @@ class DashboardView {
     this.dashboard = dashboard;
     this.widgets = widgets;
     this.sources = sources;
+    // The Widget library previews one template on the company's own data
+    // (routes/dashboards.js /preview): same renderers, no status bar.
+    this.preview = !!dashboard.preview;
+    this.dataBase = this.preview
+      ? `/api/dashboards/preview/${String(dashboard.id).replace('preview-', '')}`
+      : `/api/dashboards/${dashboard.id}`;
     this.results = {}; // source -> { data, meta } | { error, code }
     this.hasDateSource = Object.values(sources).some((s) => s.date_field);
     // Reports whose older months can come from FMH export files: these pages
@@ -693,6 +812,14 @@ class DashboardView {
       </div>
       <div class="dash-controls">
         ${
+          !this.preview && (isSuper() || isCompanyAdmin())
+            ? `<div class="dash-actions">
+                 <button type="button" class="btn small ghost dash-edit">จัดเรียง / แก้ไข</button>
+                 <button type="button" class="btn small primary dash-add">+ เพิ่ม Widget</button>
+               </div>`
+            : ''
+        }
+        ${
           this.hasDateSource
             ? `<div class="range-control" role="group" aria-label="ช่วงวันที่">
                  <button type="button" class="range-chip" data-days="7">7 วัน</button>
@@ -707,6 +834,15 @@ class DashboardView {
         }
       </div>`;
     this.wrap.appendChild(header);
+    const editBtn = header.querySelector('.dash-edit');
+    if (editBtn) {
+      editBtn.addEventListener('click', () => {
+        adminState.selected = { type: 'picker', id: this.dashboard.company_id, dashboardId: this.dashboard.id };
+        if (!isSuper()) state.navCurrent = { kind: 'dashboard', id: this.dashboard.id };
+        openAdminConsole();
+      });
+      header.querySelector('.dash-add').addEventListener('click', () => openLibrary({ dashboardId: this.dashboard.id }));
+    }
 
     this.statusEl = document.createElement('div');
     this.wrap.appendChild(this.statusEl);
@@ -729,10 +865,14 @@ class DashboardView {
     this.wrap.appendChild(this.coverageEl);
 
     if (!this.widgets.length) {
-      const p = document.createElement('p');
-      p.className = 'muted';
-      p.textContent = 'dashboard นี้ยังไม่มี widget';
-      this.wrap.appendChild(p);
+      const box = document.createElement('div');
+      box.className = 'dash-empty';
+      const canAdd = !this.preview && (isSuper() || isCompanyAdmin());
+      box.innerHTML = `<p><b>Dashboard นี้ยังว่างอยู่</b></p>
+        <p class="muted">${canAdd ? 'เลือก widget จากคลัง หรือเริ่มจากชุด Dashboard สำเร็จรูป' : 'ผู้ดูแลของบริษัทยังไม่ได้ใส่ widget'}</p>
+        ${canAdd ? '<button type="button" class="btn primary">เปิดคลัง Widget</button>' : ''}`;
+      if (canAdd) box.querySelector('button').addEventListener('click', () => openLibrary({ dashboardId: this.dashboard.id }));
+      this.wrap.appendChild(box);
       return;
     }
 
@@ -793,15 +933,16 @@ class DashboardView {
         const params = new URLSearchParams();
         if (info.grouping) params.set('group', info.grouping);
         if (this.useSaved) params.set('saved', '1');
+        if (this.preview && isSuper()) params.set('company_id', this.dashboard.company_id);
         const qs = params.toString() ? `?${params}` : '';
         try {
-          this.results[key] = await api(`/api/dashboards/${this.dashboard.id}/data/${info.source || key}${qs}`);
+          this.results[key] = await api(`${this.dataBase}/data/${info.source || key}${qs}`);
         } catch (err) {
           this.results[key] = { error: err.message, code: err.code, health: err.data && err.data.health };
         }
       })
     );
-    if (state.activeDashboardId !== this.dashboard.id) return;
+    if (this.preview ? !this.wrap.isConnected : state.activeDashboardId !== this.dashboard.id) return;
     this.applyAnchor();
     this.renderStatus();
     this.renderPageFilter();
@@ -950,6 +1091,7 @@ class DashboardView {
   }
 
   renderStatus() {
+    if (this.preview) return;
     const ok = Object.values(this.results).filter((r) => r && !r.error);
     const errors = Object.values(this.results).filter((r) => r && r.error);
     const keyMissing = errors.some((r) => r.code === 'FMH_KEY_MISSING');

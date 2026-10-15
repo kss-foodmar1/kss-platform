@@ -59,7 +59,7 @@ const LOGIN_HERO = (() => {
 const SHELL_HTML = (() => {
   let raw = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
   if (LOGIN_HERO) raw = raw.replace('<html lang="th">', '<html lang="th" class="login-hero-on">');
-  return raw.replace(/(src|href)="\/(app\.js|admin\.js|style\.css|i18n\.js|i18n-en\.js|pos-parse\.js|fmh-file\.js)"/g, `$1="/$2?v=${ASSET_VERSION}"`);
+  return raw.replace(/(src|href)="\/(app\.js|admin\.js|library\.js|selfserve\.js|style\.css|i18n\.js|i18n-en\.js|pos-parse\.js|fmh-file\.js)"/g, `$1="/$2?v=${ASSET_VERSION}"`);
 })();
 
 function sendShell(res) {

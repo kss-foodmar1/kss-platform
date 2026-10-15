@@ -38,6 +38,11 @@ const COMPANY_ADMIN_ROUTES = [
   ['DELETE', /^\/dashboards\/(\d+)$/, 'dashboard'],
   ['GET', /^\/dashboards\/(\d+)\/widgets$/, 'dashboard'],
   ['PUT', /^\/dashboards\/(\d+)\/layout$/, 'dashboard'],
+  // Widget library (public/library.js)
+  ['GET', /^\/widget-packs$/],
+  ['GET', /^\/companies\/(\d+)\/widget-usage$/, 'company'],
+  ['POST', /^\/companies\/(\d+)\/library-add$/, 'company'],
+  ['POST', /^\/companies\/(\d+)\/packs\/([a-z_]+)$/, 'company'],
 ];
 
 async function adminAccess(req, res, next) {
@@ -480,6 +485,127 @@ router.delete(
     const [r] = await pool.query(`DELETE FROM dashboard_widgets WHERE id = ?`, [req.params.id]);
     if (!r.affectedRows) return res.status(404).json({ error: 'Widget not found' });
     res.json({ ok: true });
+  })
+);
+
+// ---------- widget library: pick a widget first, then where it goes ----------
+const SIZES = ['full', 'half', 'third'];
+
+async function templateFor(id) {
+  const [[tpl]] = await pool.query(
+    `SELECT id, name, report_source, default_config_json FROM widget_templates WHERE id = ? AND active = TRUE`,
+    [id]
+  );
+  return tpl || null;
+}
+
+// Appends one template to one dashboard and warms what it reads.
+async function appendWidget(companyId, dashboardId, tpl, overrides) {
+  const [[{ next }]] = await pool.query(
+    `SELECT COALESCE(MAX(position), 0) + 1 AS next FROM dashboard_widgets WHERE dashboard_id = ?`,
+    [dashboardId]
+  );
+  await pool.query(
+    `INSERT INTO dashboard_widgets (dashboard_id, widget_template_id, config_json, position) VALUES (?, ?, ?, ?)`,
+    [dashboardId, tpl.id, overrides && Object.keys(overrides).length ? JSON.stringify(overrides) : null, next]
+  );
+  let cfg = {};
+  try {
+    cfg = { ...JSON.parse(tpl.default_config_json || '{}'), ...(overrides || {}) };
+  } catch {
+    /* itemized */
+  }
+  pullsForWidget(tpl.report_source, cfg).forEach((p) => warmSource(companyId, p.source, p.grouping));
+}
+
+async function createDashboard(companyId, name, description = null) {
+  const [[{ next }]] = await pool.query(
+    `SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM dashboards WHERE company_id = ?`,
+    [companyId]
+  );
+  const [r] = await pool.query(
+    `INSERT INTO dashboards (company_id, display_name, description, sort_order) VALUES (?, ?, ?, ?)`,
+    [companyId, String(name).trim().slice(0, 255), description, next]
+  );
+  return r.insertId;
+}
+
+router.get('/widget-packs', (req, res) => res.json({ packs: require('../lib/widgetPacks').PACKS }));
+
+// Which of this company's dashboards each template is already on.
+router.get(
+  '/companies/:id/widget-usage',
+  wrap(async (req, res) => {
+    const [rows] = await pool.query(
+      `SELECT DISTINCT w.widget_template_id AS template_id, d.id AS dashboard_id
+       FROM dashboard_widgets w JOIN dashboards d ON d.id = w.dashboard_id
+       WHERE d.company_id = ?`,
+      [req.params.id]
+    );
+    res.json({ usage: rows });
+  })
+);
+
+// { template_id, dashboard_ids: [..], new_dashboard_name?, size? }
+// A dashboard that already has the widget is left alone (reported as "had").
+router.post(
+  '/companies/:id/library-add',
+  wrap(async (req, res) => {
+    const companyId = Number(req.params.id);
+    if (!(await companyExists(companyId))) return res.status(404).json({ error: 'Company not found' });
+    const body = req.body || {};
+    const tpl = await templateFor(body.template_id);
+    if (!tpl) return bad(res, 'ไม่พบ widget นี้');
+    const ids = [...new Set((Array.isArray(body.dashboard_ids) ? body.dashboard_ids : []).map(Number).filter(Boolean))];
+    const newName = body.new_dashboard_name && String(body.new_dashboard_name).trim();
+    if (!ids.length && !newName) return bad(res, 'เลือก dashboard อย่างน้อยหนึ่งอัน');
+    const [own] = ids.length
+      ? await pool.query(`SELECT id, display_name FROM dashboards WHERE company_id = ? AND id IN (?)`, [companyId, ids])
+      : [[]];
+    if (own.length !== ids.length) return res.status(404).json({ error: 'ไม่พบ dashboard ที่เลือก' });
+    const overrides = SIZES.includes(body.size) ? { size: body.size } : {};
+    const added = [];
+    const had = [];
+    for (const d of own) {
+      const [[exists]] = await pool.query(
+        `SELECT 1 AS ok FROM dashboard_widgets WHERE dashboard_id = ? AND widget_template_id = ? LIMIT 1`,
+        [d.id, tpl.id]
+      );
+      if (exists) { had.push({ id: d.id, display_name: d.display_name }); continue; }
+      await appendWidget(companyId, d.id, tpl, overrides);
+      added.push({ id: d.id, display_name: d.display_name });
+    }
+    if (newName) {
+      const id = await createDashboard(companyId, newName);
+      await appendWidget(companyId, id, tpl, overrides);
+      added.push({ id, display_name: newName, created: true });
+    }
+    res.json({ added, had });
+  })
+);
+
+// One click: a new dashboard made from a ready-made pack.
+router.post(
+  '/companies/:id/packs/:key',
+  wrap(async (req, res) => {
+    const companyId = Number(req.params.id);
+    if (!(await companyExists(companyId))) return res.status(404).json({ error: 'Company not found' });
+    const pack = require('../lib/widgetPacks').PACKS.find((p) => p.key === req.params.key);
+    if (!pack) return res.status(404).json({ error: 'ไม่พบชุดนี้' });
+    const [tpls] = await pool.query(
+      `SELECT id, template_key, report_source, default_config_json FROM widget_templates WHERE active = TRUE AND template_key IN (?)`,
+      [pack.templates]
+    );
+    const byKey = new Map(tpls.map((t) => [t.template_key, t]));
+    const name = (req.body && req.body.name && String(req.body.name).trim()) || pack.title;
+    const id = await createDashboard(companyId, name, pack.description);
+    let n = 0;
+    for (const k of pack.templates) {
+      if (!byKey.has(k)) continue;
+      await appendWidget(companyId, id, byKey.get(k), {});
+      n++;
+    }
+    res.status(201).json({ id, display_name: name, widgets: n });
   })
 );
 

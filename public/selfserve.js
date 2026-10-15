@@ -79,7 +79,7 @@ function renderSubBanner() {
   b.className = `sub-banner tone-${tone}`;
   b.innerHTML = `<span>${parts.join(' · ')}</span><span class="sb-actions">${buttons}</span>`;
   const key = b.querySelector('.sb-key');
-  if (key) key.addEventListener('click', () => el('open-settings-btn').click());
+  if (key) key.addEventListener('click', () => openCompanySettings('data'));
   const plan = b.querySelector('.sb-plan');
   if (plan) plan.addEventListener('click', openPlan);
 }

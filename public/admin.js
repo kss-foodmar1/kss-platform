@@ -275,22 +275,53 @@ el('open-admin-btn').addEventListener('click', () => {
 
 async function openAdminConsole() {
   destroyCharts();
+  closeSideNav();
   el('dashboard-view').classList.add('hidden');
+  el('library-view').classList.add('hidden');
   el('admin-view').classList.remove('hidden');
   el('open-admin-btn').textContent = '← กลับไปดู Dashboard';
   el('admin-view').classList.toggle('company-mode', !isSuper());
+  // KSS staff get the Console's own sidebar; a company admin keeps the left menu.
+  el('app-shell').classList.toggle('admin-mode', isSuper());
   if (!adminState.meta) adminState.meta = await api('/api/admin/meta');
   await loadTemplates();
   if (!isSuper()) {
     if (!adminState.selected || !['my-dashboards', 'picker'].includes(adminState.selected.type)) {
       adminState.selected = { type: 'my-dashboards', id: state.user.company_id };
     }
+    if (adminState.selected.type === 'my-dashboards') {
+      const tab = adminState.selected.tab || settingsTabFor(adminState.focus) || 'dashboards';
+      adminState.selected.tab = tab;
+      state.navCurrent = { kind: 'settings', tab };
+    }
+    renderSideNav();
     return renderAdminMain();
   }
   await renderAdminCompanyList();
   if (typeof refreshSignupBadge === 'function') refreshSignupBadge();
   if (!adminState.selected) adminState.selected = state.viewCompanyId ? { type: 'company', id: state.viewCompanyId } : { type: 'catalog' };
   renderAdminMain();
+}
+
+// A company admin's settings, one page per tab (left menu → ตั้งค่า).
+// Old deep links (focus 'pos' / 'fmh-files' / 'plan') land on their tab.
+const SETTINGS_TABS = [
+  ['dashboards', 'จัดการ Dashboard'],
+  ['data', 'การเชื่อมข้อมูล'],
+  ['alerts', 'ตัวเตือน & LINE'],
+  ['users', 'ผู้ใช้'],
+  ['plan', 'แพ็กเกจและการชำระเงิน'],
+];
+function settingsTabFor(focus) {
+  return { pos: 'data', 'fmh-files': 'data', plan: 'plan' }[focus] || null;
+}
+function openCompanySettings(tab) {
+  if (!el('admin-view').classList.contains('hidden')) {
+    if (!leavePicker()) return;
+    pickerDirty = false;
+  }
+  adminState.selected = { type: 'my-dashboards', id: state.user.company_id, tab };
+  openAdminConsole();
 }
 
 async function loadTemplates() {
@@ -747,8 +778,12 @@ async function renderCompanyDetail(main, companyId) {
       </div>
       <button type="button" class="btn small view-dashboards">ดู dashboard ของบริษัทนี้ →</button>
     </div>
+    <nav class="jump-bar" aria-label="ไปที่หัวข้อ">
+      <a href="#co-info">ข้อมูลบริษัท</a><a href="#co-fmh">FMH</a><a href="#co-dash">Dashboards</a><a href="#co-users">ผู้ใช้</a>
+      <a href="#co-billing">ชำระเงิน</a><a href="#co-pos">ยอดขาย POS</a><a href="#line-bot">LINE</a><a href="#fmh-files">ไฟล์ FMH</a>
+    </nav>
 
-    <section class="admin-card">
+    <section class="admin-card" id="co-info">
       <h2>1. ข้อมูลบริษัท</h2>
       <form class="company-form">
         <div class="form-msg"></div>
@@ -760,45 +795,52 @@ async function renderCompanyDetail(main, companyId) {
       </form>
     </section>
 
-    <section class="admin-card">
+    <section class="admin-card" id="co-fmh">
       <h2>2. FMH API Key</h2>
-      <p class="helper-text" style="margin-top:0;">ปกติให้ Admin บริษัทของลูกค้าใส่ Key เองผ่านปุ่ม ⚙️ — ใส่แทนได้ที่นี่ในกรณีจำเป็น (เช่น Demo Co)</p>
+      <p class="helper-text" style="margin-top:0;">ปกติให้ Admin บริษัทของลูกค้าใส่ Key เองที่ ตั้งค่า › การเชื่อมข้อมูล — ใส่แทนได้ที่นี่ในกรณีจำเป็น (เช่น Demo Co)</p>
       <div class="fmh-panel"></div>
       <div class="sync-block"></div>
     </section>
 
-    <section class="admin-card">
+    <section class="admin-card" id="co-dash">
       <h2>3. Dashboards &amp; Widgets</h2>
       <div class="composer"></div>
     </section>
 
-    <section class="admin-card">
+    <section class="admin-card" id="co-users">
       <h2>4. ผู้ใช้งาน</h2>
       <div class="company-users"></div>
     </section>
 
-    <section class="admin-card">
+    <section class="admin-card" id="co-billing">
       <h2>5. การชำระเงินและอายุการใช้งาน</h2>
       <div class="billing"></div>
     </section>
 
-    <section class="admin-card">
+    <section class="admin-card" id="co-pos">
       <h2>6. ยอดขาย POS (Foodstory และ POS ที่ไม่มี API)</h2>
       <div class="pos-panel"></div>
       <div class="ck-branch-panel"></div>
     </section>
 
     <section class="admin-card" id="line-bot">
-      <h2>LINE แจ้งเตือนผู้บริหาร</h2>
+      <h2>7. LINE แจ้งเตือนผู้บริหาร</h2>
       <div class="line-panel"></div>
     </section>
 
     <section class="admin-card" id="fmh-files">
-      <h2>7. ข้อมูลย้อนหลังจากไฟล์ FMH (เกิน 90 วัน)</h2>
+      <h2>8. ข้อมูลย้อนหลังจากไฟล์ FMH (เกิน 90 วัน)</h2>
       <div class="fmh-files-panel"></div>
     </section>`;
 
   main.querySelector('.view-dashboards').addEventListener('click', () => viewCompanyDashboards(companyId));
+  main.querySelectorAll('.jump-bar a').forEach((a) =>
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const t = main.querySelector(a.getAttribute('href'));
+      if (t) t.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    })
+  );
   const form = main.querySelector('.company-form');
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1081,60 +1123,77 @@ async function renderComposer(container, companyId) {
 
 // ---------- company admin: manage their own dashboards ----------
 async function renderMyDashboards(main, companyId) {
+  const sub = state.user.subscription;
+  const tabs = SETTINGS_TABS.filter(([k]) => k !== 'plan' || (sub && sub.self_serve));
+  let tab = adminState.selected.tab || settingsTabFor(adminState.focus) || 'dashboards';
+  if (!tabs.some(([k]) => k === tab)) tab = 'dashboards';
+  adminState.selected.tab = tab;
+  state.navCurrent = { kind: 'settings', tab };
+  renderSideNav();
+  const focus = adminState.focus;
+  adminState.focus = null;
   main.innerHTML = `
-    <div class="admin-head">
-      <div>
-        <h1 class="admin-h1">จัดการ Dashboard</h1>
-        <p class="muted">สร้าง dashboard เลือก widget จาก catalog และจัดลำดับได้เอง ผู้ใช้ที่ดูอย่างเดียวจะเห็นเฉพาะ dashboard ที่คุณให้สิทธิ์ (ปุ่ม 👥)</p>
-      </div>
+    <div class="admin-head"><div><h1 class="admin-h1">ตั้งค่า</h1></div></div>
+    <div class="settings-tabs" role="tablist" aria-label="หมวดตั้งค่า">
+      ${tabs.map(([k, label]) => `<button type="button" role="tab" class="settings-tab${k === tab ? ' on' : ''}" data-tab="${k}" aria-selected="${k === tab}">${esc(label)}</button>`).join('')}
     </div>
-    <section class="admin-card">
-      <h2>ข้อมูลบริษัท</h2>
-      <form class="inline-form company-name-form">
-        <label class="field" style="flex:2;min-width:220px;margin:0"><span>ชื่อบริษัท</span><input name="name" required minlength="2" maxlength="120" value="${esc(state.user.company_name || '')}"></label>
-        <button type="submit" class="btn small primary">บันทึกชื่อ</button>
-      </form>
-      <p class="helper-text">รหัสบริษัท <strong class="company-code big">${esc(state.user.company_code || '')}</strong> — รหัสนี้ไม่เปลี่ยนแม้เปลี่ยนชื่อบริษัท ใช้อ้างอิงเมื่อติดต่อทีม KSS</p>
-      <div class="name-msg"></div>
-    </section>
-    ${state.user.subscription && state.user.subscription.self_serve ? '<section class="admin-card" id="plan"><h2>แพ็กเกจและการชำระเงิน</h2><div class="plan-panel"></div></section>' : ''}
-    <section class="admin-card"><div class="composer"></div></section>
-    <section class="admin-card" id="fmh-files">
-      <h2>ข้อมูลย้อนหลังจากไฟล์ FMH (เกิน 90 วัน)</h2>
-      <div class="fmh-files-panel"></div>
-    </section>
-    <section class="admin-card" id="pos-sales">
-      <h2>ยอดขาย POS (Foodstory และ POS ที่ไม่มี API)</h2>
-      <div class="pos-panel"></div>
-      <div class="ck-branch-panel"></div>
-    </section>
-    <section class="admin-card" id="line-bot">
-      <h2>LINE แจ้งเตือนผู้บริหาร</h2>
-      <div class="line-panel"></div>
-    </section>`;
-  if (main.querySelector('.plan-panel')) { renderPlanPanel(main.querySelector('.plan-panel'), adminState.planFlash || ''); adminState.planFlash = ''; }
-  renderComposer(main.querySelector('.composer'), companyId);
-  renderFmhFilesPanel(main.querySelector('.fmh-files-panel'), companyId);
-  renderPosPanel(main.querySelector('.pos-panel'), companyId);
-  renderCkBranchPanel(main.querySelector('.ck-branch-panel'), companyId);
-  renderLinePanel(main.querySelector('.line-panel'), companyId);
-  const nameForm = main.querySelector('.company-name-form');
-  nameForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const out = main.querySelector('.name-msg');
-    try {
-      const { company } = await api(`/api/admin/companies/${companyId}/name`, { method: 'PATCH', body: JSON.stringify({ name: nameForm.name.value }) });
-      state.user.company_name = company.name;
-      el('company-name').textContent = `${company.name} · ${company.company_code}`;
-      out.innerHTML = '<div class="ok-msg">บันทึกชื่อบริษัทแล้ว</div>';
-    } catch (err) {
-      out.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
-    }
-  });
-  if (['pos', 'fmh-files', 'plan'].includes(adminState.focus)) {
-    const target = main.querySelector({ pos: '#pos-sales', 'fmh-files': '#fmh-files', plan: '#plan' }[adminState.focus]);
-    adminState.focus = null;
+    <div class="settings-body"></div>`;
+  main.querySelectorAll('.settings-tab').forEach((b) => b.addEventListener('click', () => openCompanySettings(b.dataset.tab)));
+  const body = main.querySelector('.settings-body');
+
+  if (tab === 'dashboards') {
+    body.innerHTML = `
+      <p class="muted settings-lead">สร้าง dashboard จัดลำดับ และเลือก widget ของแต่ละอัน ผู้ใช้ที่ดูอย่างเดียวเห็นเฉพาะ dashboard ที่คุณให้สิทธิ์ในแท็บ ผู้ใช้ · หา widget ใหม่ได้ที่ <button type="button" class="link-btn open-lib">คลัง Widget</button></p>
+      <section class="admin-card"><div class="composer"></div></section>
+      <section class="admin-card">
+        <h2>ข้อมูลบริษัท</h2>
+        <form class="inline-form company-name-form">
+          <label class="field" style="flex:2;min-width:220px;margin:0"><span>ชื่อบริษัท</span><input name="name" required minlength="2" maxlength="120" value="${esc(state.user.company_name || '')}"></label>
+          <button type="submit" class="btn small primary">บันทึกชื่อ</button>
+        </form>
+        <p class="helper-text">รหัสบริษัท <strong class="company-code big">${esc(state.user.company_code || '')}</strong> — รหัสนี้ไม่เปลี่ยนแม้เปลี่ยนชื่อบริษัท ใช้อ้างอิงเมื่อติดต่อทีม KSS</p>
+        <div class="name-msg"></div>
+      </section>`;
+    body.querySelector('.open-lib').addEventListener('click', () => openLibrary());
+    renderComposer(body.querySelector('.composer'), companyId);
+    const nameForm = body.querySelector('.company-name-form');
+    nameForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const out = body.querySelector('.name-msg');
+      try {
+        const { company } = await api(`/api/admin/companies/${companyId}/name`, { method: 'PATCH', body: JSON.stringify({ name: nameForm.name.value }) });
+        state.user.company_name = company.name;
+        renderSideNav();
+        out.innerHTML = '<div class="ok-msg">บันทึกชื่อบริษัทแล้ว</div>';
+      } catch (err) {
+        out.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+      }
+    });
+  } else if (tab === 'data') {
+    body.innerHTML = `
+      <p class="muted settings-lead">ทุกแหล่งข้อมูลที่ Dashboard ใช้ อยู่ในหน้านี้</p>
+      <section class="admin-card" id="fmh-key"><h2>FMH API</h2><p class="helper-text" style="margin-top:0">API Key จะถูกเข้ารหัสก่อนเก็บ และไม่แสดงค่าจริงอีกหลังบันทึก</p><div class="fmh-key-slot"></div></section>
+      <section class="admin-card" id="pos-sales"><h2>ยอดขาย POS (Foodstory และ POS ที่ไม่มี API)</h2><div class="pos-panel"></div><div class="ck-branch-panel"></div></section>
+      <section class="admin-card" id="fmh-files"><h2>ข้อมูลย้อนหลังจากไฟล์ FMH (เกิน 90 วัน)</h2><div class="fmh-files-panel"></div></section>`;
+    renderFmhKeyPanel(body.querySelector('.fmh-key-slot'), companyId, () => {});
+    renderPosPanel(body.querySelector('.pos-panel'), companyId);
+    renderCkBranchPanel(body.querySelector('.ck-branch-panel'), companyId);
+    renderFmhFilesPanel(body.querySelector('.fmh-files-panel'), companyId);
+    const target = focus && body.querySelector({ pos: '#pos-sales', 'fmh-files': '#fmh-files' }[focus]);
     if (target) target.scrollIntoView({ block: 'start' });
+  } else if (tab === 'alerts') {
+    body.innerHTML = `
+      <p class="muted settings-lead">ตัวเตือนตรวจข้อมูลทุกเช้า และส่งสรุปเข้ากลุ่ม LINE ผู้บริหาร · เพิ่ม widget ตัวเตือนได้จาก <button type="button" class="link-btn open-lib">คลัง Widget</button></p>
+      <section class="admin-card" id="line-bot"><h2>LINE แจ้งเตือนผู้บริหาร</h2><div class="line-panel"></div></section>`;
+    body.querySelector('.open-lib').addEventListener('click', () => { lib.role = 'all'; lib.cat = 'Alerts'; openLibrary(); });
+    renderLinePanel(body.querySelector('.line-panel'), companyId);
+  } else if (tab === 'users') {
+    body.innerHTML = `<section class="admin-card"><div class="user-manager-slot"></div></section>`;
+    renderUserManager(body.querySelector('.user-manager-slot'), { companyId });
+  } else if (tab === 'plan') {
+    body.innerHTML = '<section class="admin-card" id="plan"><div class="plan-panel"></div></section>';
+    renderPlanPanel(body.querySelector('.plan-panel'), adminState.planFlash || '');
+    adminState.planFlash = '';
   }
 }
 

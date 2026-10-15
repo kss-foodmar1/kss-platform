@@ -20,6 +20,45 @@ const fmhFiles = require('../lib/fmhFiles');
 
 const router = express.Router();
 
+// Which (source, grouping) pulls the page fetches, and the pull aliases of
+// each widget. Shared by a real dashboard and the library's one-widget preview.
+function describeWidgets(widgets) {
+  const sources = {};
+  const describe = (p) => {
+    const cfg = FMH_REPORTS[p.source];
+    sources[cacheKeyFor(p.source, p.grouping)] = {
+      source: p.source,
+      grouping: p.grouping,
+      label: cfg ? cfg.label : p.source,
+      // Grouped rows are already aggregated over the window, so there is no
+      // per-row date left for the range picker to filter on.
+      date_field: p.grouping ? null : cfg ? cfg.rowDateField || cfg.dateField : null,
+      date_is_bucket: !p.grouping && !!(cfg && cfg.rowDateIsBucket),
+    };
+  };
+  widgets.forEach((w) => {
+    const pulls = pullsForWidget(w.report_source, w.config);
+    pulls.forEach(describe);
+    // A widget reading a server-side grouping pulls from its own cache entry,
+    // so the client fetches per (source, grouping), not per source. A pivot
+    // widget reads several, and names them by the aliases its config gave.
+    const own = pulls.find((p) => p.source === w.report_source) || pulls[0] || {};
+    w.grouping = own.grouping || null;
+    // Resolved from each declared source, not by indexing into `pulls` —
+    // that list is de-duplicated, so two aliases on the same pull would have
+    // shifted every alias after them onto the wrong data.
+    w.pulls = (w.config.sources || []).length
+      ? w.config.sources.map((sc) => {
+          const c = FMH_REPORTS[sc.source];
+          const g = c && sc.group_by && c.groupings.includes(sc.group_by) ? sc.group_by : null;
+          return { as: sc.as, key: cacheKeyFor(sc.source, g) };
+        })
+      : null;
+  });
+  return sources;
+}
+
+
 // A manual refresh is allowed at most this often per company + report source,
 // so an "open to everyone" refresh button can't burn the monthly FMH quota.
 const REFRESH_COOLDOWN_MS = 3 * 60 * 60 * 1000;
@@ -51,6 +90,55 @@ router.get(
   })
 );
 
+// ---------- one widget previewed in the Widget library ----------
+// Company admins (own company) and KSS staff (?company_id=) only: the library
+// is where widgets get added. Rows come from the company's own cache, so a
+// demo company sees demo data and a real one sees its own.
+async function previewFor(req) {
+  if (!isSuperadmin(req.user) && req.user.role !== 'company_admin') return null;
+  const companyId = resolveCompanyId(req);
+  if (!companyId) return null;
+  const [[t]] = await pool.query(
+    `SELECT id, template_key, name, report_source, chart_type, default_config_json FROM widget_templates WHERE id = ? AND active = TRUE`,
+    [req.params.tid]
+  );
+  if (!t) return null;
+  let cfg = {};
+  try { cfg = JSON.parse(t.default_config_json || '{}'); } catch { /* none */ }
+  const widget = {
+    id: `p${t.id}`, title: t.name, template_id: t.id, template_key: t.template_key, template_name: t.name,
+    report_source: t.report_source, chart_type: t.chart_type, config: { ...cfg, size: 'full' }, config_overrides: {},
+  };
+  return { companyId, widget };
+}
+
+router.get(
+  '/preview/:tid',
+  requireAuth,
+  wrap(async (req, res) => {
+    const p = await previewFor(req);
+    if (!p) return res.status(404).json({ error: 'ไม่พบ widget นี้' });
+    const widgets = [p.widget];
+    const sources = describeWidgets(widgets);
+    const [[co]] = await pool.query(`SELECT data_source FROM companies WHERE id = ?`, [p.companyId]);
+    res.json({
+      dashboard: { id: `preview-${p.widget.template_id}`, company_id: p.companyId, display_name: p.widget.title, data_source: co ? co.data_source : 'fmh', preview: true },
+      widgets,
+      sources,
+    });
+  })
+);
+
+router.get(
+  '/preview/:tid/data/:source',
+  requireAuth,
+  wrap(async (req, res) => {
+    const p = await previewFor(req);
+    if (!p) return res.status(404).json({ error: 'ไม่พบ widget นี้' });
+    await serveData(req, res, p.companyId, [p.widget]);
+  })
+);
+
 router.get(
   '/:id',
   requireAuth,
@@ -58,42 +146,95 @@ router.get(
     const dashboard = await getDashboardForUser(req.user, req.params.id);
     if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
     const widgets = await listWidgets(dashboard.id);
-    const sources = {};
-    const describe = (p) => {
-      const cfg = FMH_REPORTS[p.source];
-      sources[cacheKeyFor(p.source, p.grouping)] = {
-        source: p.source,
-        grouping: p.grouping,
-        label: cfg ? cfg.label : p.source,
-        // Grouped rows are already aggregated over the window, so there is no
-        // per-row date left for the range picker to filter on.
-        date_field: p.grouping ? null : cfg ? cfg.rowDateField || cfg.dateField : null,
-        date_is_bucket: !p.grouping && !!(cfg && cfg.rowDateIsBucket),
-      };
-    };
-    widgets.forEach((w) => {
-      const pulls = pullsForWidget(w.report_source, w.config);
-      pulls.forEach(describe);
-      // A widget reading a server-side grouping pulls from its own cache entry,
-      // so the client fetches per (source, grouping), not per source. A pivot
-      // widget reads several, and names them by the aliases its config gave.
-      const own = pulls.find((p) => p.source === w.report_source) || pulls[0] || {};
-      w.grouping = own.grouping || null;
-      // Resolved from each declared source, not by indexing into `pulls` —
-      // that list is de-duplicated, so two aliases on the same pull would have
-      // shifted every alias after them onto the wrong data.
-      w.pulls = (w.config.sources || []).length
-        ? w.config.sources.map((sc) => {
-            const c = FMH_REPORTS[sc.source];
-            const g = c && sc.group_by && c.groupings.includes(sc.group_by) ? sc.group_by : null;
-            return { as: sc.as, key: cacheKeyFor(sc.source, g) };
-          })
-        : null;
-    });
+    const sources = describeWidgets(widgets);
     const [[co]] = await pool.query(`SELECT data_source FROM companies WHERE id = ?`, [dashboard.company_id]);
     res.json({ dashboard: { ...dashboard, data_source: co ? co.data_source : 'fmh' }, widgets, sources });
   })
 );
+
+// Cached rows of one report for a page: a dashboard, or one widget previewed
+// in the library. Never spends FMH quota: only demo data, uploaded files and
+// computed reports are built on view.
+async function serveData(req, res, companyId, widgets) {
+  const { source } = req.params;
+  const cfg = FMH_REPORTS[source] || {};
+  const grouping = req.query.group && (cfg.groupings || []).includes(req.query.group) ? req.query.group : null;
+  if (req.query.group && !grouping) return res.status(400).json({ error: 'ไม่รู้จักการจัดกลุ่มนี้' });
+
+  // Only sources this dashboard actually shows — access to one dashboard
+  // doesn't open up every report the company has cached. A pivot widget's
+  // second source counts as shown, which a check against report_source alone
+  // would have missed, so the allowed set is built the same way the sync
+  // builds its pull list.
+  const allowed = new Set();
+  widgets.forEach((w) => pullsForWidget(w.report_source, w.config).forEach((p) => allowed.add(p.source)));
+  if (!allowed.has(source)) return res.status(404).json({ error: 'dashboard นี้ไม่ได้ใช้รายงานนี้' });
+
+  // ?saved=1: the last pull that had rows ("use saved data" for demos). Falls
+  // back to the live cache for a report that has never been saved.
+  const health = await getSyncHealth(companyId, source, grouping);
+  const wantSaved = req.query.saved === '1';
+  const saved = wantSaved ? await getSaved(companyId, source, grouping) : null;
+  let cached = saved || (await getCached(companyId, source, grouping));
+  // A computed report costs nothing to build, so build it on first view
+  // rather than waiting for the nightly run (demo POS file, new widget).
+  // Demo companies run on generated data: build a missing report on first
+  // view instead of waiting for a sync (a widget just added, say).
+  if (!cached && !cfg.local) {
+    const [[co]] = await pool.query(`SELECT data_source FROM companies WHERE id = ?`, [companyId]);
+    if (co && co.data_source === 'demo') {
+      await syncOne(companyId, source, grouping).catch((err) => console.error(`Demo build failed (${companyId}/${source}):`, err.message));
+      cached = await getCached(companyId, source, grouping);
+    }
+  }
+  // A company whose history comes from uploaded FMH files can have data
+  // before (or without) any API sync: build it from the files.
+  if (!cached && !grouping && !wantSaved && (await fmhFiles.hasFiles(companyId, source))) {
+    await fmhFiles.rebuild(companyId, source).catch((err) => console.error(`File history build failed (${companyId}/${source}):`, err.message));
+    cached = await getCached(companyId, source, null);
+  }
+  // An alert widget's findings are about today: last night's build is
+  // rebuilt once the day has turned (cheap — it reads cached reports).
+  if (cached && !wantSaved && cfg.localBuild === 'alerts') {
+    const w = cached.quota && cached.quota.watch;
+    if (!w || w.evaluated_on !== require('../lib/alerts').bkkToday()) cached = null;
+  }
+  if (!cached && cfg.local) {
+    await syncOne(companyId, source, null).catch((err) => console.error(`Local build failed (${companyId}/${source}):`, err.message));
+    cached = await getCached(companyId, source, null);
+  }
+  if (!cached && cfg.local) {
+    return res.status(409).json({
+      error: 'ยังไม่มีไฟล์ยอดขาย POS — ผู้ดูแลของบริษัทอัปโหลดได้ที่ ✎ จัดการ Dashboard → ยอดขาย POS',
+      code: 'POS_NO_UPLOAD',
+      health,
+    });
+  }
+  if (!cached) {
+    const [[company]] = await pool.query(`SELECT fmh_api_key_enc, data_source FROM companies WHERE id = ?`, [companyId]);
+    const connected = company && (company.fmh_api_key_enc || company.data_source === 'demo');
+    return res.status(409).json({
+      error: connected
+        ? 'ยังไม่มีข้อมูล — ระบบจะ sync ให้ตอนตี 1 หรือกด Refresh ด่วนได้เลย'
+        : 'ยังไม่ได้ตั้งค่า FMH API Key ของบริษัทนี้',
+      code: connected ? 'FMH_NOT_SYNCED' : 'FMH_KEY_MISSING',
+      health,
+    });
+  }
+  res.json({
+    data: cached.data,
+    meta: {
+      quota: cached.quota,
+      synced_at: cached.syncedAt,
+      from_saved: !!saved,
+      health,
+      grouping,
+      date_field: grouping ? null : cfg.dateField || null,
+      // Where uploaded FMH files fill in before the API window.
+      history: (cached.quota && cached.quota.history) || null,
+    },
+  });
+}
 
 router.get(
   '/:id/data/:source',
@@ -101,86 +242,7 @@ router.get(
   wrap(async (req, res) => {
     const dashboard = await getDashboardForUser(req.user, req.params.id);
     if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
-    const { source } = req.params;
-    const cfg = FMH_REPORTS[source] || {};
-    const grouping = req.query.group && (cfg.groupings || []).includes(req.query.group) ? req.query.group : null;
-    if (req.query.group && !grouping) return res.status(400).json({ error: 'ไม่รู้จักการจัดกลุ่มนี้' });
-
-    // Only sources this dashboard actually shows — access to one dashboard
-    // doesn't open up every report the company has cached. A pivot widget's
-    // second source counts as shown, which a check against report_source alone
-    // would have missed, so the allowed set is built the same way the sync
-    // builds its pull list.
-    const allowed = new Set();
-    (await listWidgets(dashboard.id)).forEach((w) =>
-      pullsForWidget(w.report_source, w.config).forEach((p) => allowed.add(p.source))
-    );
-    if (!allowed.has(source)) return res.status(404).json({ error: 'dashboard นี้ไม่ได้ใช้รายงานนี้' });
-
-    // ?saved=1: the last pull that had rows ("use saved data" for demos). Falls
-    // back to the live cache for a report that has never been saved.
-    const health = await getSyncHealth(dashboard.company_id, source, grouping);
-    const wantSaved = req.query.saved === '1';
-    const saved = wantSaved ? await getSaved(dashboard.company_id, source, grouping) : null;
-    let cached = saved || (await getCached(dashboard.company_id, source, grouping));
-    // A computed report costs nothing to build, so build it on first view
-    // rather than waiting for the nightly run (demo POS file, new widget).
-    // Demo companies run on generated data: build a missing report on first
-    // view instead of waiting for a sync (a widget just added, say).
-    if (!cached && !cfg.local) {
-      const [[co]] = await pool.query(`SELECT data_source FROM companies WHERE id = ?`, [dashboard.company_id]);
-      if (co && co.data_source === 'demo') {
-        await syncOne(dashboard.company_id, source, grouping).catch((err) => console.error(`Demo build failed (${dashboard.company_id}/${source}):`, err.message));
-        cached = await getCached(dashboard.company_id, source, grouping);
-      }
-    }
-    // A company whose history comes from uploaded FMH files can have data
-    // before (or without) any API sync: build it from the files.
-    if (!cached && !grouping && !wantSaved && (await fmhFiles.hasFiles(dashboard.company_id, source))) {
-      await fmhFiles.rebuild(dashboard.company_id, source).catch((err) => console.error(`File history build failed (${dashboard.company_id}/${source}):`, err.message));
-      cached = await getCached(dashboard.company_id, source, null);
-    }
-    // An alert widget's findings are about today: last night's build is
-    // rebuilt once the day has turned (cheap — it reads cached reports).
-    if (cached && !wantSaved && cfg.localBuild === 'alerts') {
-      const w = cached.quota && cached.quota.watch;
-      if (!w || w.evaluated_on !== require('../lib/alerts').bkkToday()) cached = null;
-    }
-    if (!cached && cfg.local) {
-      await syncOne(dashboard.company_id, source, null).catch((err) => console.error(`Local build failed (${dashboard.company_id}/${source}):`, err.message));
-      cached = await getCached(dashboard.company_id, source, null);
-    }
-    if (!cached && cfg.local) {
-      return res.status(409).json({
-        error: 'ยังไม่มีไฟล์ยอดขาย POS — ผู้ดูแลของบริษัทอัปโหลดได้ที่ ✎ จัดการ Dashboard → ยอดขาย POS',
-        code: 'POS_NO_UPLOAD',
-        health,
-      });
-    }
-    if (!cached) {
-      const [[company]] = await pool.query(`SELECT fmh_api_key_enc, data_source FROM companies WHERE id = ?`, [dashboard.company_id]);
-      const connected = company && (company.fmh_api_key_enc || company.data_source === 'demo');
-      return res.status(409).json({
-        error: connected
-          ? 'ยังไม่มีข้อมูล — ระบบจะ sync ให้ตอนตี 1 หรือกด Refresh ด่วนได้เลย'
-          : 'ยังไม่ได้ตั้งค่า FMH API Key ของบริษัทนี้',
-        code: connected ? 'FMH_NOT_SYNCED' : 'FMH_KEY_MISSING',
-        health,
-      });
-    }
-    res.json({
-      data: cached.data,
-      meta: {
-        quota: cached.quota,
-        synced_at: cached.syncedAt,
-        from_saved: !!saved,
-        health,
-        grouping,
-        date_field: grouping ? null : cfg.dateField || null,
-        // Where uploaded FMH files fill in before the API window.
-        history: (cached.quota && cached.quota.history) || null,
-      },
-    });
+    await serveData(req, res, dashboard.company_id, await listWidgets(dashboard.id));
   })
 );
 
