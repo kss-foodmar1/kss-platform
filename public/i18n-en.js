@@ -65,6 +65,16 @@ window.I18N_EN = {
     '1/3 แถว': '1/3 row',
     'ไปที่หัวข้อ': 'Jump to section',
     'อธิบาย': 'Explain',
+    'ถาม AI': 'Ask AI',
+    'ถาม AI เกี่ยวกับ Dashboard นี้': 'Ask AI about this dashboard',
+    'ตอบจากตัวเลขบน Dashboard นี้': 'Answers from the numbers on this dashboard',
+    'ถามเกี่ยวกับตัวเลขในหน้านี้...': 'Ask about the numbers on this page...',
+    'ถามเรื่องตัวเลขในหน้านี้ได้เลย เช่น ทำไมกำไรลดลง หรือซัพพลายเออร์รายไหนน่าห่วง': 'Ask about the numbers on this page — e.g. why margin fell, or which supplier to worry about',
+    'สรุป Dashboard นี้ให้หน่อย': 'Summarise this dashboard',
+    'วันนี้มีอะไรต้องรีบดู': 'What needs attention today?',
+    'ตัวเลขไหนผิดปกติที่สุด': 'Which number looks most unusual?',
+    'คำถาม': 'Question',
+    'ส่ง': 'Send',
     'กราฟนี้บอกอะไร': 'What is this chart telling me?',
     'ควรทำอะไรต่อ:': 'What to do next:',
     'สรุปจากตัวเลขบนหน้าจอ ตามช่วงวันที่และตัวกรองที่เลือกอยู่': 'Summarised from the numbers on screen, for the date range and filters selected',
@@ -1071,6 +1081,7 @@ window.I18N_EN = {
 
   // {0}, {1}... match any text and are carried across.
   patterns: [
+    ['เหลือ {0} คำถามวันนี้ · AI อาจผิดพลาดได้ ตรวจกับตัวเลขบนกราฟเสมอ', '{0} questions left today · AI can be wrong; check against the charts'],
     ['พร้อมแสดง {0} widget', '{0} widgets ready'],
     ['ข้าม {0} widget: {1}', 'Skips {0}: {1}'],
     ['เพิ่มลง {0} Dashboard', 'Add to {0} dashboard(s)'],

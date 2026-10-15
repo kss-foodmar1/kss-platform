@@ -794,6 +794,7 @@ async function selectDashboard(id) {
   }
   if (state.activeDashboardId !== id) return; // user already clicked another tab
   new DashboardView(wrap, payload).load();
+  if (typeof aiAttach === 'function') aiAttach(payload.dashboard);
 }
 
 function keyMissingMessage() {
@@ -863,6 +864,7 @@ class DashboardView {
     // The Widget library previews one template on the company's own data
     // (routes/dashboards.js /preview): same renderers, no status bar.
     this.preview = !!dashboard.preview;
+    if (!this.preview) state.currentView = this; // read by the AI chat (aichat.js)
     this.dataBase = this.preview
       ? `/api/dashboards/preview/${String(dashboard.id).replace('preview-', '')}`
       : `/api/dashboards/${dashboard.id}`;

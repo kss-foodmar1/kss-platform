@@ -426,3 +426,13 @@ CREATE TABLE IF NOT EXISTS card_subscriptions (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;
+
+-- Questions asked of the dashboard AI chat (lib/aiChat.js), per company per
+-- day, for the daily limit. Only the count is kept, never the question.
+CREATE TABLE IF NOT EXISTS ai_usage (
+  company_id INT NOT NULL,
+  day DATE NOT NULL,
+  questions INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (company_id, day),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;

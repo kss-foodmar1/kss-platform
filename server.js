@@ -59,7 +59,7 @@ const LOGIN_HERO = (() => {
 const SHELL_HTML = (() => {
   let raw = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
   if (LOGIN_HERO) raw = raw.replace('<html lang="th">', '<html lang="th" class="login-hero-on">');
-  return raw.replace(/(src|href)="\/(app\.js|admin\.js|library\.js|explain\.js|selfserve\.js|style\.css|i18n\.js|i18n-en\.js|pos-parse\.js|fmh-file\.js)"/g, `$1="/$2?v=${ASSET_VERSION}"`);
+  return raw.replace(/(src|href)="\/(app\.js|admin\.js|library\.js|explain\.js|aichat\.js|selfserve\.js|style\.css|i18n\.js|i18n-en\.js|pos-parse\.js|fmh-file\.js)"/g, `$1="/$2?v=${ASSET_VERSION}"`);
 })();
 
 function sendShell(res) {
@@ -100,6 +100,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/pos', require('./routes/pos'));
 app.use('/api/fmh-files', require('./routes/fmhFiles'));
 app.use('/api/announcements', require('./routes/announcements'));
+app.use('/api/ai', require('./routes/ai'));
 app.use('/api/pay', billingRoutes.publicRouter);
 app.use('/api/signup', require('./routes/selfServe').publicRouter);
 app.use('/api/subscription', require('./routes/selfServe').subscriptionRouter);
