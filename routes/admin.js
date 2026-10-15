@@ -164,6 +164,11 @@ router.patch(
     if (data_source !== undefined && !['fmh', 'demo'].includes(data_source)) return bad(res, 'invalid data_source');
     if (status !== undefined && !STATUSES.includes(status)) return bad(res, 'invalid status');
     if (plan_tier !== undefined && !TIERS.includes(plan_tier)) return bad(res, 'invalid plan_tier');
+    // Same launch switch as online signup/payment: on Railway production it stays
+    // shut until SELF_SIGNUP=on, so no company can be moved to in-app payment early.
+    if ((self_serve === true || self_serve === 1 || self_serve === '1') && !require('../lib/selfServe').signupEnabled()) {
+      return res.status(403).json({ error: 'ยังไม่เปิดให้ลูกค้าชำระเองในแอปบน production (ตั้ง SELF_SIGNUP=on เมื่อพร้อมเปิด)' });
+    }
     if (name !== undefined && !String(name).trim()) return bad(res, 'name cannot be empty');
     if (!(await companyExists(req.params.id))) return res.status(404).json({ error: 'Company not found' });
     if (name !== undefined) {
