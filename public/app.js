@@ -28,6 +28,7 @@ function onColor(bg) {
   const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
   return L > 0.32 ? '#101828' : '#fff';
 }
+const SKELETON = '<div class="skel" role="status" aria-label="กำลังโหลด"><span></span><span></span><span></span></div>';
 const tokenList = (names) => new Proxy(names, { get: (t, k) => (/^\d+$/.test(String(k)) ? cssv(t[k]) : t[k]) });
 
 const state = {
@@ -538,7 +539,7 @@ async function enterApp() {
   // KSS staff keep the Admin Console button; a company admin's settings live
   // in the left menu (renderSideNav), so the topbar shortcuts go.
   el('open-admin-btn').classList.toggle('hidden', !isSuper() && !isCompanyAdmin());
-  el('open-admin-btn').textContent = adminBtnLabel();
+  el('open-admin-btn').innerHTML = adminBtnLabel();
   el('open-manage-users-btn').classList.add('hidden');
   el('open-settings-btn').classList.add('hidden');
   el('company-picker-wrap').classList.toggle('hidden', !isSuper());
@@ -588,7 +589,7 @@ function showDashboardView() {
   el('admin-view').classList.add('hidden');
   el('library-view').classList.add('hidden');
   el('app-shell').classList.remove('admin-mode', 'with-side');
-  el('open-admin-btn').textContent = adminBtnLabel();
+  el('open-admin-btn').innerHTML = adminBtnLabel();
 }
 
 // From anywhere (library, settings, picker) to one dashboard.
@@ -775,8 +776,12 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSideN
 
 // KSS staff get the whole Admin Console; a client's company admin gets the
 // same composer and widget picker, for their own company only.
+const ICON = {
+  gear: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
+  building: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 7h1M14 7h1M9 11h1M14 11h1M9 15h1M14 15h1M10 21v-3h4v3"/></svg>',
+};
 function adminBtnLabel() {
-  return isSuper() ? '🏢 Admin Console' : '⚙ ตั้งค่า';
+  return isSuper() ? `${ICON.building}<span>Admin Console</span>` : `${ICON.gear}<span>ตั้งค่า</span>`;
 }
 
 async function loadDashboards(preferredDashboardId) {
@@ -844,7 +849,7 @@ async function selectDashboard(id) {
 
 function keyMissingMessage() {
   if (isSuper()) return 'ยังไม่ได้ตั้งค่า FMH API Key ของบริษัทนี้ — ตั้งค่าได้ใน Admin Console';
-  if (isCompanyAdmin()) return 'ยังไม่ได้ตั้งค่า FMH API Key — กดปุ่ม ⚙️ มุมขวาบนเพื่อใส่ Key';
+  if (isCompanyAdmin()) return 'ยังไม่ได้ตั้งค่า FMH API Key — กดปุ่ม ตั้งค่า มุมขวาบนเพื่อใส่ Key';
   return 'ระบบยังไม่ได้เชื่อมข้อมูล FMH — กรุณาติดต่อผู้ดูแลระบบของบริษัท';
 }
 
@@ -1014,7 +1019,7 @@ class DashboardView {
       card.className = `widget-card size-${w.config.size || 'half'} widget-${w.chart_type}${[2, 3].includes(Number(w.config.rows)) ? ` rows-${w.config.rows}` : ''}`;
       card.innerHTML = `<div class="widget-head"><h3 class="widget-title">${esc(w.title)}</h3>${
         this.preview ? '' : '<button type="button" class="widget-explain" aria-expanded="false" title="กราฟนี้บอกอะไร"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>อธิบาย</button>'
-      }</div><div class="explain-box" hidden></div><div class="widget-body"><p class="muted">กำลังโหลด...</p></div>`;
+      }</div><div class="explain-box" hidden></div><div class="widget-body">${SKELETON}</div>`;
       grid.appendChild(card);
       const box = card.querySelector('.explain-box');
       const eb = card.querySelector('.widget-explain');
@@ -1219,7 +1224,7 @@ class DashboardView {
   async switchSaved(on) {
     savedMode.set(on);
     this.useSaved = on;
-    (this.cards || []).forEach(({ body }) => (body.innerHTML = '<p class="muted">กำลังโหลด...</p>'));
+    (this.cards || []).forEach(({ body }) => (body.innerHTML = SKELETON));
     await this.load();
   }
 
@@ -1775,7 +1780,7 @@ function renderLine(body, rows, cfg) {
     type: asBar ? 'bar' : 'line',
     data: {
       labels: keys.map((k) => bucketLabel(k, cfg.bucket)),
-      datasets: series.map((s) => {
+      datasets: series.map((s, si) => {
         const data = keys.map((k) => (buckets.has(k) ? evalMetric(s.value, buckets.get(k)) : null));
         if ((s.mark || cfg.mark) === 'bar') {
           return { type: 'bar', label: s.label, data, backgroundColor: s.color, borderRadius: 4, maxBarThickness: 36, categoryPercentage: 0.7, barPercentage: 0.9 };
@@ -1787,9 +1792,12 @@ function renderLine(body, rows, cfg) {
           borderColor: s.color,
           backgroundColor: s.color,
           borderWidth: 2,
-          pointRadius: 3,
+          // Shape + dash as well as colour, so lines stay apart for colour-blind readers.
+          pointStyle: ['circle', 'rect', 'triangle', 'rectRot', 'crossRot', 'star'][si % 6],
+          borderDash: si >= 2 ? [6, 4] : undefined,
+          pointRadius: si ? 4 : 3,
           pointHoverRadius: 6,
-          pointBorderColor: '#fff',
+          pointBorderColor: cssv('--surface'),
           pointBorderWidth: 1.5,
           tension: 0.25,
         };
@@ -1827,6 +1835,15 @@ function renderTable(body, rows, cfg) {
   });
   let sort = cfg.sort_by ? { ...cfg.sort_by } : null; // { field, dir }
   const limit = cfg.top_n || 200;
+  // Severity columns (สูง / กลาง / ต่ำ) read as coloured pills, so the eye finds what needs action first.
+  const SEV = { 'สูง': 'high', 'กลาง': 'mid', 'ต่ำ': 'low', high: 'high', medium: 'mid', low: 'low', 'ใหม่': 'new' };
+  const pillCols = new Set(columns.filter((c) => {
+    const vals = rows.map((r) => r[c.field]).filter((v) => v != null && v !== '');
+    return vals.length && vals.every((v) => typeof v === 'string' && SEV[v.trim().toLowerCase()] || SEV[v]);
+  }).map((c) => c.field));
+  // Long lists open short: the first rows are what to act on today; the rest is one click away.
+  const PREVIEW = cfg.preview_rows || 8;
+  let expanded = rows.length <= PREVIEW + 2;
 
   const tools = document.createElement('div');
   tools.className = 'table-tools';
@@ -1847,7 +1864,7 @@ function renderTable(body, rows, cfg) {
         return sort.dir === 'asc' ? cmp : -cmp;
       });
     }
-    const shown = data.slice(0, limit);
+    const shown = data.slice(0, expanded ? limit : PREVIEW);
     tools.querySelector('.widget-foot').textContent =
       data.length > limit ? `แสดง ${limit.toLocaleString('th-TH')} จาก ${data.length.toLocaleString('th-TH')} แถว (Export ได้ครบ)` : `${data.length.toLocaleString('th-TH')} แถว`;
     const head = columns
@@ -1864,12 +1881,18 @@ function renderTable(body, rows, cfg) {
               const v = r[c.field];
               return typeof v === 'number'
                 ? `<td class="num">${esc(c.format ? fmtValue(v, c.format) : v.toLocaleString('th-TH', { maximumFractionDigits: 2 }))}</td>`
-                : `<td>${esc(v)}</td>`;
+                : pillCols.has(c.field) && v != null && v !== ''
+                  ? `<td><span class="sev-pill sev-${SEV[String(v).trim().toLowerCase()] || SEV[v]}">${esc(v)}</span></td>`
+                  : `<td>${esc(v)}</td>`;
             })
             .join('')}</tr>`
       )
       .join('');
-    scroller.innerHTML = `<table class="report-table"><thead><tr>${head}</tr></thead><tbody>${bodyHtml}</tbody></table>`;
+    const more = Math.min(data.length, limit) - PREVIEW;
+    scroller.innerHTML = `<table class="report-table"><thead><tr>${head}</tr></thead><tbody>${bodyHtml}</tbody></table>${
+      more > 2 ? `<button type="button" class="table-more">${expanded ? 'ย่อเหลือ ' + PREVIEW + ' แถวแรก' : 'แสดงอีก ' + more.toLocaleString('th-TH') + ' แถว'}</button>` : ''}`;
+    const mb = scroller.querySelector('.table-more');
+    if (mb) mb.addEventListener('click', () => { expanded = !expanded; draw(); if (!expanded) scroller.scrollIntoView({ block: 'nearest' }); });
     scroller.querySelectorAll('th').forEach((th) => {
       const toggle = () => {
         const f = th.dataset.field;
