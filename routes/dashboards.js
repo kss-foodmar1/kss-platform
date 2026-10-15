@@ -218,11 +218,15 @@ async function serveData(req, res, companyId, widgets) {
   }
   // Demo data moves with the calendar: a pull built before today (Bangkok) is rebuilt on view,
   // so a demo never shows yesterday's "today". Costs no quota.
-  if (cached && !cfg.local && cached.syncedAt) {
-    const bkk = (d) => new Date(new Date(d).getTime() + 7 * 3600000).toISOString().slice(0, 10);
-    if (bkk(cached.syncedAt) < bkk(Date.now())) {
-      const [[co]] = await pool.query(`SELECT data_source FROM companies WHERE id = ?`, [companyId]);
-      if (co && co.data_source === 'demo') {
+  if (cached && !cfg.local && cached.syncedAt && !wantSaved) {
+    // "Built before Bangkok midnight", asked of the DB so synced_at and NOW() share its clock
+    // whatever time zone Node or MySQL run in.
+    const sinceMidnight = Math.floor(((Date.now() + 7 * 3600000) % 86400000) / 1000);
+    const [[st]] = await pool.query(
+      `SELECT c.data_source, (r.synced_at < NOW() - INTERVAL ? SECOND) AS stale FROM companies c JOIN fmh_report_cache r ON r.company_id = c.id AND r.cache_key = ? WHERE c.id = ?`,
+      [sinceMidnight, cacheKeyFor(source, grouping), companyId]);
+    if (st && st.data_source === 'demo' && Number(st.stale)) {
+      {
         await syncOne(companyId, source, grouping, { full: true }).catch((err) => console.error(`Demo refresh failed (${companyId}/${source}):`, err.message));
         cached = (wantSaved && (await getSaved(companyId, source, grouping))) || (await getCached(companyId, source, grouping));
       }

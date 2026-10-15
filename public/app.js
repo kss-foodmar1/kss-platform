@@ -911,6 +911,8 @@ const savedMode = {
   },
 };
 
+const RECENT_ONLY = new Set(['Line Checks', 'Supplier Quality', 'Alerts']);
+
 // users.home_branch: one name, or a JSON array of names (district manager).
 function homeBranchList(raw) {
   if (!raw) return [];
@@ -1341,9 +1343,12 @@ class DashboardView {
     return notes.length ? `<p class="widget-foot coverage-note">${notes.map(esc).join('<br>')}</p>` : '';
   }
 
-  rowsFor(key) {
-    const r = this.results[key];
-    if (!r || r.error) return null;
+  rowsFor(key, widget) {
+    const r0 = this.results[key];
+    if (!r0 || r0.error) return null;
+    // Exception lists (unreceived lines, over-billing…) are about now: archived history keeps the last
+    // status a line had in FMH's window, so it would list lines that were settled later.
+    const r = widget && RECENT_ONLY.has(widget.category) && r0.data.some((x) => x._arch) ? { ...r0, data: r0.data.filter((x) => !x._arch) } : r0;
     const dateField = this.sources[key] && this.sources[key].date_field;
     const active = Object.entries(this.filters).filter(([, v]) => v !== null && v !== undefined);
     const byFilter = (rows) => (active.length ? rows.filter((row) => active.every(([f, v]) => !(f in row) || String(row[f]) === v)) : rows);
@@ -1438,7 +1443,7 @@ class DashboardView {
       .filter(([, r]) => r && !r.error && r.meta && r.meta.history && r.meta.history.archive_from)
       .map(([k, r]) => ({ label: (this.sources[k] || {}).label || k, from: r.meta.history.archive_from }));
     if (arch.length && !this.useSaved) {
-      bar.insertAdjacentHTML('beforeend', `<div class="fmh-sync-line history-line"><span>ประวัติที่ระบบเก็บไว้ให้อัตโนมัติ (เกิน 90 วันของ FMH): ${arch.map((h) => `${esc(h.label)} ตั้งแต่ ${esc(dayLabel(h.from))}`).join(' · ')}</span></div>`);
+      bar.insertAdjacentHTML('beforeend', `<div class="fmh-sync-line archive-line"><span>ข้อมูลย้อนหลังที่ระบบเก็บไว้ให้ ถึง ${esc(dayLabel(arch.map((h) => h.from).sort()[0]))} (เกินช่วงที่ FMH ส่งให้)</span></div>`);
     }
     if (this.fileCapable && (isCompanyAdmin() || isSuper()) && !this.useSaved && this.dashboard.data_source !== 'demo') {
       const line = bar.querySelector('.history-line') || bar.querySelector('.fmh-sync-line');
@@ -1758,7 +1763,7 @@ class DashboardView {
         const byAlias = {};
         widget.pulls.forEach((p) => {
           const r = this.results[p.key];
-          byAlias[p.as] = r && !r.error ? this.rowsFor(p.key) || [] : null;
+          byAlias[p.as] = r && !r.error ? this.rowsFor(p.key, widget) || [] : null;
         });
         this.explainData.set(widget.id, { panels: true });
         try {
@@ -1785,10 +1790,10 @@ class DashboardView {
           return;
         }
         const byAlias = {};
-        widget.pulls.forEach((p) => { byAlias[p.as] = this.rowsFor(p.key) || []; });
+        widget.pulls.forEach((p) => { byAlias[p.as] = this.rowsFor(p.key, widget) || []; });
         raw = pivotRows(byAlias, cfg) || [];
       } else {
-        raw = this.rowsFor(key);
+        raw = this.rowsFor(key, widget);
       }
       const rows = applyRowLayer(raw, cfg);
       if (!rows.length) {
