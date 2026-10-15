@@ -1162,3 +1162,40 @@ body.arranging-on .ai-fab { display: none; }
 .today-main .today-owner { align-self: flex-start; margin: 2px 0 0; }
 @media (max-width: 700px) { .today-fold { min-height: 44px; } }
 .home-branch .hb-label { white-space: nowrap; }
+
+.pf-use { font-size: 11px; color: var(--muted); flex: 0 0 auto; }
+.pf-use summary { cursor: pointer; list-style: none; padding: 2px 8px; border-radius: 999px; border: 1px dashed var(--line); white-space: nowrap; }
+.pf-use summary::-webkit-details-marker { display: none; }
+.pf-use[open] { flex-basis: 100%; }
+.pf-use[open] > span { display: block; margin-top: 4px; line-height: 1.6; }
+@media (max-width: 700px) { .pf-use summary { min-height: 32px; display: inline-flex; align-items: center; } }
+
+/* ---------- Phone / tablet fit: no dead space, many-number rows in a tidy grid ---------- */
+@media (max-width: 760px) {
+  .widget-card.rows-2, .widget-card.rows-3 { min-height: 0; }
+  .widget-card.rows-2 .chart-wrap { height: 320px; }
+  .widget-card.rows-3 .chart-wrap { height: 380px; }
+  .widget-card.rows-2 .heat-scroll, .widget-card.rows-3 .heat-scroll { max-height: 460px; }
+  .widget-card.rows-2 .table-scroll, .widget-card.rows-3 .table-scroll { max-height: 520px; }
+  .widget-card.rows-2.widget-scatter .chart-wrap { height: 340px; }
+}
+@media (min-width: 761px) and (max-width: 1100px) {
+  .widget-card.rows-2 .chart-wrap { height: 380px; }
+  .widget-card.rows-3 .chart-wrap { height: 520px; }
+  .widget-card.rows-2 { min-height: 0; } .widget-card.rows-3 { min-height: 0; }
+}
+@media (max-width: 700px) {
+  .table-scroll table.report-table.nums-many tr { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 10px; padding: 12px 2px; }
+  .table-scroll table.report-table.nums-many td:not(.num) { grid-column: 1 / -1; font-weight: 700; }
+  .table-scroll table.report-table.nums-many td.num { grid-column: auto; text-align: left; font-weight: 600; }
+  .table-scroll table.report-table.nums-many td.num::before { white-space: nowrap; }
+}
+/* filter note sits on its own line so the chip row can scroll without hiding it */
+@media (max-width: 700px) {
+  .page-filter-group { flex-wrap: wrap; overflow: visible; }
+  .page-filter-group .chip-row { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; max-width: 100%; flex: 1 0 100%; }
+  .page-filter-label { position: static; }
+}
+
+.page-filter-group .chip-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+@media (max-width: 700px) { .page-filter-group .chip-row { flex-wrap: nowrap; } .page-filter-group .range-chip { min-height: 44px; } }

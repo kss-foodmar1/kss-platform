@@ -1013,10 +1013,20 @@ class DashboardView {
     // page_filter is one field or a list; the page offers every field any of
     // its widgets asks for, in first-seen order.
     this.filterFields = [];
+    this.filterUse = {}; // field -> titles of the widgets it narrows
     this.widgets.forEach((w) => {
       const pf = w.config && w.config.page_filter;
-      (Array.isArray(pf) ? pf : pf ? [pf] : []).forEach((f) => { if (!this.filterFields.includes(f)) this.filterFields.push(f); });
+      (Array.isArray(pf) ? pf : pf ? [pf] : []).forEach((f) => {
+        if (!this.filterFields.includes(f)) this.filterFields.push(f);
+        (this.filterUse[f] = this.filterUse[f] || []).push(w.title);
+      });
     });
+    // A filter that narrows a single widget, on a page whose main filter narrows most of them, only adds
+    // noise (a CK sales page showing "สาขา" and "ซัพพลายเออร์" for one widget each). Offer it only when
+    // nothing else on the page is a real page-wide filter.
+    if (this.filterFields.some((f) => (this.filterUse[f] || []).length >= 3)) {
+      this.filterFields = this.filterFields.filter((f) => (this.filterUse[f] || []).length >= 2);
+    }
     this.filters = {}; // field -> chosen value
     // A branch manager opens on their own branch (users.home_branch); they can still pick "ทุกสาขา".
     this.homeBranches = homeBranchList(state.user && state.user.home_branch);
@@ -1191,7 +1201,20 @@ class DashboardView {
 
   renderPageFilter() {
     if (!this.filterFields.length) return;
-    const LABEL = { customer: ['ลูกค้า', 'ทุกราย'], branch: ['สาขา', 'ทุกสาขา'], supplier: ['ซัพพลายเออร์', 'ทุกเจ้า'] };
+    // When a page mixes CK sales (customer) with purchasing (branch/supplier), say which side each row is,
+    // so "ลูกค้า" and "สาขา" are not read as the same thing.
+    const mixed = this.filterFields.includes('customer') && this.filterFields.some((f) => f !== 'customer');
+    const LABEL = {
+      customer: [mixed ? 'ลูกค้าครัวกลาง' : 'ลูกค้า', 'ทุกราย'],
+      branch: [mixed ? 'สาขา (ฝั่งซื้อ)' : 'สาขา', 'ทุกสาขา'],
+      supplier: [mixed ? 'ซัพพลายเออร์ (ฝั่งซื้อ)' : 'ซัพพลายเออร์', 'ทุกเจ้า'],
+    };
+    const useNote = (f) => {
+      const names = [...new Set(this.filterUse[f] || [])];
+      if (!names.length) return '';
+      const total = this.widgets.length;
+      return `<details class="pf-use"><summary>ใช้กับ ${names.length}${names.length === total ? ' (ทั้งหมด)' : ` จาก ${total}`} widget</summary><span>${names.map(esc).join(' · ')}</span></details>`;
+    };
     const show = (f, v) => (f === 'customer' ? partyShort(v) : String(v));
     const groups = this.filterFields.map((f) => {
       const totals = new Map();
@@ -1214,9 +1237,9 @@ class DashboardView {
       const cur = this.filters[f] ?? null;
       if (values.length <= 10) {
         const chip = (v, text) => `<button type="button" class="range-chip${cur === v ? ' active' : ''}" data-f="${esc(f)}" data-v="${v === null ? '' : esc(v)}" title="${esc(v ?? '')}">${esc(text)}</button>`;
-        return `<div class="page-filter-group"><span class="page-filter-label">${esc(label)}</span>${chip(null, all)}${values.map((v) => chip(v, show(f, v))).join('')}</div>`;
+        return `<div class="page-filter-group"><span class="page-filter-label">${esc(label)}</span>${useNote(f)}<div class="chip-row">${chip(null, all)}${values.map((v) => chip(v, show(f, v))).join('')}</div></div>`;
       }
-      return `<div class="page-filter-group"><label class="page-filter-label" for="pf-${esc(f)}">${esc(label)}</label><select id="pf-${esc(f)}" data-f="${esc(f)}"><option value="">${esc(all)}</option>${values
+      return `<div class="page-filter-group"><label class="page-filter-label" for="pf-${esc(f)}">${esc(label)}</label>${useNote(f)}<select id="pf-${esc(f)}" data-f="${esc(f)}"><option value="">${esc(all)}</option>${values
         .map((v) => `<option value="${esc(v)}"${cur === v ? ' selected' : ''}>${esc(show(f, v))}</option>`).join('')}</select></div>`;
     }).join('');
     const set = (f, v) => {
@@ -2130,6 +2153,8 @@ function renderTable(body, rows, cfg) {
   body.appendChild(tools);
   body.appendChild(scroller);
 
+  const numCount = columns.filter((c) => rows.length && typeof rows[0][c.field] === 'number').length;
+
   function draw() {
     let data = [...rows];
     if (sort) {
@@ -2165,7 +2190,7 @@ function renderTable(body, rows, cfg) {
       )
       .join('');
     const more = Math.min(data.length, limit) - PREVIEW;
-    scroller.innerHTML = `<table class="report-table"><thead><tr>${head}</tr></thead><tbody>${bodyHtml}</tbody></table>${
+    scroller.innerHTML = `<table class="report-table${numCount >= 3 ? ' nums-many' : ''}"><thead><tr>${head}</tr></thead><tbody>${bodyHtml}</tbody></table>${
       more > 2 ? `<button type="button" class="table-more">${expanded ? 'ย่อเหลือ ' + PREVIEW + ' แถวแรก' : 'แสดงอีก ' + more.toLocaleString('th-TH') + ' แถว'}</button>` : ''}`;
     const mb = scroller.querySelector('.table-more');
     if (mb) mb.addEventListener('click', () => { expanded = !expanded; draw(); if (!expanded) scroller.scrollIntoView({ block: 'nearest' }); });
