@@ -99,7 +99,7 @@ async function previewFor(req) {
   const companyId = resolveCompanyId(req);
   if (!companyId) return null;
   const [[t]] = await pool.query(
-    `SELECT id, template_key, name, report_source, chart_type, default_config_json FROM widget_templates WHERE id = ? AND active = TRUE`,
+    `SELECT id, template_key, name, description, category, report_source, chart_type, default_config_json FROM widget_templates WHERE id = ? AND active = TRUE`,
     [req.params.tid]
   );
   if (!t) return null;
@@ -107,7 +107,8 @@ async function previewFor(req) {
   try { cfg = JSON.parse(t.default_config_json || '{}'); } catch { /* none */ }
   const widget = {
     id: `p${t.id}`, title: t.name, template_id: t.id, template_key: t.template_key, template_name: t.name,
-    report_source: t.report_source, chart_type: t.chart_type, config: { ...cfg, size: 'full' }, config_overrides: {},
+    report_source: t.report_source, chart_type: t.chart_type, category: t.category, description: t.description,
+    config: { ...cfg, size: 'full' }, config_overrides: {},
   };
   return { companyId, widget };
 }

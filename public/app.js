@@ -965,9 +965,22 @@ class DashboardView {
     this.cards = this.widgets.map((w) => {
       const card = document.createElement('section');
       card.className = `widget-card size-${w.config.size || 'half'} widget-${w.chart_type}${[2, 3].includes(Number(w.config.rows)) ? ` rows-${w.config.rows}` : ''}`;
-      card.innerHTML = `<h3 class="widget-title">${esc(w.title)}</h3><div class="widget-body"><p class="muted">กำลังโหลด...</p></div>`;
+      card.innerHTML = `<div class="widget-head"><h3 class="widget-title">${esc(w.title)}</h3>${
+        this.preview ? '' : '<button type="button" class="widget-explain" aria-expanded="false" title="กราฟนี้บอกอะไร"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>อธิบาย</button>'
+      }</div><div class="explain-box" hidden></div><div class="widget-body"><p class="muted">กำลังโหลด...</p></div>`;
       grid.appendChild(card);
-      return { widget: w, body: card.querySelector('.widget-body') };
+      const box = card.querySelector('.explain-box');
+      const eb = card.querySelector('.widget-explain');
+      if (eb) {
+        eb.addEventListener('click', () => {
+          const open = box.hidden;
+          box.hidden = !open;
+          eb.setAttribute('aria-expanded', String(open));
+          eb.classList.toggle('on', open);
+          if (open) box.innerHTML = explainWidget(w, this.explainData.get(w.id));
+        });
+      }
+      return { widget: w, body: card.querySelector('.widget-body'), box };
     });
     this.wrap.appendChild(grid);
 
@@ -1370,6 +1383,8 @@ class DashboardView {
   renderWidgets() {
     destroyCharts();
     this.renderCoverage();
+    // What each widget drew, for its "อธิบาย" button (public/explain.js).
+    this.explainData = new Map();
     (this.cards || []).forEach(({ widget, body }) => {
       body.innerHTML = '';
       const key = this.keyFor(widget);
@@ -1395,6 +1410,7 @@ class DashboardView {
           const r = this.results[p.key];
           byAlias[p.as] = r && !r.error ? this.rowsFor(p.key) || [] : null;
         });
+        this.explainData.set(widget.id, { panels: true });
         try {
           renderPanels(body, byAlias, cfg);
         } catch (err) {
@@ -1433,6 +1449,7 @@ class DashboardView {
         const dated = !widget.pulls && !!(this.sources[key] && this.sources[key].date_field) && this.hasDateSource;
         // An alert widget with nothing found is good news, or says why it can't look.
         const watch = res && res.meta && res.meta.quota && res.meta.quota.watch;
+        this.explainData.set(widget.id, { empty: watch && !raw.length ? watch.note || cfg.empty_message || 'ไม่มีเรื่องผิดปกติในวันนี้' : cfg.empty_message || 'ไม่พบข้อมูลในช่วงวันที่และตัวกรองที่เลือก' });
         body.innerHTML = `<p class="muted">${esc(
           watch && !raw.length
             ? watch.note || cfg.empty_message || 'ไม่มีเรื่องผิดปกติ'
@@ -1493,6 +1510,7 @@ class DashboardView {
       const skipped = this.unfilteredBy(base && base.data);
       try {
         renderer(body, rows, useCfg);
+        this.explainData.set(widget.id, { rows, cfg: useCfg, range: this.range });
         if (skipped.length) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">widget นี้ไม่มีข้อมูล${esc(skipped.map((f) => ({ customer: 'ลูกค้า', branch: 'สาขา', supplier: 'ซัพพลายเออร์' })[f] || f).join(', '))} จึงแสดงทั้งหมด ไม่ได้กรองตามตัวเลือกด้านบน</p>`);
         // A note on how to read the widget. Renderers that place it themselves
         // (range) are left alone.
@@ -1502,6 +1520,10 @@ class DashboardView {
         console.error('Widget render failed', widget, err);
         body.innerHTML = `<p class="muted">แสดงผล widget นี้ไม่สำเร็จ (${esc(err.message)})</p>`;
       }
+    });
+    // An open explanation follows the new range / filters.
+    (this.cards || []).forEach(({ widget, box }) => {
+      if (box && !box.hidden) box.innerHTML = explainWidget(widget, this.explainData.get(widget.id));
     });
   }
 }
