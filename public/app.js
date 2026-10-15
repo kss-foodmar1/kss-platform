@@ -18,6 +18,16 @@ const themedCfg = (v) => {
   if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, themedCfg(x)]));
   return themed(v);
 };
+// Readable text colour for any background: dark ink on light fills, white on dark fills.
+function onColor(bg) {
+  let c = String(bg).trim(), r, g, b;
+  const hx = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c);
+  if (hx) { let h = hx[1]; if (h.length === 3) h = h.replace(/./g, (x) => x + x); [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)); }
+  else { const m = /rgba?\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/.exec(c); if (!m) return '#fff'; [r, g, b] = [m[1], m[2], m[3]].map(Number); }
+  const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return L > 0.32 ? '#101828' : '#fff';
+}
 const tokenList = (names) => new Proxy(names, { get: (t, k) => (/^\d+$/.test(String(k)) ? cssv(t[k]) : t[k]) });
 
 const state = {
@@ -1728,6 +1738,8 @@ function renderLine(body, rows, cfg) {
   // `series_by` makes one series per value of a field (a line per category),
   // the largest first; the rest fold into one, so the legend stays readable.
   let series = cfg.series || [];
+  // A line is a series, not an alarm: keep red for abnormal values and give red-coloured lines a distinct hue.
+  series = series.map((x) => (x.color && x.color === cssv('--danger') ? { ...x, color: cssv('--s4') } : x));
   if (cfg.series_by) {
     const totals = new Map();
     rows.forEach((r) => {
@@ -2354,9 +2366,9 @@ function renderTreemap(body, rows, cfg) {
     el.className = 'treemap-tile';
     el.style[vertical ? 'height' : 'width'] = `${pctOfParent}%`;
     el.style.background = seqColor(i, items.length);
+    el.style.color = onColor(el.style.background);
     el.title = `${it.name}: ${fmtValue(it.value, cfg.format)} (${share.toFixed(1)}%)`;
     el.innerHTML = `<span class="treemap-name">${esc(it.name)}</span><span class="treemap-val">${esc(fmtValue(it.value, cfg.format))} · ${share.toFixed(0)}%</span>`;
-    if (i >= 3) el.classList.add('on-light');
     return el;
   };
   wrap.appendChild(tile(first, 0, (first.value / total) * 100, false));
@@ -2470,7 +2482,7 @@ function renderHeatmap(body, rows, cfg) {
   const gMin = Math.min(0, ...all), gMax = Math.max(1e-9, ...all);
   const colLabel = (ck) => (cfg.col_date ? bucketLabel(ck, cfg.bucket || 'day') : ck);
   const short = (v) => fmtCompact(v, cfg.format);
-  const shade = (step, list) => `background:${list[step]};color:${step >= 4 ? '#fff' : cssv('--ink')}`;
+  const shade = (step, list) => `background:${list[step]};color:${onColor(list[step])}`;
   // threshold_col: each cell against its column's median (a month across
   // branches); below `threshold` × median is flagged, far below is darker.
   const thr = Number(cfg.threshold) || 0.85;
