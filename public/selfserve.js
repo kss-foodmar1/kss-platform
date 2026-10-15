@@ -94,15 +94,19 @@ async function renderPlanPanel(container) {
   const monthly = (d.prices || []).find((p) => p.period_months === 1);
   const yearly = (d.prices || []).find((p) => p.period_months === 12);
   const saving = monthly && yearly && monthly.amount_baht && yearly.amount_baht ? Math.round((1 - yearly.amount_baht / (monthly.amount_baht * 12)) * 100) : 0;
+  // "ฟรี N เดือน": how many monthly payments the yearly price leaves out.
+  const freeMonths = saving > 0 ? Math.round((monthly.amount_baht * 12 - yearly.amount_baht) / monthly.amount_baht) : 0;
+  // Per-day figures are computed from the real prices, so the copy is always true.
+  const perDay = (p) => Math.round(p.amount_baht / (p.period_months === 12 ? 365 : 30)).toLocaleString('th-TH');
   const status =
     sub.state === 'trial' ? `ทดลองใช้ฟรี ถึง ${esc(ssDay(sub.ends_at))} (เหลือ ${sub.days_left} วัน) — ชำระตอนนี้ วันที่เหลือของช่วงทดลองไม่หาย แพ็กเกจเริ่มนับต่อจากวันหมดทดลอง`
     : sub.state === 'locked' ? `หมดอายุตั้งแต่ ${esc(ssDay(sub.ends_at))} — ชำระแล้วใช้งานต่อได้ทันที`
     : `ใช้งานได้ถึง ${esc(ssDay(sub.ends_at))}${sub.in_grace ? ' (หมดอายุแล้ว อยู่ในช่วงผ่อนผัน)' : ''} — ต่ออายุตอนนี้ เริ่มนับต่อจากวันหมดอายุเดิม`;
   const card = (p, extra) => {
     if (!p || !p.amount_baht) return '';
-    const per = p.period_months === 12 ? `เฉลี่ย ${ssBaht(p.amount_baht / 12)} / เดือน` : 'ต่ออายุทีละเดือน';
+    const per = p.period_months === 12 ? `เฉลี่ย ${ssBaht(Math.round(p.amount_baht / 12))} / เดือน (ตกวันละ ~${perDay(p)} บาท)` : `ต่ออายุทีละเดือน (ตกวันละ ${perDay(p)} บาท)`;
     return `<div class="plan-option${p.period_months === 12 ? ' best' : ''}">
-      ${p.period_months === 12 && saving > 0 ? `<span class="plan-flag">ประหยัด ${saving}%</span>` : ''}
+      ${p.period_months === 12 && saving > 0 ? `<span class="plan-flag">${freeMonths > 0 ? `ฟรี ${freeMonths} เดือน · ` : ''}ประหยัด ${saving}%</span>` : ''}
       <div class="plan-name">${esc(SS_PLAN_LABEL[p.period_months])}</div>
       <div class="plan-price">${ssBaht(p.amount_baht)}</div>
       <div class="plan-per muted">${per}${extra || ''}</div>
