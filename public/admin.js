@@ -60,6 +60,14 @@ async function renderUserManager(container, scope) {
         ? api(`/api/admin/companies/${scope.companyId}/dashboards`).then((r) => r.dashboards)
         : api('/api/dashboards').then((r) => r.dashboards),
   ]);
+  let branches = [];
+  if (!scope.kss) {
+    try { branches = (await api(`/api/users/branches${qs}`)).branches || []; } catch (_) {}
+  }
+  const branchOptions = (cur) => {
+    const list = cur && !branches.includes(cur) ? [cur, ...branches] : branches;
+    return `<option value="">ทุกสาขา</option>` + list.map((b) => `<option value="${esc(b)}" ${b === cur ? 'selected' : ''}>${esc(b)}${branches.includes(b) ? '' : ' (ปัจจุบัน)'}</option>`).join('');
+  };
   const roleLabel = { kss_superadmin: 'KSS', company_admin: 'Admin บริษัท', client: 'ผู้ใช้งาน' };
 
   container.innerHTML = `
@@ -104,7 +112,7 @@ async function renderUserManager(container, scope) {
                    <option value="company_admin" ${u.role === 'company_admin' ? 'selected' : ''}>Admin บริษัท</option>
                  </select>
                  <button type="button" class="btn small ghost toggle-access">Dashboard ▾</button>
-                 <label class="home-branch"><span>สาขาประจำ</span><input type="text" maxlength="120" value="${esc(u.home_branch || '')}" placeholder="ทุกสาขา" aria-label="สาขาประจำของ ${esc(u.display_name)}"></label>`
+                 <label class="home-branch"><span>สาขาประจำ</span><select aria-label="สาขาประจำของ ${esc(u.display_name)}">${branchOptions(u.home_branch)}</select></label>`
           }
           <button type="button" class="btn small ghost toggle-reset">รีเซ็ตรหัส</button>
           <button type="button" class="btn small danger delete-user" ${self ? 'disabled' : ''}>ลบ</button>
@@ -118,7 +126,7 @@ async function renderUserManager(container, scope) {
       <div class="user-subpanel access-panel hidden"></div>`;
     list.appendChild(wrap);
 
-    const hb = wrap.querySelector('.home-branch input');
+    const hb = wrap.querySelector('.home-branch select');
     if (hb) {
       hb.addEventListener('change', async () => {
         try {

@@ -111,6 +111,18 @@ router.post(
   })
 );
 
+// Branch choices for the home-branch selector: the company's real branches.
+router.get(
+  '/branches',
+  requireAuth,
+  requireCompanyAdmin,
+  wrap(async (req, res) => {
+    const scope = resolveScope(req);
+    if (!scope || scope.kss) return res.json({ branches: [] });
+    res.json({ branches: await require('../lib/alerts').branchesOf(scope.companyId) });
+  })
+);
+
 // A user's own branch (branch manager): dashboards open filtered to it. Empty = all branches.
 router.patch(
   '/:id/home-branch',
@@ -120,6 +132,11 @@ router.patch(
     const loaded = await loadTargetUser(req, res);
     if (!loaded) return;
     const v = String((req.body || {}).home_branch || '').trim().slice(0, 120);
+    if (v && loaded.scope.companyId) {
+      const [[cur]] = await pool.query(`SELECT home_branch FROM users WHERE id = ?`, [loaded.target.id]);
+      const ok = (await require('../lib/alerts').branchesOf(loaded.scope.companyId)).includes(v);
+      if (!ok && !(cur && cur.home_branch === v)) return res.status(400).json({ error: 'ไม่พบสาขานี้ในข้อมูลของบริษัท' });
+    }
     await pool.query(`UPDATE users SET home_branch = ? WHERE id = ?`, [v || null, loaded.target.id]);
     res.json({ ok: true, home_branch: v || null });
   })
