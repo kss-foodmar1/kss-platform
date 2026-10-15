@@ -350,7 +350,8 @@ async function renderSelfServeAdmin(main, view = { status: 'pending' }, flash = 
   main.innerHTML = `
     <h1 class="admin-h1">สมัครเอง / ทดลองใช้</h1>
     <p class="muted">ลูกค้าสมัครจากหน้าเข้าสู่ระบบ → ทีม KSS อนุมัติ → บริษัททดลองใช้ ${d.trial_days} วันบนข้อมูลตัวอย่าง (ใส่ FMH key เองได้) → ชำระรายเดือน/รายปีในแอป → ถ้าไม่ชำระ ล็อกเหลือหน้าชำระเงิน เก็บข้อมูล ${d.retention_days} วัน</p>
-    <p class="status-line"><span class="dot ${d.enabled ? 'dot-good' : 'dot-off'}" aria-hidden="true"></span> ${d.enabled ? 'เปิดรับสมัครอยู่' : 'ปิดรับสมัคร (ตั้ง SELF_SIGNUP=on ใน Railway เพื่อเปิด)'} · ${d.payments_enabled ? 'ชำระออนไลน์เปิดอยู่' : 'ชำระออนไลน์ปิดอยู่ ลูกค้าจะเห็นให้ติดต่อ KSS เพื่อโอน'}</p>
+    <p class="status-line"><span class="dot ${d.enabled ? 'dot-good' : 'dot-off'}" aria-hidden="true"></span> ${d.enabled ? 'เปิดรับสมัครอยู่' : 'ปิดรับสมัคร (ตั้ง SELF_SIGNUP=on ใน Railway เพื่อเปิด)'} </p>
+    <p class="status-line"><span class="dot ${d.payments_enabled ? 'dot-good' : 'dot-off'}" aria-hidden="true"></span> ชำระออนไลน์: ${esc(d.payments_status ? d.payments_status.reason : d.payments_enabled ? 'เปิดอยู่' : 'ปิดอยู่')}${d.payments_status && d.payments_status.card_note ? ` · บัตร: ${esc(d.payments_status.card_note)}` : d.payments_enabled ? ' · บัตรตัดอัตโนมัติพร้อมใช้' : ''}</p>
     <div class="ss-flash">${flash}</div>
     <section class="admin-card">
       <h2>ราคาแพ็กเกจ (ลูกค้าที่สมัครเอง)</h2>

@@ -75,7 +75,7 @@ adminRouter.get('/', send(async (req, res) => {
   res.json({
     enabled: ss.signupEnabled(), trial_days: ss.TRIAL_DAYS(), retention_days: ss.RETENTION_DAYS(),
     pending_count: await ss.pendingCount(), signups: await ss.listSignups(status),
-    prices: await ss.prices(), payments_enabled: require('../lib/omise').paymentsEnabled(),
+    prices: await ss.prices(), payments_enabled: require('../lib/omise').paymentsEnabled(), payments_status: require('../lib/omise').paymentsStatus(),
     locked: await ss.lockedCompanies(),
   });
 }));
