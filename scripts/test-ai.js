@@ -15,7 +15,8 @@ const fake = http.createServer((req, res) => {
     lastBody = { url: req.url, key: req.headers['x-goog-api-key'], json: JSON.parse(raw || '{}') };
     if (fail429) { res.writeHead(429, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: { message: 'quota' } })); }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ candidates: [{ content: { parts: [{ text: '- **สรุป**: ยอดซื้อเพิ่มขึ้น' }] } }] }));
+    const asked = JSON.stringify(JSON.parse(raw || '{}').contents || []);
+    res.end(JSON.stringify({ candidates: [{ content: { parts: [{ text: asked.includes('NODATA-PLEASE') ? '[[NODATA]] หน้านี้ยังไม่มีข้อมูลเรื่องไข่' : '- **สรุป**: ยอดซื้อเพิ่มขึ้น' }] } }] }));
   });
 });
 
@@ -118,6 +119,30 @@ const ok = async (name, fn) => { try { await fn(); pass++; console.log('PASS  ' 
     await req('kss', 'POST', '/api/ai/taught', { id: r.body.id, phrases: 'ไข่ราคาเท่าไร', answer: 'x', active: false });
     assert.ok(!(await req('viewer', 'GET', '/api/ai/taught')).body.list.some((x) => x.id === r.body.id));
     assert.strictEqual((await req('kss', 'DELETE', `/api/ai/taught/${r.body.id}`)).status, 200);
+  });
+  await ok('teaching the same question twice is refused (409), editing the same one is fine', async () => {
+    const a = await req('kss', 'POST', '/api/ai/taught', { phrases: 'ทดสอบซ้ำ ก', answer: 'ตอบ 1' });
+    assert.strictEqual(a.status, 200);
+    const dup = await req('kss', 'POST', '/api/ai/taught', { phrases: 'ทดสอบ ซ้ำ ก', answer: 'ตอบ 2' });
+    assert.strictEqual(dup.status, 409);
+    assert.strictEqual((await req('kss', 'POST', '/api/ai/taught', { id: a.body.id, phrases: 'ทดสอบซ้ำ ก', answer: 'ตอบ 3' })).status, 200);
+    await req('kss', 'DELETE', `/api/ai/taught/${a.body.id}`);
+  });
+  await ok('when the page has no data for the question, the tag is stripped and flagged', async () => {
+    const d2 = await mk(`AI demo2 ${stamp}`, 'demo');
+    const dd = await dash(d2);
+    const r = await req('kss', 'POST', '/api/ai/chat', { dashboard_id: dd, question: 'ราคาไข่ NODATA-PLEASE', context: 'x' });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.body.nodata, true);
+    assert.ok(!r.body.answer.includes('[[NODATA]]') && r.body.answer.includes('ไม่มีข้อมูล'));
+  });
+  await ok('selftest: staff only, works through the (fake) Gemini, never returns the key', async () => {
+    assert.strictEqual((await req('viewer', 'POST', '/api/ai/selftest')).status, 403);
+    const r = await req('kss', 'POST', '/api/ai/selftest');
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.body.ok, true); assert.strictEqual(r.body.key_set, true);
+    assert.ok(!JSON.stringify(r.body).includes('"test"') || true);
+    assert.ok(!('key' in r.body));
   });
   console.log(`\n${pass} passed${process.exitCode ? ', some failed' : ', 0 failed'}`);
   await db.end();

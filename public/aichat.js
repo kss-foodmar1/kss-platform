@@ -109,7 +109,7 @@ function aiEnsureDom() {
   });
 }
 
-const aiSheet = () => window.matchMedia('(max-width: 640px)').matches;
+const aiSheet = () => window.matchMedia('(max-width: 520px)').matches;
 function aiToggle(open) {
   const panel = el('ai-panel');
   const show = open === undefined ? panel.hidden : open;
@@ -240,7 +240,8 @@ async function aiSend(question) {
   aiRender();
   try {
     const r = await api('/api/ai/chat', { method: 'POST', body: JSON.stringify({ dashboard_id: id, question, context: aiPageSummary(), history }) });
-    msgs.push({ role: 'model', text: r.answer, source: 'ai', q: question });
+    msgs.push({ role: 'model', text: r.answer, source: r.nodata ? 'none' : 'ai', q: question });
+    if (r.nodata) aiFeedback('miss', 0, question, '', 'none');
     if (aiChat.status) aiChat.status.remaining = r.remaining;
   } catch (err) {
     msgs.push({ role: 'model', text: err.message, error: true });

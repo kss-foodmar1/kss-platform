@@ -32,8 +32,8 @@ router.post(
     if (!av.available) return res.status(403).json({ error: 'ยังไม่ได้เปิดใช้ AI สำหรับบริษัทนี้', code: av.reason });
     if (!(await ai.take(d.company_id))) return res.status(429).json({ error: `วันนี้ถามครบ ${ai.LIMIT()} คำถามแล้ว พรุ่งนี้ถามต่อได้`, code: 'AI_DAILY_LIMIT' });
     try {
-      const answer = await ai.ask({ question: q, context: String(b.context || ''), history: b.history });
-      res.json({ answer, remaining: Math.max(0, av.remaining - 1) });
+      const { text: answer, nodata } = await ai.ask({ question: q, context: String(b.context || ''), history: b.history });
+      res.json({ answer, nodata, remaining: Math.max(0, av.remaining - 1) });
     } catch (err) {
       console.error('AI chat failed:', err.message);
       res.status(err.status || 502).json({ error: err.message });
@@ -50,6 +50,11 @@ const scrub = (t) =>
     .replace(/\s+/g, ' ')
     .trim();
 const REASONS = ['ไม่ตรงเรื่อง', 'ตัวเลขไม่ถูก', 'ไม่ครบ', 'อ่านไม่เข้าใจ'];
+
+// KSS staff: check the Gemini connection from the Console (never returns the key).
+router.post('/selftest', (req, res, next) => (req.user.role === 'kss_superadmin' ? next() : res.status(403).json({ error: 'เฉพาะทีม KSS' })), wrap(async (req, res) => {
+  res.json(await ai.selftest());
+}));
 
 // 👍/👎 on an answer, or a question the chat could not answer (kind=miss).
 // Works with or without AI; anyone who can see the dashboard may send it.
@@ -139,6 +144,12 @@ router.post(
     const answer = String(b.answer || '').trim().slice(0, 1500);
     if (!phrases.length || !answer) return res.status(400).json({ error: 'ใส่อย่างน้อย 1 คำถามและคำตอบ' });
     const active = b.active === false ? 0 : 1;
+    // The same question twice would make two answers compete: refuse (edit the old one).
+    const norm = (x) => String(x).toLowerCase().replace(/\s+/g, '');
+    const [others] = await pool.query(`SELECT id, phrases FROM ai_taught WHERE id <> ?`, [Number(b.id) || 0]);
+    const mine = new Set(phrases.map(norm));
+    const dup = others.find((o) => o.phrases.split('\n').some((x) => mine.has(norm(x))));
+    if (dup) return res.status(409).json({ error: 'มีคำถามนี้ที่สอนไว้แล้ว ให้กด “แก้” ที่รายการเดิมแทน', id: dup.id });
     if (b.id) {
       await pool.query(`UPDATE ai_taught SET phrases = ?, answer = ?, active = ? WHERE id = ?`, [phrases.join('\n'), answer, active, Number(b.id)]);
       return res.json({ ok: true, id: Number(b.id) });

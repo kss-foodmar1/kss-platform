@@ -2250,7 +2250,13 @@ async function renderAiQuestions(main, view = {}) {
   const seed = view.seed || '';
   main.innerHTML = `
     <h1 class="admin-h1">คำถามจากแชท</h1>
+    ${view.flash ? `<div class="ok-msg" role="status">${esc(view.flash)}</div>` : ''}
     <p class="muted">30 วันที่ผ่านมา: 👍 ${t.up} · 👎 ${t.down} · ตอบไม่ได้ ${t.miss} — เก็บเฉพาะข้อความคำถามที่ตัดอีเมลและเลขยาวออกแล้ว ไม่เก็บคำตอบที่มีตัวเลขของลูกค้า</p>
+    <section class="admin-card gemini-card">
+      <h2>การเชื่อมต่อ Gemini</h2>
+      <p class="muted">แชทตอบจากคู่มือและตัวเลขบนหน้าก่อน ใช้ Gemini เฉพาะเรื่องที่สองอย่างนั้นตอบไม่ได้ คีย์เก็บใน Variables ของ Railway (GEMINI_API_KEY) ไม่แสดงที่นี่</p>
+      <div class="row-actions"><button class="btn small primary" type="button" id="gem-test">ทดสอบการเชื่อมต่อ</button><span class="muted" id="gem-out" role="status"></span></div>
+    </section>
     <section class="admin-card">
       <h2>${editing ? 'แก้คำตอบที่สอน' : 'สอนคำตอบใหม่'}</h2>
       <form class="taught-form">
@@ -2284,11 +2290,16 @@ async function renderAiQuestions(main, view = {}) {
     <section class="admin-card">
       <h2>คำตอบที่สอนไว้ (${taught.list.length})</h2>
       ${taught.list.length ? `<table class="admin-table"><thead><tr><th>คำถาม</th><th>คำตอบ</th><th></th></tr></thead><tbody>
-        ${taught.list.map((x) => `<tr${x.active ? '' : ' class="muted"'}><td>${x.phrases.map(esc).join('<br>')}</td><td>${esc(x.answer.slice(0, 140))}${x.answer.length > 140 ? '…' : ''}</td>
+        ${taught.list.map((x) => `<tr${x.active ? '' : ' class="muted"'}><td>${x.phrases.map(esc).join('<br>')}</td><td>${esc(x.answer.replace(/\*\*/g, '').slice(0, 140))}${x.answer.length > 140 ? '…' : ''}</td>
           <td class="row-actions"><button class="btn small ghost" type="button" data-edit="${x.id}">แก้</button><button class="btn small ghost" type="button" data-toggle="${x.id}">${x.active ? 'ปิด' : 'เปิด'}</button><button class="btn small ghost" type="button" data-del="${x.id}">ลบ</button></td></tr>`).join('')}
       </tbody></table>` : '<p class="muted">ยังไม่ได้สอนคำตอบ</p>'}
     </section>`;
   const reload = (v = {}) => renderAiQuestions(main, { status, ...v });
+  if (view.seed || view.editId) {
+    const f = main.querySelector('.taught-form');
+    f.scrollIntoView({ block: 'start' });
+    f.answer.focus();
+  }
   main.querySelectorAll('[data-st]').forEach((b) => b.addEventListener('click', () => renderAiQuestions(main, { status: b.dataset.st })));
   main.querySelectorAll('[data-teach]').forEach((b) => b.addEventListener('click', () => reload({ seed: m.list[b.dataset.teach].question, from: m.list[b.dataset.teach].question })));
   const mark = (i, st) => async () => { await api('/api/ai/misses/status', { method: 'POST', body: JSON.stringify({ question: m.list[i].question, status: st }) }); reload(); };
@@ -2305,6 +2316,19 @@ async function renderAiQuestions(main, view = {}) {
     await api(`/api/ai/taught/${b.dataset.del}`, { method: 'DELETE' });
     reload();
   }));
+  main.querySelector('#gem-test').addEventListener('click', async (e) => {
+    const out = main.querySelector('#gem-out');
+    e.target.disabled = true;
+    out.textContent = 'กำลังทดสอบ...';
+    try {
+      const r = await api('/api/ai/selftest', { method: 'POST' });
+      const base = `รุ่น ${r.model} · ระดับ ${r.tier === 'paid' ? 'เสียเงิน (ใช้กับลูกค้าจริงได้)' : 'ฟรี (ใช้ได้เฉพาะบริษัทเดโม)'} · จำกัด ${r.daily_limit} คำถาม/บริษัท/วัน`;
+      out.textContent = r.ok ? `✅ เชื่อมต่อสำเร็จ (${r.ms} ms) · ${base}` : `❌ ${r.message} · ${base}`;
+    } catch (err) {
+      out.textContent = '❌ ' + err.message;
+    }
+    e.target.disabled = false;
+  });
   const cancel = main.querySelector('[data-act="cancel-edit"]');
   if (cancel) cancel.addEventListener('click', () => reload());
   main.querySelector('.taught-form').addEventListener('submit', async (e) => {
@@ -2314,7 +2338,7 @@ async function renderAiQuestions(main, view = {}) {
       await api('/api/ai/taught', { method: 'POST', body: JSON.stringify({ id: editing ? editing.id : undefined, phrases: f.phrases.value, answer: f.answer.value }) });
       if (view.from) await api('/api/ai/misses/status', { method: 'POST', body: JSON.stringify({ question: view.from, status: 'done' }) });
       aiChat.taught = null;
-      reload();
+      reload({ flash: editing ? 'บันทึกการแก้ไขแล้ว' : 'สอนคำตอบแล้ว' });
     } catch (err) {
       msg.textContent = err.message;
     }
