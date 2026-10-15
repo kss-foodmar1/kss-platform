@@ -1498,6 +1498,10 @@ class DashboardView {
     const phone = matchMedia('(max-width: 700px)').matches;
     let folded = false;
     try { const v = localStorage.getItem(fold); folded = v === '1'; } catch (e) { /* private window */ }
+    // Deep link from the LINE digest button (/?alerts=1): open the card and bring it into view once.
+    let deepLink = false;
+    try { deepLink = !this.deepLinked && new URLSearchParams(location.search).get('alerts') === '1'; } catch (e) { /* no URL */ }
+    if (deepLink) { folded = false; this.deepLinked = true; setTimeout(() => box.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300); }
     const SHOW = phone ? 3 : 5;
     const crit = data.items.filter((i) => !i.ack_status && i.severity === 'วิกฤต').length;
     const sumOpen = data.items.filter((i) => !i.ack_status).reduce((a, i) => a + (Number(i.impact) || 0), 0);
