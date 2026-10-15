@@ -58,9 +58,10 @@ const mock = http.createServer((req, res) => {
   const a1 = await line.sendAlert(id, { base: 'https://app.test' });
   const p = sent[sent.length - 1];
   const flexStr = JSON.stringify(p.body.messages[0]);
-  check('digest pushed to the group as one flex message', a1.sent && a1.count === 3 && p.url === '/v2/bot/message/push' && p.body.to === 'Gexec1' && p.body.messages.length === 1 && p.body.messages[0].type === 'flex', JSON.stringify(a1));
+  check('digest pushed to the group as one flex message', a1.sent && a1.count >= 7 && p.url === '/v2/bot/message/push' && p.body.to === 'Gexec1' && p.body.messages.length === 1 && p.body.messages[0].type === 'flex', JSON.stringify(a1));
   check('digest carries all three findings and the dashboard button', /สิ่งที่ควรดูวันนี้/.test(flexStr) && flexStr.includes('สาขา บางนา') && flexStr.includes('กุ้งขาว') && flexStr.includes('หมูสามชั้น') && flexStr.includes('https://app.test/'));
-  check('digest leaves out what is normal or below the baht floor', !flexStr.includes('สยาม') && !flexStr.includes('มะนาว'));
+  check('digest leaves out what is normal or below the baht floor', !flexStr.includes('สาขา สยาม:') && !flexStr.includes('มะนาว'));
+  check('stale PO / SO are summarised (count, value, oldest) with the oldest few', /PO ค้างไม่ปิด: \d+ ใบ · ฿[\d,]+ · เก่าสุด \d+ วัน/.test(flexStr) && /SO ครัวกลางค้างไม่ปิด: 3 ใบ/.test(flexStr) && /และอีก \d+ ใบใน Dashboard/.test(flexStr));
   const n = sent.length;
   const a2 = await line.sendAlert(id, { base: 'https://app.test' });
   check('nothing new → nothing sent', a2.sent === false && sent.length === n, JSON.stringify(a2));
@@ -71,13 +72,13 @@ const mock = http.createServer((req, res) => {
   const a3 = await line.sendAlert(id, { base: 'https://app.test' });
   alerts.evaluate = realEval;
   const p3 = JSON.stringify(sent[sent.length - 1].body.messages[0]);
-  check('a finding that got worse is sent again, alone', a3.sent && a3.count === 1 && p3.includes('กุ้งขาว') && !p3.includes('หมูสามชั้น') && /ยังเปิดอยู่อีก 2 เรื่อง/.test(p3), JSON.stringify(a3));
+  check('a finding that got worse is sent again, alone', a3.sent && a3.count === 1 && p3.includes('กุ้งขาว') && !p3.includes('หมูสามชั้น') && !p3.includes('PO ค้าง') && /ยังเปิดอยู่อีก \d+ เรื่องที่แจ้งไปแล้ว/.test(p3), p3.slice(0, 400));
   await alerts.saveSettings(id, { price: { line: false } });
   const a4 = await line.sendAlert(id, { force: true, base: 'https://app.test' });
   const p4 = JSON.stringify(sent[sent.length - 1].body.messages[0]);
   check('a watcher switched off for LINE is left out', a4.sent && p4.includes('บางนา') && !p4.includes('กุ้งขาว'), p4.slice(0, 300));
   const v2 = await line.publicView(id, 'https://x.test');
-  check('Admin view lists watchers with their LINE switch', v2.watchers.length === 2 && v2.watchers.find((w) => w.key === 'price').line === false && v2.watchers.find((w) => w.key === 'ck').line === true);
+  check('Admin view lists watchers with their LINE switch', v2.watchers.length === 4 && v2.watchers.find((w) => w.key === 'price').line === false && v2.watchers.find((w) => w.key === 'ck').line === true);
   await alerts.saveSettings(id, { price: { line: true } });
   await line.unbindGroup(id);
   let err = null; try { await line.sendAlert(id); } catch (e) { err = e; }

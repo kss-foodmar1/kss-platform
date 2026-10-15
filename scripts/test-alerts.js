@@ -27,6 +27,20 @@ const check = (n, c, x = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
   const c = await a.evaluate(id, 'ck');
   check('ck: only Bangna, with an estimated baht impact', c.findings.length === 1 && c.findings[0].branch === 'สาขา บางนา' && c.findings[0].impact > 0, JSON.stringify(c.findings));
 
+  const po = await a.evaluate(id, 'po');
+  const lost = po.findings.find((f) => /ยังไม่บันทึกรับของ \(GRN\)/.test(f.detail));
+  check('po: the PO never received (no GRN) is found, counted from its delivery date', lost && lost.age_days >= 7, JSON.stringify(lost));
+  check('po: received but never closed are found too', po.findings.some((f) => /รับของแล้ว ยังไม่ปิด PO/.test(f.detail)));
+  check('po: nothing younger than 7 days', po.findings.every((f) => f.age_days >= 7));
+  const so = await a.evaluate(id, 'so');
+  const ages = so.findings.map((f) => f.age_days).sort((x, y) => x - y);
+  check('so: exactly the three stuck Siam orders (9, 12, 15 days)', so.findings.length === 3 && ages.join() === '9,12,15', JSON.stringify(so.findings.map((f) => f.detail)));
+  check('so: reasons — two delivered-not-closed, one never sent', so.findings.filter((f) => /ส่งของแล้ว ยังไม่ปิด SO/.test(f.detail)).length === 2 && so.findings.filter((f) => /ยังไม่บันทึกส่งของ \(DO\)/.test(f.detail)).length === 1);
+  check('so: 15 days is high severity, 9 days medium', so.findings.find((f) => f.age_days === 15).severity === 'สูง' && so.findings.find((f) => f.age_days === 9).severity === 'กลาง');
+  const so14 = await a.WATCHERS.so.detect(id, { days: 14 }, today);
+  check('so: a 14-day setting keeps only the 15-day one', so14.findings.length === 1 && so14.findings[0].age_days === 15);
+  const soRows = await a.history(id, 'so');
+  check('so rows: oldest first (rank includes age)', soRows[0].age_days === 15 && soRows[0].age_days >= soRows[1].age_days);
   let h = await a.history(id, 'price');
   check('history: first sighting is "ใหม่"', h.length >= 2 && h.every((r) => r.status === 'ใหม่' && r.is_active === 1));
   await pool.query(`UPDATE alert_events SET first_seen = ? WHERE company_id = ? AND watcher = 'price'`, [a.addDays(today, -1), id]);
@@ -48,7 +62,7 @@ const check = (n, c, x = '') => { c ? pass++ : fail++; console.log(`${c ? 'PASS'
   check('widget rows: open first by rank, no date field to filter on', built.data[0].is_active === 1 && built.data.every((r, i, arr) => i === 0 || arr[i - 1].rank >= r.rank) && !fc.FMH_REPORTS['watch-price'].dateField);
 
   const s = await a.saveSettings(id, { price: { threshold: 30, line: false }, ck: { line: true } });
-  check('settings: saved and clamped to known fields', s.price.threshold === 30 && s.price.min_impact === 300 && s.price.line === false && s.ck.line === true);
+  check('settings: saved and clamped to known fields', s.price.threshold === 30 && s.price.min_impact === 300 && s.price.line === false && s.ck.line === true && s.po.days === 7);
   const p2 = await a.evaluate(id, 'price');
   check('settings: the widget uses the saved threshold too', p2.findings.length === 0);
   await pool.query(`UPDATE company_line SET watch_json = NULL WHERE company_id = ?`, [id]);

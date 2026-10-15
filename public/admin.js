@@ -1300,6 +1300,7 @@ async function renderLinePanel(container, companyId, flash = '') {
             <label class="check-row"><input type="checkbox" class="w-line" ${w.line ? 'checked' : ''}> ${esc(w.name)} <span class="muted">(${esc(w.cadence)})</span></label>
             ${'threshold' in w.defaults ? `<label class="w-num">แพงขึ้นเกิน <input type="number" min="0" step="1" class="w-threshold" value="${esc(w.threshold)}"> %</label>` : ''}
             ${'min_impact' in w.defaults ? `<label class="w-num">และจ่ายเกินอย่างน้อย ฿<input type="number" min="0" step="50" class="w-min" value="${esc(w.min_impact)}"></label>` : ''}
+            ${'days' in w.defaults ? `<label class="w-num">ค้างเกิน <input type="number" min="1" step="1" class="w-days" value="${esc(w.days)}"> วัน</label>` : ''}
           </div>`).join('')}
         <p class="helper-text">เกณฑ์ชุดเดียวกันใช้กับ widget ตัวเตือนบน Dashboard ตัวเลขในการ์ด LINE จึงตรงกับหน้าจอ</p>
       </fieldset>
@@ -1325,6 +1326,8 @@ async function renderLinePanel(container, companyId, flash = '') {
             const t = row.querySelector('.w-threshold'), m = row.querySelector('.w-min');
             if (t) o.threshold = Number(t.value);
             if (m) o.min_impact = Number(m.value);
+            const d = row.querySelector('.w-days');
+            if (d) o.days = Number(d.value);
             return [row.dataset.k, o];
           })),
         }),
