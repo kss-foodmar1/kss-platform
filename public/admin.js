@@ -685,6 +685,10 @@ function tierStatusSelects(company = {}) {
         ? `<div class="field"><label>แหล่งข้อมูล</label><select name="data_source">
             <option value="fmh" ${company.data_source !== 'demo' ? 'selected' : ''}>FMH จริง (ใช้ API key และโควตา)</option>
             <option value="demo" ${company.data_source === 'demo' ? 'selected' : ''}>ข้อมูลตัวอย่าง (ไม่เรียก FMH)</option>
+          </select></div>
+          <div class="field"><label>การชำระเงิน</label><select name="self_serve" title="ชำระเองในแอป: ผู้ดูแลของบริษัทเห็นหน้าแพ็กเกจ ชำระ/ผูกบัตรเอง และบริษัทจะถูกล็อกเมื่อหมดอายุ">
+            <option value="0" ${company.self_serve ? '' : 'selected'}>KSS ออกลิงก์ชำระให้</option>
+            <option value="1" ${company.self_serve ? 'selected' : ''}>ลูกค้าชำระเองในแอป (ทดลองใช้/แพ็กเกจ)</option>
           </select></div>`
         : ''
     }`;

@@ -162,6 +162,15 @@ const bkk = (d = 0) => new Date(Date.now() + 7 * 3600e3 + d * 86400e3).toISOStri
     const [s] = await q(`SELECT password_hash FROM signup_requests WHERE id = ?`, [id]);
     assert.strictEqual(s.password_hash, '');
   });
+  await ok('KSS can switch an existing company to self-serve: trial starts today', async () => {
+    const id = (await req('kss', 'POST', '/api/admin/companies', { name: `เปลี่ยนเป็นชำระเอง ${stamp}`, status: 'active' })).body.id;
+    assert.strictEqual((await req('kss', 'PATCH', `/api/admin/companies/${id}`, { self_serve: '1' })).status, 200);
+    const [c] = await q(`SELECT self_serve, status, DATE_FORMAT(subscription_ends_at, '%Y-%m-%d') e FROM companies WHERE id = ?`, [id]);
+    assert.deepStrictEqual([c.self_serve, c.status, c.e], [1, 'trial', bkk(30)]);
+    assert.strictEqual((await req('kss', 'GET', `/api/admin/companies/${id}`)).body.company.self_serve, 1);
+    await req('kss', 'PATCH', `/api/admin/companies/${id}`, { self_serve: '0' });
+    assert.strictEqual((await q(`SELECT self_serve FROM companies WHERE id = ?`, [id]))[0].self_serve, 0);
+  });
   await ok('a KSS-managed company with a past end date is never locked', async () => {
     const [c] = await q(`SELECT id FROM companies WHERE self_serve = FALSE AND status <> 'suspended' LIMIT 1`);
     const ss = require('../lib/selfServe');

@@ -132,7 +132,7 @@ router.get(
   '/companies/:id',
   wrap(async (req, res) => {
     const [[c]] = await pool.query(
-      `SELECT id, company_code, name, status, plan_tier, data_source, fmh_key_updated_at, created_at, (fmh_api_key_enc IS NOT NULL OR data_source = 'demo') AS fmh_configured
+      `SELECT id, company_code, name, status, plan_tier, data_source, self_serve, fmh_key_updated_at, created_at, (fmh_api_key_enc IS NOT NULL OR data_source = 'demo') AS fmh_configured
        FROM companies WHERE id = ?`,
       [req.params.id]
     );
@@ -152,7 +152,7 @@ router.get(
 router.patch(
   '/companies/:id',
   wrap(async (req, res) => {
-    const { name, status, plan_tier, data_source } = req.body || {};
+    const { name, status, plan_tier, data_source, self_serve } = req.body || {};
     if (data_source !== undefined && !['fmh', 'demo'].includes(data_source)) return bad(res, 'invalid data_source');
     if (status !== undefined && !STATUSES.includes(status)) return bad(res, 'invalid status');
     if (plan_tier !== undefined && !TIERS.includes(plan_tier)) return bad(res, 'invalid plan_tier');
@@ -166,6 +166,20 @@ router.patch(
       `UPDATE companies SET status = COALESCE(?, status), plan_tier = COALESCE(?, plan_tier) WHERE id = ?`,
       [status ?? null, plan_tier ?? null, req.params.id]
     );
+    // Self-serve: the company's admin sees the plan page and pays in the app
+    // (lib/selfServe.js). Switching on with no end date starts a trial today.
+    if (self_serve !== undefined) {
+      const on = self_serve === true || self_serve === 1 || self_serve === '1';
+      const [[c]] = await pool.query(`SELECT self_serve, subscription_ends_at FROM companies WHERE id = ?`, [req.params.id]);
+      if (!!c.self_serve !== on) {
+        await pool.query(`UPDATE companies SET self_serve = ? WHERE id = ?`, [on ? 1 : 0, req.params.id]);
+        if (on && !c.subscription_ends_at) {
+          const ss = require('../lib/selfServe');
+          const end = new Date(Date.now() + 7 * 3600e3 + ss.TRIAL_DAYS() * 86400e3).toISOString().slice(0, 10);
+          await pool.query(`UPDATE companies SET subscription_ends_at = ?, status = IF(status = 'active', 'trial', status) WHERE id = ?`, [end, req.params.id]);
+        }
+      }
+    }
     if (data_source !== undefined) {
       const [[c]] = await pool.query(`SELECT data_source FROM companies WHERE id = ?`, [req.params.id]);
       if (c.data_source !== data_source) {
