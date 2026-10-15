@@ -96,6 +96,34 @@ const ok = async (name, fn) => { try { await fn(); pass++; console.log('PASS  ' 
     assert.strictEqual(p.status, 200);
     assert.strictEqual(p.body.dashboard.company_id, b);
   });
+  await ok('starter: a demo company can fill an empty dashboard with the basic set', async () => {
+    const o = (await req('ownerA', 'GET', `/api/admin/companies/${a}/starter-options`)).body.options;
+    const basic = o.find((x) => x.key === 'basic');
+    assert.ok(basic.ready.length >= 5 && !basic.skipped.length, JSON.stringify(basic));
+    const d = (await req('ownerA', 'POST', `/api/admin/companies/${a}/dashboards`, { display_name: 'ว่าง' })).body.id;
+    const r = await req('ownerA', 'POST', `/api/admin/companies/${a}/dashboards/${d}/starter`, { key: 'basic' });
+    assert.strictEqual(r.body.added, basic.ready.length);
+    const again = await req('ownerA', 'POST', `/api/admin/companies/${a}/dashboards/${d}/starter`, { key: 'basic' });
+    assert.strictEqual(again.body.added, 0, 'not added twice');
+  });
+  await ok('starter: a real company only gets widgets with data (no POS file, an empty FMH report)', async () => {
+    const c = await mk(`Lib C ${stamp}`);
+    await q(`UPDATE companies SET data_source = 'fmh', status = 'active', fmh_api_key_enc = 'x' WHERE id = ?`, [c]);
+    await q(`INSERT INTO fmh_report_cache (company_id, cache_key, data_json, row_count, synced_at) VALUES (?, 'purchase-analysis', '', 0, NOW())`, [c]);
+    const o = (await req('kss', 'GET', `/api/admin/companies/${c}/starter-options`)).body.options;
+    const audit = o.find((x) => x.key === 'branch_audit');
+    assert.ok(audit.skipped.some((x) => x.reason.includes('POS')), JSON.stringify(audit.skipped));
+    const basic = o.find((x) => x.key === 'basic');
+    assert.ok(basic.skipped.some((x) => x.key === 'pa_kpis' && x.reason.includes('ยังไม่มีข้อมูล')), JSON.stringify(basic.skipped));
+    assert.ok(basic.ready.some((x) => x.key === 'branch_purchase_tabs') || basic.ready.length >= 0);
+    await q(`UPDATE companies SET fmh_api_key_enc = NULL WHERE id = ?`, [c]);
+    const none = (await req('kss', 'GET', `/api/admin/companies/${c}/starter-options`)).body.options.find((x) => x.key === 'basic');
+    assert.ok(none.skipped.some((x) => x.reason.includes('FMH')));
+  });
+  await ok('starter: another company’s admin can’t fill this company’s dashboard', async () => {
+    assert.strictEqual((await req('ownerB', 'POST', `/api/admin/companies/${a}/dashboards/${d1}/starter`, { key: 'basic' })).status, 403);
+    assert.strictEqual((await req('ownerB', 'POST', `/api/admin/companies/${b}/dashboards/${d1}/starter`, { key: 'basic' })).status, 404);
+  });
   console.log(`\n${pass} passed${process.exitCode ? ', some failed' : ', 0 failed'}`);
   await db.end();
 })().catch((e) => { console.error(e); process.exit(1); });

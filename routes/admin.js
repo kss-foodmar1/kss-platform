@@ -43,6 +43,9 @@ const COMPANY_ADMIN_ROUTES = [
   ['GET', /^\/companies\/(\d+)\/widget-usage$/, 'company'],
   ['POST', /^\/companies\/(\d+)\/library-add$/, 'company'],
   ['POST', /^\/companies\/(\d+)\/packs\/([a-z_]+)$/, 'company'],
+  // "Start with a basic dashboard?" (lib/starter.js)
+  ['GET', /^\/companies\/(\d+)\/starter-options$/, 'company'],
+  ['POST', /^\/companies\/(\d+)\/dashboards\/\d+\/starter$/, 'company'],
 ];
 
 async function adminAccess(req, res, next) {
@@ -606,6 +609,37 @@ router.post(
       n++;
     }
     res.status(201).json({ id, display_name: name, widgets: n });
+  })
+);
+
+// ---------- "Start with a basic dashboard?" ----------
+router.get(
+  '/companies/:id/starter-options',
+  wrap(async (req, res) => {
+    if (!(await companyExists(req.params.id))) return res.status(404).json({ error: 'Company not found' });
+    res.json({ options: await require('../lib/starter').options(Number(req.params.id)) });
+  })
+);
+
+// Fills a dashboard with the ready widgets of one option ({ key }), after any
+// widgets it already has; a widget already there is not added twice.
+router.post(
+  '/companies/:id/dashboards/:did/starter',
+  wrap(async (req, res) => {
+    const companyId = Number(req.params.id);
+    const [[d]] = await pool.query(`SELECT id FROM dashboards WHERE id = ? AND company_id = ?`, [req.params.did, companyId]);
+    if (!d) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
+    const tpls = await require('../lib/starter').readyTemplates(companyId, String((req.body && req.body.key) || 'basic'));
+    if (!tpls) return bad(res, 'ไม่รู้จักชุดนี้');
+    const [have] = await pool.query(`SELECT widget_template_id AS id FROM dashboard_widgets WHERE dashboard_id = ?`, [d.id]);
+    const had = new Set(have.map((r) => r.id));
+    let added = 0;
+    for (const t of tpls) {
+      if (had.has(t.id)) continue;
+      await appendWidget(companyId, d.id, t, {});
+      added++;
+    }
+    res.json({ added });
   })
 );
 

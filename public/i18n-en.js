@@ -64,6 +64,17 @@ window.I18N_EN = {
     'ครึ่งแถว': 'Half row',
     '1/3 แถว': '1/3 row',
     'ไปที่หัวข้อ': 'Jump to section',
+    'เริ่มด้วย Dashboard พื้นฐานไหม?': 'Start with a basic dashboard?',
+    'เลือกชุดแล้วกด “ใส่ให้เลย” ระบบใส่เฉพาะ widget ที่มีข้อมูลของบริษัทนี้แล้ว แก้ต่อทีหลังได้เสมอ': 'Pick a set and press “Fill it in”. Only widgets that already have this company’s data are added; you can always change it later.',
+    'กำลังเตรียมตัวเลือก...': 'Preparing options...',
+    'ชุดเริ่มต้น': 'Starter sets',
+    'แนะนำ': 'Recommended',
+    'Dashboard พื้นฐาน': 'Basic dashboard',
+    'ใส่ให้เลย': 'Fill it in',
+    'กำลังใส่ widget...': 'Adding widgets...',
+    'เลือกเองจากคลัง Widget': 'Pick from the Widget library',
+    'ยังไม่มีข้อมูลสำหรับชุดนี้': 'No data for this set yet',
+    'ผู้ดูแลของบริษัทยังไม่ได้ใส่ widget': 'Your company admin hasn’t added widgets yet',
     // ---------- shell, login, account ----------
     'เลือกบริษัท': 'Choose company',
     'จัดการผู้ใช้งาน': 'Manage users',
@@ -1042,6 +1053,8 @@ window.I18N_EN = {
 
   // {0}, {1}... match any text and are carried across.
   patterns: [
+    ['พร้อมแสดง {0} widget', '{0} widgets ready'],
+    ['ข้าม {0} widget: {1}', 'Skips {0}: {1}'],
     ['เพิ่มลง {0} Dashboard', 'Add to {0} dashboard(s)'],
     ['ดูเพิ่มอีก {0} widget', 'Show {0} more'],
     ['{0} widget', '{0} widgets'],

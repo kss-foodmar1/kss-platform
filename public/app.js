@@ -867,12 +867,9 @@ class DashboardView {
     if (!this.widgets.length) {
       const box = document.createElement('div');
       box.className = 'dash-empty';
-      const canAdd = !this.preview && (isSuper() || isCompanyAdmin());
-      box.innerHTML = `<p><b>Dashboard นี้ยังว่างอยู่</b></p>
-        <p class="muted">${canAdd ? 'เลือก widget จากคลัง หรือเริ่มจากชุด Dashboard สำเร็จรูป' : 'ผู้ดูแลของบริษัทยังไม่ได้ใส่ widget'}</p>
-        ${canAdd ? '<button type="button" class="btn primary">เปิดคลัง Widget</button>' : ''}`;
-      if (canAdd) box.querySelector('button').addEventListener('click', () => openLibrary({ dashboardId: this.dashboard.id }));
       this.wrap.appendChild(box);
+      if (!this.preview && (isSuper() || isCompanyAdmin())) this.renderStarter(box);
+      else box.innerHTML = '<p><b>Dashboard นี้ยังว่างอยู่</b></p><p class="muted">ผู้ดูแลของบริษัทยังไม่ได้ใส่ widget</p>';
       return;
     }
 
@@ -888,6 +885,71 @@ class DashboardView {
     this.wrap.appendChild(grid);
 
     if (this.hasDateSource) this.bindRange(header);
+  }
+
+  // An empty dashboard asks "start with a basic dashboard?" and fills itself
+  // in one click — only with widgets that have this company's data now
+  // (lib/starter.js), so the first look is never a page of empty boxes.
+  async renderStarter(box) {
+    const cid = this.dashboard.company_id;
+    box.classList.add('starter');
+    box.innerHTML = '<p class="muted">กำลังเตรียมตัวเลือก...</p>';
+    let options;
+    try {
+      ({ options } = await api(`/api/admin/companies/${cid}/starter-options`));
+    } catch (err) {
+      box.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+      return;
+    }
+    const usable = options.filter((o) => o.ready.length);
+    let pick = (usable.find((o) => o.key === 'basic') || usable[0] || {}).key;
+    const skippedLine = (o) => {
+      if (!o.skipped.length) return '';
+      const why = [...new Set(o.skipped.map((x) => x.reason))].join(' · ');
+      return `<span class="starter-skip">ข้าม ${o.skipped.length} widget: ${esc(why)}</span>`;
+    };
+    box.innerHTML = `
+      <h2 class="starter-h">เริ่มด้วย Dashboard พื้นฐานไหม?</h2>
+      <p class="muted starter-lead">เลือกชุดแล้วกด “ใส่ให้เลย” ระบบใส่เฉพาะ widget ที่มีข้อมูลของบริษัทนี้แล้ว แก้ต่อทีหลังได้เสมอ</p>
+      <div class="starter-grid" role="radiogroup" aria-label="ชุดเริ่มต้น">
+        ${options
+          .map(
+            (o) => `<label class="starter-opt${o.ready.length ? '' : ' off'}${o.key === pick ? ' on' : ''}">
+              <input type="radio" name="starter" value="${esc(o.key)}"${o.key === pick ? ' checked' : ''}${o.ready.length ? '' : ' disabled'}>
+              ${o.role ? `<span class="starter-role">${esc(o.role)}</span>` : '<span class="starter-role">แนะนำ</span>'}
+              <b class="starter-title">${esc(o.title)}</b>
+              <span class="starter-desc">${esc(o.description)}</span>
+              <span class="starter-count">${o.ready.length ? `พร้อมแสดง ${o.ready.length} widget` : 'ยังไม่มีข้อมูลสำหรับชุดนี้'}</span>
+              ${skippedLine(o)}
+            </label>`
+          )
+          .join('')}
+      </div>
+      <div class="starter-actions">
+        <button type="button" class="btn primary starter-go"${pick ? '' : ' disabled'}>ใส่ให้เลย</button>
+        <button type="button" class="btn ghost starter-lib">เลือกเองจากคลัง Widget</button>
+      </div>
+      <div class="starter-msg" role="status"></div>`;
+    box.querySelectorAll('input[name="starter"]').forEach((r) =>
+      r.addEventListener('change', () => {
+        pick = r.value;
+        box.querySelectorAll('.starter-opt').forEach((l) => l.classList.toggle('on', l.querySelector('input').value === pick));
+      })
+    );
+    box.querySelector('.starter-lib').addEventListener('click', () => openLibrary({ dashboardId: this.dashboard.id }));
+    const go = box.querySelector('.starter-go');
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      go.textContent = 'กำลังใส่ widget...';
+      try {
+        await api(`/api/admin/companies/${cid}/dashboards/${this.dashboard.id}/starter`, { method: 'POST', body: JSON.stringify({ key: pick }) });
+        selectDashboard(this.dashboard.id);
+      } catch (err) {
+        go.disabled = false;
+        go.textContent = 'ใส่ให้เลย';
+        box.querySelector('.starter-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+      }
+    });
   }
 
   // A custom range picked from code (the POS "show the file's days" button).
