@@ -33,6 +33,7 @@ adminRouter.get('/status', (req, res) => {
   res.json({
     omise_mode: omise.mode(),
     online_payments: omise.paymentsEnabled(),
+    payments_status: omise.paymentsStatus(),
     webhook_secret_set: !!(process.env.OMISE_WEBHOOK_SECRET || process.env.omise_webhook_secret),
     enforce_expiry: billing.enforcing(),
     grace_days: billing.GRACE_DAYS(),

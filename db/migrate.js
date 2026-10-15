@@ -76,6 +76,22 @@ async function upgradeUsers() {
   }
 }
 
+async function upgradeCardPayments() {
+  // pay_method: 'promptpay' | 'card'; authorize_uri: a card charge waiting for
+  // the cardholder's 3-D Secure step.
+  if (!(await columnInfo('payments', 'pay_method'))) {
+    await pool.query(`ALTER TABLE payments ADD COLUMN pay_method VARCHAR(10) NULL, ADD COLUMN authorize_uri TEXT NULL`);
+  }
+}
+
+async function upgradeSelfServe() {
+  // self_serve: signed up on the website (trial, self-pay, locks at the end).
+  // data_purged_at: KSS cleared the data of a self-serve company locked too long.
+  if (!(await columnInfo('companies', 'self_serve'))) {
+    await pool.query(`ALTER TABLE companies ADD COLUMN self_serve BOOLEAN NOT NULL DEFAULT FALSE, ADD COLUMN data_purged_at TIMESTAMP NULL`);
+  }
+}
+
 async function upgradeLine() {
   // last_event_*: what the LINE webhook last did, so a silent bot can be diagnosed from Admin.
   if (!(await columnInfo('company_line', 'last_event_at'))) {
@@ -284,22 +300,62 @@ async function dropLegacyReportsTable() {
   console.log('  renamed legacy reports table -> reports_legacy_backup');
 }
 
+async function upgradeAiFeedback() {
+  // ai_feedback shipped first without these (a 👎 reason, and a "handled" mark).
+  if (!(await columnInfo('ai_feedback', 'reason'))) {
+    await pool.query(`ALTER TABLE ai_feedback ADD COLUMN reason VARCHAR(30) NULL, ADD COLUMN status ENUM('open','done') NOT NULL DEFAULT 'open'`);
+    console.log('  ai_feedback: added reason, status');
+  }
+}
+
+async function upgradeCacheGzip() {
+  // The report caches held their rows as plain JSON text, twice (live + saved),
+  // and filled the small MySQL volume. Move every row into gzip (lib/cacheBlob.js),
+  // then rebuild the tables so the freed space goes back to the disk.
+  const { pack } = require('../lib/cacheBlob');
+  let converted = 0;
+  for (const t of ['fmh_report_cache', 'fmh_cache_saved']) {
+    if (!(await columnInfo(t, 'data_gz'))) {
+      await pool.query(`ALTER TABLE ${t} ADD COLUMN data_gz LONGBLOB NULL AFTER data_json, ADD COLUMN row_count INT NULL AFTER data_gz`);
+      console.log(`  ${t}: added data_gz, row_count`);
+    }
+    // One row at a time: a row can be tens of MB of text.
+    const [keys] = await pool.query(`SELECT company_id, cache_key FROM ${t} WHERE data_gz IS NULL`);
+    for (const k of keys) {
+      const [[row]] = await pool.query(`SELECT data_json FROM ${t} WHERE company_id = ? AND cache_key = ?`, [k.company_id, k.cache_key]);
+      let rows = [];
+      try { rows = row && row.data_json ? JSON.parse(row.data_json) : []; } catch (e) { rows = []; }
+      const { gz, count } = pack(rows);
+      await pool.query(`UPDATE ${t} SET data_gz = ?, row_count = ?, data_json = '' WHERE company_id = ? AND cache_key = ?`, [gz, count, k.company_id, k.cache_key]);
+      converted++;
+    }
+  }
+  if (converted) {
+    for (const t of ['fmh_report_cache', 'fmh_cache_saved']) await pool.query(`OPTIMIZE TABLE ${t}`);
+    console.log(`  report caches: gzipped ${converted} row(s) and gave the space back`);
+  }
+}
+
 async function main() {
   const n = await runSchemaFile();
   console.log(`Schema: ${n} statement(s) applied.`);
   await upgradeCompanies();
   await upgradeLine();
+  await upgradeSelfServe();
+  await upgradeCardPayments();
   await upgradeUsers();
   await upgradeDashboards();
   await upgradePos();
   await upgradeAnnouncements();
   await upgradeCache();
+  await upgradeCacheGzip();
+  await upgradeAiFeedback();
   // First run with the saved-data fallback: every cache that has rows today
   // becomes the "last good" copy, so the fallback works before the next sync.
   const [bf] = await pool.query(
-    `INSERT IGNORE INTO fmh_cache_saved (company_id, cache_key, data_json, quota_json, synced_at)
-     SELECT company_id, cache_key, data_json, quota_json, synced_at FROM fmh_report_cache
-     WHERE JSON_LENGTH(data_json) > 0`
+    `INSERT IGNORE INTO fmh_cache_saved (company_id, cache_key, data_json, data_gz, row_count, quota_json, synced_at)
+     SELECT company_id, cache_key, '', data_gz, row_count, quota_json, synced_at FROM fmh_report_cache
+     WHERE row_count > 0`
   );
   if (bf.affectedRows) console.log(`  fmh_cache_saved: kept ${bf.affectedRows} existing report(s) as saved data`);
   await syncCatalog();

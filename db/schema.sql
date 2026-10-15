@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS companies (
   subscription_ends_at DATE NULL,
   data_source ENUM('fmh','demo') NOT NULL DEFAULT 'fmh',
   suspended_reason VARCHAR(20) NULL,
+  self_serve BOOLEAN NOT NULL DEFAULT FALSE,
+  data_purged_at TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) DEFAULT CHARSET=utf8mb4;
 
@@ -43,6 +45,8 @@ CREATE TABLE IF NOT EXISTS payments (
   extended_from DATE NULL,
   extended_to DATE NULL,
   created_by INT NULL,
+  pay_method VARCHAR(10) NULL,
+  authorize_uri TEXT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_payments_company (company_id),
   INDEX idx_payments_charge (charge_id)
@@ -129,12 +133,16 @@ CREATE TABLE IF NOT EXISTS app_settings (
 
 -- Cached FMH report data per company — filled by the daily 1am sync plus
 -- on-demand refreshes, so dashboard page views never spend FMH quota. Cached
+-- Rows live gzipped in data_gz (lib/cacheBlob.js); data_json is the pre-gzip
+-- column, '' on every row written since.
 -- per company (not per dashboard): every widget of a company that uses the
 -- same report source shares one cached copy.
 CREATE TABLE IF NOT EXISTS fmh_report_cache (
   company_id INT NOT NULL,
   cache_key VARCHAR(50) NOT NULL,
   data_json LONGTEXT NOT NULL,
+  data_gz LONGBLOB NULL,
+  row_count INT NULL,
   quota_json TEXT,
   synced_at TIMESTAMP NOT NULL,
   PRIMARY KEY (company_id, cache_key)
@@ -159,6 +167,8 @@ CREATE TABLE IF NOT EXISTS fmh_cache_saved (
   company_id INT NOT NULL,
   cache_key VARCHAR(128) NOT NULL,
   data_json LONGTEXT NOT NULL,
+  data_gz LONGBLOB NULL,
+  row_count INT NULL,
   quota_json TEXT NULL,
   synced_at TIMESTAMP NOT NULL,
   PRIMARY KEY (company_id, cache_key)
@@ -362,4 +372,97 @@ CREATE TABLE IF NOT EXISTS alert_events (
   PRIMARY KEY (company_id, watcher, finding_key),
   INDEX (company_id, last_seen),
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
+-- Self-serve signup (lib/selfServe.js). A request waits for KSS approval;
+-- approving creates a trial company (demo data) and its company_admin with
+-- the password chosen at signup. Rejected/approved rows are kept as a record.
+CREATE TABLE IF NOT EXISTS signup_requests (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  company_name VARCHAR(120) NOT NULL,
+  contact_name VARCHAR(120) NOT NULL,
+  email VARCHAR(255) NOT NULL,
+  phone VARCHAR(40) NOT NULL,
+  branches VARCHAR(40) NULL,
+  uses_fmh ENUM('yes','no','unsure') NOT NULL DEFAULT 'unsure',
+  note VARCHAR(500) NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  status ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+  company_id INT NULL,
+  decided_by INT NULL,
+  decided_at TIMESTAMP NULL,
+  decision_note VARCHAR(255) NULL,
+  ip VARCHAR(64) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX (status, created_at),
+  INDEX (email)
+) DEFAULT CHARSET=utf8mb4;
+
+-- Self-serve plan prices, set by KSS in Admin Console (never in code).
+-- period_months 1 = monthly, 12 = yearly.
+CREATE TABLE IF NOT EXISTS billing_prices (
+  period_months INT NOT NULL PRIMARY KEY,
+  amount_satang INT NOT NULL,
+  updated_by INT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) DEFAULT CHARSET=utf8mb4;
+
+-- Card auto-renew for self-serve companies (lib/cardRenew.js). The card itself
+-- lives at Omise (customer + card); only its brand / last 4 / expiry are kept
+-- here for display. active = 1 once a first charge succeeded.
+CREATE TABLE IF NOT EXISTS card_subscriptions (
+  company_id INT NOT NULL PRIMARY KEY,
+  omise_customer_id VARCHAR(64) NOT NULL,
+  card_brand VARCHAR(30) NULL,
+  card_last4 VARCHAR(4) NULL,
+  card_expiry VARCHAR(7) NULL,
+  period_months INT NOT NULL DEFAULT 1,
+  discount_pct DECIMAL(5,2) NOT NULL DEFAULT 5,
+  active BOOLEAN NOT NULL DEFAULT FALSE,
+  failures INT NOT NULL DEFAULT 0,
+  last_error VARCHAR(255) NULL,
+  last_attempt_on DATE NULL,
+  created_by INT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
+-- Questions asked of the dashboard AI chat (lib/aiChat.js), per company per
+-- day, for the daily limit. Only the count is kept, never the question.
+CREATE TABLE IF NOT EXISTS ai_usage (
+  company_id INT NOT NULL,
+  day DATE NOT NULL,
+  questions INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (company_id, day),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
+-- "ถาม AI": 👍/👎 on an answer, and questions the chat could not answer
+-- (kind = miss). KSS staff read these to decide what to teach it next.
+CREATE TABLE IF NOT EXISTS ai_feedback (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  company_id INT NOT NULL,
+  user_id INT NULL,
+  dashboard_id INT NULL,
+  kind ENUM('up','down','miss') NOT NULL,
+  source VARCHAR(10) NOT NULL DEFAULT '',
+  question VARCHAR(500) NOT NULL,
+  answer VARCHAR(600) NOT NULL DEFAULT '',
+  reason VARCHAR(30) NULL,
+  status ENUM('open','done') NOT NULL DEFAULT 'open',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_ai_feedback_kind (kind, created_at),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
+-- Answers KSS staff teach the chat from the Admin Console (no code change):
+-- phrases = one question phrasing per line, answer = plain text with **bold**.
+CREATE TABLE IF NOT EXISTS ai_taught (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  phrases VARCHAR(1000) NOT NULL,
+  answer TEXT NOT NULL,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by INT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) DEFAULT CHARSET=utf8mb4;

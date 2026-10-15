@@ -35,7 +35,7 @@ const app = express();
 // browser has never seen cannot be served from cache. The stamp is the newest
 // mtime among the shell files, so it changes exactly when they do and stays
 // stable across restarts that changed nothing.
-const SHELL_FILES = ['app.js', 'admin.js', 'style.css', 'index.html', 'i18n.js', 'i18n-en.js', 'pos-parse.js', 'fmh-file.js'];
+const SHELL_FILES = ['app.js', 'admin.js', 'selfserve.js', 'style.css', 'index.html', 'i18n.js', 'i18n-en.js', 'pos-parse.js', 'fmh-file.js'];
 const ASSET_VERSION = (() => {
   try {
     const newest = SHELL_FILES.reduce((max, f) => {
@@ -59,7 +59,7 @@ const LOGIN_HERO = (() => {
 const SHELL_HTML = (() => {
   let raw = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
   if (LOGIN_HERO) raw = raw.replace('<html lang="th">', '<html lang="th" class="login-hero-on">');
-  return raw.replace(/(src|href)="\/(app\.js|admin\.js|style\.css|i18n\.js|i18n-en\.js|pos-parse\.js|fmh-file\.js)"/g, `$1="/$2?v=${ASSET_VERSION}"`);
+  return raw.replace(/(src|href)="\/(app\.js|admin\.js|library\.js|explain\.js|aichat\.js|helpfaq\.js|selfserve\.js|style\.css|i18n\.js|i18n-en\.js|pos-parse\.js|fmh-file\.js)"/g, `$1="/$2?v=${ASSET_VERSION}"`);
 })();
 
 function sendShell(res) {
@@ -94,15 +94,25 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/dashboards', dashboardRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/admin/self-serve', require('./routes/selfServe').adminRouter);
 app.use('/api/admin/billing', billingRoutes.adminRouter);
 app.use('/api/admin', adminRoutes);
 app.use('/api/pos', require('./routes/pos'));
 app.use('/api/fmh-files', require('./routes/fmhFiles'));
 app.use('/api/announcements', require('./routes/announcements'));
+app.use('/api/ai', require('./routes/ai'));
 app.use('/api/pay', billingRoutes.publicRouter);
+app.use('/api/signup', require('./routes/selfServe').publicRouter);
+app.use('/api/subscription', require('./routes/selfServe').subscriptionRouter);
 app.use('/api/webhooks/line', require('./routes/line').webhookRouter);
 app.use('/api/line', require('./routes/line').router);
 app.use('/api/webhooks', billingRoutes.webhookRouter);
+// Back from the bank's 3-D Secure page after a card charge (lib/cardRenew.js).
+app.get('/pay/card-return/:token', async (req, res) => {
+  let st = null;
+  try { st = await require('./lib/cardRenew').afterReturn(req.params.token); } catch (e) { console.error('Card return failed:', e.message); }
+  res.redirect(303, `/?card=${st === 'paid' ? 'paid' : st === 'failed' ? 'failed' : 'pending'}`);
+});
 app.get('/pay/:token', (req, res, next) => {
   if (!require('./lib/omise').paymentsEnabled()) return next();
   res.set('Cache-Control', 'no-store');
@@ -174,6 +184,15 @@ cron.schedule(
 cron.schedule(
   '30 8 * * *',
   () => require('./lib/line').runDaily(process.env.PUBLIC_BASE_URL ? process.env.PUBLIC_BASE_URL.replace(/\/$/, '') : '').catch((e) => console.error('LINE daily failed:', e.message)),
+  { timezone: 'Asia/Bangkok' }
+);
+
+// Card auto-renew: 06:15 every day, charge plans ending tomorrow (or unpaid since).
+cron.schedule(
+  '15 6 * * *',
+  () => require('./lib/cardRenew').renewDue({ baseUrl: process.env.PUBLIC_BASE_URL ? process.env.PUBLIC_BASE_URL.replace(/\/$/, '') : '' })
+    .then((r) => r && (r.charged || r.failed || r.pending) && console.log('Card renew:', JSON.stringify(r)))
+    .catch((e) => console.error('Card renew failed:', e.message)),
   { timezone: 'Asia/Bangkok' }
 );
 

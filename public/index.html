@@ -100,6 +100,41 @@
       </div>
       <button type="submit" class="btn primary block">เข้าสู่ระบบ</button>
     </form>
+    <p class="signup-cta hidden" id="signup-cta">ยังไม่มีบัญชี? <a href="#" id="show-signup">ทดลองใช้ฟรี <span class="trial-days">30</span> วัน</a></p>
+    <!-- Self-serve signup (public/selfserve.js) -->
+    <div id="signup-box" class="hidden">
+      <div id="signup-error" class="error-msg hidden"></div>
+      <form id="signup-form" novalidate>
+        <div class="field"><label for="su-company">ชื่อร้าน / บริษัท</label><input id="su-company" name="company_name" required maxlength="120" autocomplete="organization"></div>
+        <div class="field"><label for="su-contact">ชื่อผู้ติดต่อ</label><input id="su-contact" name="contact_name" required maxlength="120" autocomplete="name"></div>
+        <div class="field-row">
+          <div class="field"><label for="su-email">อีเมล (ใช้เข้าสู่ระบบ)</label><input id="su-email" name="email" type="email" required autocomplete="email"></div>
+          <div class="field"><label for="su-phone">เบอร์โทร</label><input id="su-phone" name="phone" type="tel" required autocomplete="tel"></div>
+        </div>
+        <div class="field"><label for="su-password">ตั้งรหัสผ่าน (อย่างน้อย 8 ตัวอักษร)</label><input id="su-password" name="password" type="password" required minlength="8" autocomplete="new-password"></div>
+        <div class="field-row">
+          <div class="field"><label for="su-branches">จำนวนสาขา</label><select id="su-branches" name="branches"><option value="1">1</option><option value="2-5">2–5</option><option value="6-20">6–20</option><option value="20+">มากกว่า 20</option></select></div>
+          <div class="field"><label for="su-fmh">ใช้ Food Market Hub (FMH) อยู่ไหม</label><select id="su-fmh" name="uses_fmh"><option value="yes">ใช้อยู่</option><option value="no">ยังไม่ใช้</option><option value="unsure">ไม่แน่ใจ</option></select></div>
+        </div>
+        <div class="field"><label for="su-note">อยากให้ Dashboard ช่วยเรื่องอะไร (ไม่บังคับ)</label><textarea id="su-note" name="note" rows="2" maxlength="500"></textarea></div>
+        <div class="hp-field" aria-hidden="true"><label for="su-website">Website</label><input id="su-website" name="website" tabindex="-1" autocomplete="off"></div>
+        <label class="check-row"><input type="checkbox" name="consent" id="su-consent"> ยินยอมให้ KSS เก็บข้อมูลข้างต้นเพื่อติดต่อกลับและเปิดบัญชีทดลองใช้</label>
+        <button type="submit" class="btn primary block">ส่งคำขอทดลองใช้</button>
+      </form>
+      <div id="signup-done" class="hidden">
+        <h2>ได้รับคำขอแล้ว</h2>
+        <p>ทีม KSS จะตรวจสอบและติดต่อกลับเร็วที่สุด เมื่ออนุมัติแล้วเข้าสู่ระบบด้วยอีเมลและรหัสผ่านที่ตั้งไว้ได้ทันที ช่วงทดลองใช้ <span class="trial-days">30</span> วันเริ่มนับตั้งแต่วันที่อนุมัติ</p>
+      </div>
+      <p class="signup-cta"><a href="#" id="show-login">← กลับไปหน้าเข้าสู่ระบบ</a></p>
+    </div>
+  </div>
+</div>
+
+<!-- LOCKED: trial or plan ended (self-serve companies) -->
+<div id="lock-screen" class="login-screen hidden">
+  <div class="login-card plan-card">
+    <div id="lock-body"></div>
+    <button type="button" class="btn small ghost lock-logout">ออกจากระบบ</button>
   </div>
 </div>
 
@@ -123,6 +158,7 @@
 <div id="app-shell" class="hidden">
   <div class="topbar">
     <div class="topbar-left">
+      <button id="side-toggle" type="button" class="icon-btn side-toggle" aria-label="เมนู" aria-expanded="false" aria-controls="side-nav"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
       <div class="brand">KSS <span>Dashboard</span></div>
       <!-- KSS staff: pick which company's dashboards to view -->
       <label class="company-picker-wrap hidden" id="company-picker-wrap">
@@ -146,11 +182,23 @@
     </div>
   </div>
 
+  <!-- Trial / plan status for self-serve companies (public/selfserve.js) -->
+  <div id="sub-banner" class="sub-banner hidden" role="status"></div>
+
+  <div class="app-body">
+  <!-- Left menu: dashboards, Widget library, settings (app.js renderSideNav) -->
+  <nav id="side-nav" class="side-nav" aria-label="เมนูหลัก"></nav>
+  <div class="side-scrim" id="side-scrim" hidden></div>
+  <div class="app-main">
+
   <!-- Dashboard view -->
   <div id="dashboard-view">
-    <div id="tabs" class="tabs" role="tablist"></div>
+    <div id="tabs" class="tabs hidden" role="tablist"></div>
     <div id="tab-panel-wrap" class="tab-panel-wrap"></div>
   </div>
+
+  <!-- Widget library (public/library.js) -->
+  <div id="library-view" class="library-view hidden"></div>
 
   <!-- KSS Internal Admin Console (kss_superadmin only) -->
   <div id="admin-view" class="admin-view hidden">
@@ -162,10 +210,14 @@
       <button class="admin-nav-item" data-view="catalog">🧩 Widget Catalog</button>
       <button class="admin-nav-item" data-view="fmh">🔍 FMH Diagnostics</button>
       <button class="admin-nav-item" data-view="staff">👤 ทีม KSS</button>
+      <button class="admin-nav-item" data-view="ai-questions">💬 คำถามจากแชท</button>
       <button class="admin-nav-item" data-view="news">📣 ประกาศ (มีอะไรใหม่)</button>
+      <button class="admin-nav-item" data-view="self-serve">🧾 สมัครเอง / ทดลองใช้ <span class="nav-badge hidden" id="signup-badge"></span></button>
     </aside>
     <main id="admin-main" class="admin-main"></main>
   </div>
+  </div><!-- .app-main -->
+  </div><!-- .app-body -->
 </div>
 
 <!-- SETTINGS MODAL (company admin) — this company's FMH API key -->
@@ -217,5 +269,10 @@
 
 <script src="/app.js"></script>
 <script src="/admin.js"></script>
+<script src="/library.js"></script>
+<script src="/explain.js"></script>
+<script src="/helpfaq.js"></script>
+<script src="/aichat.js"></script>
+<script src="/selfserve.js"></script>
 </body>
 </html>

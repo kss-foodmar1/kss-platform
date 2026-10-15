@@ -40,6 +40,15 @@ router.post(
       [encrypt(apiKey), companyId]
     );
     if (!result.affectedRows) return res.status(404).json({ error: 'Company not found' });
+    // A self-serve trial starts on demo data; its own key switches it to real
+    // data (the two never mix in the cache).
+    const [[co]] = await pool.query(`SELECT self_serve, data_source FROM companies WHERE id = ?`, [companyId]);
+    if (co && co.self_serve && co.data_source === 'demo') {
+      await pool.query(`UPDATE companies SET data_source = 'fmh' WHERE id = ?`, [companyId]);
+      for (const t of ['fmh_report_cache', 'fmh_cache_saved', 'fmh_sync_errors', 'alert_events']) {
+        await pool.query(`DELETE FROM ${t} WHERE company_id = ?`, [companyId]);
+      }
+    }
 
     // Fill the cache right away in the background so dashboards have data
     // without waiting for the 1am sync.

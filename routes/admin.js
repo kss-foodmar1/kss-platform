@@ -38,6 +38,14 @@ const COMPANY_ADMIN_ROUTES = [
   ['DELETE', /^\/dashboards\/(\d+)$/, 'dashboard'],
   ['GET', /^\/dashboards\/(\d+)\/widgets$/, 'dashboard'],
   ['PUT', /^\/dashboards\/(\d+)\/layout$/, 'dashboard'],
+  // Widget library (public/library.js)
+  ['GET', /^\/widget-packs$/],
+  ['GET', /^\/companies\/(\d+)\/widget-usage$/, 'company'],
+  ['POST', /^\/companies\/(\d+)\/library-add$/, 'company'],
+  ['POST', /^\/companies\/(\d+)\/packs\/([a-z_]+)$/, 'company'],
+  // "Start with a basic dashboard?" (lib/starter.js)
+  ['GET', /^\/companies\/(\d+)\/starter-options$/, 'company'],
+  ['POST', /^\/companies\/(\d+)\/dashboards\/\d+\/starter$/, 'company'],
 ];
 
 async function adminAccess(req, res, next) {
@@ -132,7 +140,7 @@ router.get(
   '/companies/:id',
   wrap(async (req, res) => {
     const [[c]] = await pool.query(
-      `SELECT id, company_code, name, status, plan_tier, data_source, fmh_key_updated_at, created_at, (fmh_api_key_enc IS NOT NULL OR data_source = 'demo') AS fmh_configured
+      `SELECT id, company_code, name, status, plan_tier, data_source, self_serve, fmh_key_updated_at, created_at, (fmh_api_key_enc IS NOT NULL OR data_source = 'demo') AS fmh_configured
        FROM companies WHERE id = ?`,
       [req.params.id]
     );
@@ -152,10 +160,15 @@ router.get(
 router.patch(
   '/companies/:id',
   wrap(async (req, res) => {
-    const { name, status, plan_tier, data_source } = req.body || {};
+    const { name, status, plan_tier, data_source, self_serve } = req.body || {};
     if (data_source !== undefined && !['fmh', 'demo'].includes(data_source)) return bad(res, 'invalid data_source');
     if (status !== undefined && !STATUSES.includes(status)) return bad(res, 'invalid status');
     if (plan_tier !== undefined && !TIERS.includes(plan_tier)) return bad(res, 'invalid plan_tier');
+    // Same launch switch as online signup/payment: on Railway production it stays
+    // shut until SELF_SIGNUP=on, so no company can be moved to in-app payment early.
+    if ((self_serve === true || self_serve === 1 || self_serve === '1') && !require('../lib/selfServe').signupEnabled()) {
+      return res.status(403).json({ error: 'ยังไม่เปิดให้ลูกค้าชำระเองในแอปบน production (ตั้ง SELF_SIGNUP=on เมื่อพร้อมเปิด)' });
+    }
     if (name !== undefined && !String(name).trim()) return bad(res, 'name cannot be empty');
     if (!(await companyExists(req.params.id))) return res.status(404).json({ error: 'Company not found' });
     if (name !== undefined) {
@@ -166,6 +179,20 @@ router.patch(
       `UPDATE companies SET status = COALESCE(?, status), plan_tier = COALESCE(?, plan_tier) WHERE id = ?`,
       [status ?? null, plan_tier ?? null, req.params.id]
     );
+    // Self-serve: the company's admin sees the plan page and pays in the app
+    // (lib/selfServe.js). Switching on with no end date starts a trial today.
+    if (self_serve !== undefined) {
+      const on = self_serve === true || self_serve === 1 || self_serve === '1';
+      const [[c]] = await pool.query(`SELECT self_serve, subscription_ends_at FROM companies WHERE id = ?`, [req.params.id]);
+      if (!!c.self_serve !== on) {
+        await pool.query(`UPDATE companies SET self_serve = ? WHERE id = ?`, [on ? 1 : 0, req.params.id]);
+        if (on && !c.subscription_ends_at) {
+          const ss = require('../lib/selfServe');
+          const end = new Date(Date.now() + 7 * 3600e3 + ss.TRIAL_DAYS() * 86400e3).toISOString().slice(0, 10);
+          await pool.query(`UPDATE companies SET subscription_ends_at = ?, status = IF(status = 'active', 'trial', status) WHERE id = ?`, [end, req.params.id]);
+        }
+      }
+    }
     if (data_source !== undefined) {
       const [[c]] = await pool.query(`SELECT data_source FROM companies WHERE id = ?`, [req.params.id]);
       if (c.data_source !== data_source) {
@@ -466,6 +493,158 @@ router.delete(
     const [r] = await pool.query(`DELETE FROM dashboard_widgets WHERE id = ?`, [req.params.id]);
     if (!r.affectedRows) return res.status(404).json({ error: 'Widget not found' });
     res.json({ ok: true });
+  })
+);
+
+// ---------- widget library: pick a widget first, then where it goes ----------
+const SIZES = ['full', 'half', 'third'];
+
+async function templateFor(id) {
+  const [[tpl]] = await pool.query(
+    `SELECT id, name, report_source, default_config_json FROM widget_templates WHERE id = ? AND active = TRUE`,
+    [id]
+  );
+  return tpl || null;
+}
+
+// Appends one template to one dashboard and warms what it reads.
+async function appendWidget(companyId, dashboardId, tpl, overrides) {
+  const [[{ next }]] = await pool.query(
+    `SELECT COALESCE(MAX(position), 0) + 1 AS next FROM dashboard_widgets WHERE dashboard_id = ?`,
+    [dashboardId]
+  );
+  await pool.query(
+    `INSERT INTO dashboard_widgets (dashboard_id, widget_template_id, config_json, position) VALUES (?, ?, ?, ?)`,
+    [dashboardId, tpl.id, overrides && Object.keys(overrides).length ? JSON.stringify(overrides) : null, next]
+  );
+  let cfg = {};
+  try {
+    cfg = { ...JSON.parse(tpl.default_config_json || '{}'), ...(overrides || {}) };
+  } catch {
+    /* itemized */
+  }
+  pullsForWidget(tpl.report_source, cfg).forEach((p) => warmSource(companyId, p.source, p.grouping));
+}
+
+async function createDashboard(companyId, name, description = null) {
+  const [[{ next }]] = await pool.query(
+    `SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM dashboards WHERE company_id = ?`,
+    [companyId]
+  );
+  const [r] = await pool.query(
+    `INSERT INTO dashboards (company_id, display_name, description, sort_order) VALUES (?, ?, ?, ?)`,
+    [companyId, String(name).trim().slice(0, 255), description, next]
+  );
+  return r.insertId;
+}
+
+router.get('/widget-packs', (req, res) => res.json({ packs: require('../lib/widgetPacks').PACKS }));
+
+// Which of this company's dashboards each template is already on.
+router.get(
+  '/companies/:id/widget-usage',
+  wrap(async (req, res) => {
+    const [rows] = await pool.query(
+      `SELECT DISTINCT w.widget_template_id AS template_id, d.id AS dashboard_id
+       FROM dashboard_widgets w JOIN dashboards d ON d.id = w.dashboard_id
+       WHERE d.company_id = ?`,
+      [req.params.id]
+    );
+    res.json({ usage: rows });
+  })
+);
+
+// { template_id, dashboard_ids: [..], new_dashboard_name?, size? }
+// A dashboard that already has the widget is left alone (reported as "had").
+router.post(
+  '/companies/:id/library-add',
+  wrap(async (req, res) => {
+    const companyId = Number(req.params.id);
+    if (!(await companyExists(companyId))) return res.status(404).json({ error: 'Company not found' });
+    const body = req.body || {};
+    const tpl = await templateFor(body.template_id);
+    if (!tpl) return bad(res, 'ไม่พบ widget นี้');
+    const ids = [...new Set((Array.isArray(body.dashboard_ids) ? body.dashboard_ids : []).map(Number).filter(Boolean))];
+    const newName = body.new_dashboard_name && String(body.new_dashboard_name).trim();
+    if (!ids.length && !newName) return bad(res, 'เลือก dashboard อย่างน้อยหนึ่งอัน');
+    const [own] = ids.length
+      ? await pool.query(`SELECT id, display_name FROM dashboards WHERE company_id = ? AND id IN (?)`, [companyId, ids])
+      : [[]];
+    if (own.length !== ids.length) return res.status(404).json({ error: 'ไม่พบ dashboard ที่เลือก' });
+    const overrides = SIZES.includes(body.size) ? { size: body.size } : {};
+    const added = [];
+    const had = [];
+    for (const d of own) {
+      const [[exists]] = await pool.query(
+        `SELECT 1 AS ok FROM dashboard_widgets WHERE dashboard_id = ? AND widget_template_id = ? LIMIT 1`,
+        [d.id, tpl.id]
+      );
+      if (exists) { had.push({ id: d.id, display_name: d.display_name }); continue; }
+      await appendWidget(companyId, d.id, tpl, overrides);
+      added.push({ id: d.id, display_name: d.display_name });
+    }
+    if (newName) {
+      const id = await createDashboard(companyId, newName);
+      await appendWidget(companyId, id, tpl, overrides);
+      added.push({ id, display_name: newName, created: true });
+    }
+    res.json({ added, had });
+  })
+);
+
+// One click: a new dashboard made from a ready-made pack.
+router.post(
+  '/companies/:id/packs/:key',
+  wrap(async (req, res) => {
+    const companyId = Number(req.params.id);
+    if (!(await companyExists(companyId))) return res.status(404).json({ error: 'Company not found' });
+    const pack = require('../lib/widgetPacks').PACKS.find((p) => p.key === req.params.key);
+    if (!pack) return res.status(404).json({ error: 'ไม่พบชุดนี้' });
+    const [tpls] = await pool.query(
+      `SELECT id, template_key, report_source, default_config_json FROM widget_templates WHERE active = TRUE AND template_key IN (?)`,
+      [pack.templates]
+    );
+    const byKey = new Map(tpls.map((t) => [t.template_key, t]));
+    const name = (req.body && req.body.name && String(req.body.name).trim()) || pack.title;
+    const id = await createDashboard(companyId, name, pack.description);
+    let n = 0;
+    for (const k of pack.templates) {
+      if (!byKey.has(k)) continue;
+      await appendWidget(companyId, id, byKey.get(k), {});
+      n++;
+    }
+    res.status(201).json({ id, display_name: name, widgets: n });
+  })
+);
+
+// ---------- "Start with a basic dashboard?" ----------
+router.get(
+  '/companies/:id/starter-options',
+  wrap(async (req, res) => {
+    if (!(await companyExists(req.params.id))) return res.status(404).json({ error: 'Company not found' });
+    res.json({ options: await require('../lib/starter').options(Number(req.params.id)) });
+  })
+);
+
+// Fills a dashboard with the ready widgets of one option ({ key }), after any
+// widgets it already has; a widget already there is not added twice.
+router.post(
+  '/companies/:id/dashboards/:did/starter',
+  wrap(async (req, res) => {
+    const companyId = Number(req.params.id);
+    const [[d]] = await pool.query(`SELECT id FROM dashboards WHERE id = ? AND company_id = ?`, [req.params.did, companyId]);
+    if (!d) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
+    const tpls = await require('../lib/starter').readyTemplates(companyId, String((req.body && req.body.key) || 'basic'));
+    if (!tpls) return bad(res, 'ไม่รู้จักชุดนี้');
+    const [have] = await pool.query(`SELECT widget_template_id AS id FROM dashboard_widgets WHERE dashboard_id = ?`, [d.id]);
+    const had = new Set(have.map((r) => r.id));
+    let added = 0;
+    for (const t of tpls) {
+      if (had.has(t.id)) continue;
+      await appendWidget(companyId, d.id, t, {});
+      added++;
+    }
+    res.json({ added });
   })
 );
 

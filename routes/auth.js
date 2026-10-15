@@ -17,11 +17,12 @@ const COOKIE_OPTS = {
 async function publicUser(id) {
   const [[u]] = await pool.query(
     `SELECT u.id, u.email, u.display_name, u.role, u.company_id, u.must_change_password, u.language,
-            c.name AS company_name, c.company_code, c.status AS company_status
+            c.name AS company_name, c.company_code, c.status AS company_status, c.data_source AS company_data_source
      FROM users u LEFT JOIN companies c ON c.id = u.company_id WHERE u.id = ?`,
     [id]
   );
   if (u) u.must_change_password = !!u.must_change_password;
+  if (u && u.company_id && u.role !== 'kss_superadmin') u.subscription = await require('../lib/selfServe').subscriptionFor(u.company_id);
   return u;
 }
 
@@ -32,6 +33,14 @@ router.post(
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
     const [[user]] = await pool.query('SELECT id, password_hash FROM users WHERE email = ?', [email]);
+    if (!user) {
+      // Signed up on the website but not approved yet: say so, rather than "wrong password".
+      const s = await require('../lib/selfServe').signupStatusFor(email);
+      const [[req2]] = s && s.status === 'pending' ? await pool.query(`SELECT password_hash FROM signup_requests WHERE email = ? AND status = 'pending' ORDER BY id DESC LIMIT 1`, [String(email).trim().toLowerCase()]) : [[null]];
+      if (req2 && (await bcrypt.compare(password, req2.password_hash))) {
+        return res.status(403).json({ error: 'คำขอทดลองใช้ของคุณกำลังรอทีม KSS อนุมัติ เราจะติดต่อกลับเร็วที่สุด', code: 'SIGNUP_PENDING' });
+      }
+    }
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }

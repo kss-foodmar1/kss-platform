@@ -27,6 +27,8 @@ async function api(path, opts = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    // Trial or plan ended mid-session: only the plan page is left (selfserve.js).
+    if (data.code === 'SUBSCRIPTION_LOCKED' && typeof showLockScreen === 'function') showLockScreen();
     const err = new Error(data.error || 'Request failed');
     err.code = data.code;
     err.status = res.status;
@@ -405,6 +407,7 @@ function groupRows(rows, groupBy) {
 
 // ---------- screens / auth ----------
 function showScreen(name) {
+  el('lock-screen').classList.toggle('hidden', name !== 'lock');
   el('login-screen').classList.toggle('hidden', name !== 'login');
   el('force-change-screen').classList.toggle('hidden', name !== 'force-change');
   el('app-shell').classList.toggle('hidden', name !== 'app');
@@ -484,13 +487,17 @@ el('logout-btn').addEventListener('click', async () => {
 
 // ---------- app shell ----------
 async function enterApp() {
+  if (state.user.subscription && state.user.subscription.state === 'locked') return showLockScreen();
   el('user-display-name').textContent = state.user.display_name;
+  renderSubBanner();
+  // KSS staff keep the Admin Console button; a company admin's settings live
+  // in the left menu (renderSideNav), so the topbar shortcuts go.
   el('open-admin-btn').classList.toggle('hidden', !isSuper() && !isCompanyAdmin());
   el('open-admin-btn').textContent = adminBtnLabel();
-  el('open-manage-users-btn').classList.toggle('hidden', !isCompanyAdmin());
-  el('open-settings-btn').classList.toggle('hidden', !isCompanyAdmin());
+  el('open-manage-users-btn').classList.add('hidden');
+  el('open-settings-btn').classList.add('hidden');
   el('company-picker-wrap').classList.toggle('hidden', !isSuper());
-  el('company-name').classList.toggle('hidden', isSuper() || !state.user.company_name);
+  el('company-name').classList.add('hidden');
   el('company-name').textContent = (state.user.company_name || '') + (state.user.company_code ? ` · ${state.user.company_code}` : '');
   showScreen('app');
   loadNotifications();
@@ -534,13 +541,197 @@ async function viewCompanyDashboards(companyId, dashboardId) {
 function showDashboardView() {
   el('dashboard-view').classList.remove('hidden');
   el('admin-view').classList.add('hidden');
+  el('library-view').classList.add('hidden');
+  el('app-shell').classList.remove('admin-mode', 'with-side');
   el('open-admin-btn').textContent = adminBtnLabel();
 }
+
+// From anywhere (library, settings, picker) to one dashboard.
+function goDashboard(id) {
+  if (!el('admin-view').classList.contains('hidden')) {
+    if (typeof leavePicker === 'function' && !leavePicker()) return;
+    if (typeof pickerDirty !== 'undefined') pickerDirty = false;
+  }
+  closeSideNav();
+  showDashboardView();
+  selectDashboard(id);
+}
+
+// The dashboard list changed (new one, pack) without leaving the page.
+async function refreshDashboardList() {
+  const qs = isSuper() ? `?company_id=${state.viewCompanyId}` : '';
+  state.dashboards = (await api(`/api/dashboards${qs}`)).dashboards;
+  renderSideNav();
+}
+
+// ---------- left menu ----------
+// Dashboards are listed like pages in Notion; below them the Widget library
+// and (company admins) the settings pages, one item each instead of one long
+// page. On a phone it is a drawer behind the ☰ button.
+const NAV_ICON = {
+  dash: '<path d="M4 5h16M4 12h10M4 19h7"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  library: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  layout: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M10 10v10"/>',
+  data: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/>',
+  bell: '<path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10 21h4"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.8c1.6.8 2.7 2.5 3 5.2"/>',
+  plan: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>',
+  building: '<path d="M4 21V5l8-2v18M12 9l8 2v10M8 8v1M8 12v1M8 16v1M16 13v1M16 17v1M2 21h20"/>',
+  back: '<path d="M15 6l-6 6 6 6"/>',
+};
+const navIcon = (k) => `<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${NAV_ICON[k]}</svg>`;
+
+function renderSideNav() {
+  const nav = el('side-nav');
+  if (!nav || !state.user) return;
+  const cur = state.navCurrent || {};
+  const sub = state.user.subscription;
+  const link = (attrs, icon, label, on) =>
+    `<button type="button" class="side-link${on ? ' on' : ''}" ${attrs}${on ? ' aria-current="page"' : ''}>${icon ? navIcon(icon) : ''}<span class="side-label">${esc(label)}</span></button>`;
+  const settings = [
+    ['dashboards', 'layout', 'จัดการ Dashboard'],
+    ['data', 'data', 'การเชื่อมข้อมูล'],
+    ['alerts', 'bell', 'ตัวเตือน & LINE'],
+    ['users', 'users', 'ผู้ใช้'],
+    ...(sub && sub.self_serve ? [['plan', 'plan', 'แพ็กเกจและการชำระเงิน']] : []),
+  ];
+  const coName = state.user.company_name || '';
+  nav.innerHTML = `
+    ${coName ? `<div class="side-company"><span class="side-co-mark" aria-hidden="true">${esc(coName.trim().charAt(0) || 'K')}</span><span class="side-co-text"><b>${esc(coName)}</b>${state.user.company_code ? `<span>${esc(state.user.company_code)}</span>` : ''}</span></div>` : ''}
+    <div class="side-group">${link('data-go="back"', 'back', 'กลับไปดู Dashboard', false)}</div>
+    <div class="side-group"><div class="side-title">ตั้งค่า</div>${settings.map(([k, ic, label]) => link(`data-settings="${k}"`, ic, label, cur.kind === 'settings' && cur.tab === k)).join('')}</div>
+    <div class="side-group">${link('data-go="library"', 'library', 'คลัง Widget', cur.kind === 'library')}</div>`;
+  nav.querySelector('[data-go="back"]').addEventListener('click', () => goDashboard(state.activeDashboardId || (state.dashboards[0] || {}).id));
+  nav.querySelector('[data-go="library"]').addEventListener('click', () => openLibrary());
+  nav.querySelectorAll('[data-settings]').forEach((b) => b.addEventListener('click', () => openCompanySettings(b.dataset.settings)));
+}
+
+// ---------- dashboard switcher (title ▾), HubSpot-style ----------
+// Favorites and recently viewed are per user, per browser: conveniences, not data.
+const dashPrefs = {
+  key: (k) => `kss_${k}_${state.user ? state.user.id : 0}_${state.viewCompanyId || 0}`,
+  get(k) { try { return JSON.parse(storageGet(this.key(k)) || '[]'); } catch (e) { return []; } },
+  set(k, v) { storageSet(this.key(k), JSON.stringify(v)); },
+  touch(id) { this.set('recent', [id, ...this.get('recent').filter((x) => x !== id)].slice(0, 10)); },
+  toggleFav(id) { const f = this.get('fav'); this.set('fav', f.includes(id) ? f.filter((x) => x !== id) : [...f, id]); },
+};
+
+function bindDashSwitcher(wrap, current) {
+  const btn = wrap.querySelector('.dash-switch');
+  const pop = wrap.querySelector('.dash-pop');
+  if (!btn || !pop) return;
+  const admin = isSuper() || isCompanyAdmin();
+  let tab = 'all';
+  let q = '';
+  const star = '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" fill="currentColor"/></svg>';
+  const list = () => {
+    const fav = dashPrefs.get('fav');
+    const recent = dashPrefs.get('recent');
+    let ds = state.dashboards.slice();
+    if (tab === 'recent') ds = recent.map((id) => ds.find((d) => d.id === id)).filter(Boolean);
+    else if (tab === 'fav') ds = ds.filter((d) => fav.includes(d.id));
+    else ds.sort((a, b) => (fav.includes(b.id) ? 1 : 0) - (fav.includes(a.id) ? 1 : 0));
+    const needle = q.trim().toLowerCase();
+    if (needle) ds = ds.filter((d) => `${d.display_name} ${d.description || ''}`.toLowerCase().includes(needle));
+    return { ds, fav };
+  };
+  const draw = () => {
+    const { ds, fav } = list();
+    pop.querySelector('.dash-pop-list').innerHTML = ds.length
+      ? ds
+          .map(
+            (d) => `<li class="dash-pop-row${d.id === current ? ' on' : ''}">
+              <button type="button" class="dash-pop-star${fav.includes(d.id) ? ' faved' : ''}" data-fav="${d.id}" aria-pressed="${fav.includes(d.id)}" aria-label="${fav.includes(d.id) ? 'เอาออกจากรายการโปรด' : 'เพิ่มในรายการโปรด'}">${star}</button>
+              <button type="button" class="dash-pop-go" data-go="${d.id}"${d.id === current ? ' aria-current="page"' : ''}><span>${esc(d.display_name)}</span>${d.description ? `<small>${esc(d.description)}</small>` : ''}</button>
+            </li>`
+          )
+          .join('')
+      : `<li class="dash-pop-empty">${tab === 'fav' ? 'ยังไม่มีรายการโปรด กดดาวหน้า dashboard เพื่อเพิ่ม' : tab === 'recent' ? 'ยังไม่ได้เปิด dashboard ไหน' : 'ไม่พบ dashboard'}</li>`;
+    pop.querySelectorAll('.dash-pop-tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === tab));
+    pop.querySelectorAll('[data-fav]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); dashPrefs.toggleFav(Number(b.dataset.fav)); draw(); }));
+    pop.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => { close(); goDashboard(Number(b.dataset.go)); }));
+  };
+  pop.innerHTML = `
+    <div class="dash-pop-tabs" role="tablist">
+      <button type="button" class="dash-pop-tab on" data-tab="all" role="tab">ทั้งหมด</button>
+      <button type="button" class="dash-pop-tab" data-tab="recent" role="tab">ดูล่าสุด</button>
+      <button type="button" class="dash-pop-tab" data-tab="fav" role="tab">รายการโปรด</button>
+    </div>
+    <label class="dash-pop-search"><span class="sr-only">ค้นหา dashboard</span><input type="search" placeholder="ค้นหา dashboard"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></label>
+    <ul class="dash-pop-list"></ul>
+    ${
+      admin
+        ? `<div class="dash-pop-foot">
+             <form class="dash-pop-new" hidden><input name="name" maxlength="120" required placeholder="ชื่อ Dashboard ใหม่" aria-label="ชื่อ Dashboard ใหม่"><button type="submit" class="btn small primary">สร้าง</button></form>
+             <div class="dash-pop-actions"><button type="button" class="link-btn dash-pop-add">+ Dashboard ใหม่</button><button type="button" class="link-btn dash-pop-manage">จัดการ Dashboard</button></div>
+           </div>`
+        : ''
+    }`;
+  const open = () => {
+    pop.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    draw();
+    pop.querySelector('input[type="search"]').focus();
+    setTimeout(() => document.addEventListener('click', outside), 0);
+  };
+  const close = () => {
+    pop.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', outside);
+  };
+  const outside = (e) => { if (!wrap.contains(e.target)) close(); };
+  btn.addEventListener('click', () => (pop.hidden ? open() : close()));
+  wrap.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) { close(); btn.focus(); } });
+  pop.querySelectorAll('.dash-pop-tab').forEach((t) => t.addEventListener('click', () => { tab = t.dataset.tab; draw(); }));
+  const search = pop.querySelector('input[type="search"]');
+  search.addEventListener('input', () => { q = search.value; draw(); });
+  search.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const first = pop.querySelector('[data-go]');
+    if (first) first.click();
+  });
+  if (admin) {
+    const form = pop.querySelector('.dash-pop-new');
+    pop.querySelector('.dash-pop-add').addEventListener('click', () => { form.hidden = !form.hidden; if (!form.hidden) form.name.focus(); });
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const r = await api(`/api/admin/companies/${state.viewCompanyId}/dashboards`, { method: 'POST', body: JSON.stringify({ display_name: form.name.value }) });
+        close();
+        await refreshDashboardList();
+        goDashboard(r.id);
+      } catch (err) {
+        form.insertAdjacentHTML('beforeend', `<div class="error-msg">${esc(err.message)}</div>`);
+      }
+    });
+    pop.querySelector('.dash-pop-manage').addEventListener('click', () => {
+      close();
+      if (isSuper()) { adminState.selected = { type: 'company', id: state.viewCompanyId }; openAdminConsole(); }
+      else openCompanySettings('dashboards');
+    });
+  }
+}
+
+function openSideNav() {
+  el('app-shell').classList.add('side-open');
+  el('side-scrim').hidden = false;
+  el('side-toggle').setAttribute('aria-expanded', 'true');
+}
+function closeSideNav() {
+  if (!el('app-shell').classList.contains('side-open')) return;
+  el('app-shell').classList.remove('side-open');
+  el('side-scrim').hidden = true;
+  el('side-toggle').setAttribute('aria-expanded', 'false');
+}
+el('side-toggle').addEventListener('click', () => (el('app-shell').classList.contains('side-open') ? closeSideNav() : openSideNav()));
+el('side-scrim').addEventListener('click', closeSideNav);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSideNav(); });
 
 // KSS staff get the whole Admin Console; a client's company admin gets the
 // same composer and widget picker, for their own company only.
 function adminBtnLabel() {
-  return isSuper() ? '🏢 Admin Console' : '✎ จัดการ Dashboard';
+  return isSuper() ? '🏢 Admin Console' : '⚙ ตั้งค่า';
 }
 
 async function loadDashboards(preferredDashboardId) {
@@ -566,6 +757,7 @@ async function loadDashboards(preferredDashboardId) {
 }
 
 function renderTabs() {
+  renderSideNav();
   const tabsEl = el('tabs');
   tabsEl.innerHTML = '';
   state.dashboards.forEach((d) => {
@@ -587,6 +779,8 @@ function destroyCharts() {
 
 async function selectDashboard(id) {
   state.activeDashboardId = id;
+  state.navCurrent = { kind: 'dashboard', id };
+  if (id) dashPrefs.touch(id);
   renderTabs();
   const wrap = el('tab-panel-wrap');
   destroyCharts();
@@ -600,6 +794,7 @@ async function selectDashboard(id) {
   }
   if (state.activeDashboardId !== id) return; // user already clicked another tab
   new DashboardView(wrap, payload).load();
+  if (typeof aiAttach === 'function') aiAttach(payload.dashboard);
 }
 
 function keyMissingMessage() {
@@ -666,6 +861,13 @@ class DashboardView {
     this.dashboard = dashboard;
     this.widgets = widgets;
     this.sources = sources;
+    // The Widget library previews one template on the company's own data
+    // (routes/dashboards.js /preview): same renderers, no status bar.
+    this.preview = !!dashboard.preview;
+    if (!this.preview) state.currentView = this; // read by the AI chat (aichat.js)
+    this.dataBase = this.preview
+      ? `/api/dashboards/preview/${String(dashboard.id).replace('preview-', '')}`
+      : `/api/dashboards/${dashboard.id}`;
     this.results = {}; // source -> { data, meta } | { error, code }
     this.hasDateSource = Object.values(sources).some((s) => s.date_field);
     // Reports whose older months can come from FMH export files: these pages
@@ -682,11 +884,29 @@ class DashboardView {
     const header = document.createElement('div');
     header.className = 'dash-header';
     header.innerHTML = `
-      <div>
-        <h1 class="dash-title">${esc(this.dashboard.display_name)}</h1>
+      <div class="dash-head-left">
+        ${
+          this.preview
+            ? `<h1 class="dash-title">${esc(this.dashboard.display_name)}</h1>`
+            : `<div class="dash-switch-wrap">
+                 <h1 class="dash-h1"><button type="button" class="dash-switch" aria-haspopup="dialog" aria-expanded="false" title="เปลี่ยน Dashboard">
+                   <span class="dash-title">${esc(this.dashboard.display_name)}</span>
+                   <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                 </button></h1>
+                 <div class="dash-pop" role="dialog" aria-label="เลือก Dashboard" hidden></div>
+               </div>`
+        }
         ${this.dashboard.description ? `<p class="dash-desc">${esc(this.dashboard.description)}</p>` : ''}
       </div>
       <div class="dash-controls">
+        ${
+          !this.preview && (isSuper() || isCompanyAdmin())
+            ? `<div class="dash-actions">
+                 <button type="button" class="btn small ghost dash-edit">จัดเรียง / แก้ไข</button>
+                 <button type="button" class="btn small primary dash-add">+ เพิ่ม Widget</button>
+               </div>`
+            : ''
+        }
         ${
           this.hasDateSource
             ? `<div class="range-control" role="group" aria-label="ช่วงวันที่">
@@ -702,6 +922,16 @@ class DashboardView {
         }
       </div>`;
     this.wrap.appendChild(header);
+    if (!this.preview) bindDashSwitcher(header.querySelector('.dash-switch-wrap'), this.dashboard.id);
+    const editBtn = header.querySelector('.dash-edit');
+    if (editBtn) {
+      editBtn.addEventListener('click', () => {
+        adminState.selected = { type: 'picker', id: this.dashboard.company_id, dashboardId: this.dashboard.id };
+        if (!isSuper()) state.navCurrent = { kind: 'dashboard', id: this.dashboard.id };
+        openAdminConsole();
+      });
+      header.querySelector('.dash-add').addEventListener('click', () => openLibrary({ dashboardId: this.dashboard.id }));
+    }
 
     this.statusEl = document.createElement('div');
     this.wrap.appendChild(this.statusEl);
@@ -724,10 +954,11 @@ class DashboardView {
     this.wrap.appendChild(this.coverageEl);
 
     if (!this.widgets.length) {
-      const p = document.createElement('p');
-      p.className = 'muted';
-      p.textContent = 'dashboard นี้ยังไม่มี widget';
-      this.wrap.appendChild(p);
+      const box = document.createElement('div');
+      box.className = 'dash-empty';
+      this.wrap.appendChild(box);
+      if (!this.preview && (isSuper() || isCompanyAdmin())) this.renderStarter(box);
+      else box.innerHTML = '<p><b>Dashboard นี้ยังว่างอยู่</b></p><p class="muted">ผู้ดูแลของบริษัทยังไม่ได้ใส่ widget</p>';
       return;
     }
 
@@ -736,13 +967,91 @@ class DashboardView {
     this.cards = this.widgets.map((w) => {
       const card = document.createElement('section');
       card.className = `widget-card size-${w.config.size || 'half'} widget-${w.chart_type}${[2, 3].includes(Number(w.config.rows)) ? ` rows-${w.config.rows}` : ''}`;
-      card.innerHTML = `<h3 class="widget-title">${esc(w.title)}</h3><div class="widget-body"><p class="muted">กำลังโหลด...</p></div>`;
+      card.innerHTML = `<div class="widget-head"><h3 class="widget-title">${esc(w.title)}</h3>${
+        this.preview ? '' : '<button type="button" class="widget-explain" aria-expanded="false" title="กราฟนี้บอกอะไร"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>อธิบาย</button>'
+      }</div><div class="explain-box" hidden></div><div class="widget-body"><p class="muted">กำลังโหลด...</p></div>`;
       grid.appendChild(card);
-      return { widget: w, body: card.querySelector('.widget-body') };
+      const box = card.querySelector('.explain-box');
+      const eb = card.querySelector('.widget-explain');
+      if (eb) {
+        eb.addEventListener('click', () => {
+          const open = box.hidden;
+          box.hidden = !open;
+          eb.setAttribute('aria-expanded', String(open));
+          eb.classList.toggle('on', open);
+          if (open) box.innerHTML = explainWidget(w, this.explainData.get(w.id));
+        });
+      }
+      return { widget: w, body: card.querySelector('.widget-body'), box };
     });
     this.wrap.appendChild(grid);
 
     if (this.hasDateSource) this.bindRange(header);
+  }
+
+  // An empty dashboard asks "start with a basic dashboard?" and fills itself
+  // in one click — only with widgets that have this company's data now
+  // (lib/starter.js), so the first look is never a page of empty boxes.
+  async renderStarter(box) {
+    const cid = this.dashboard.company_id;
+    box.classList.add('starter');
+    box.innerHTML = '<p class="muted">กำลังเตรียมตัวเลือก...</p>';
+    let options;
+    try {
+      ({ options } = await api(`/api/admin/companies/${cid}/starter-options`));
+    } catch (err) {
+      box.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+      return;
+    }
+    const usable = options.filter((o) => o.ready.length);
+    let pick = (usable.find((o) => o.key === 'basic') || usable[0] || {}).key;
+    const skippedLine = (o) => {
+      if (!o.skipped.length) return '';
+      const why = [...new Set(o.skipped.map((x) => x.reason))].join(' · ');
+      return `<span class="starter-skip">ข้าม ${o.skipped.length} widget: ${esc(why)}</span>`;
+    };
+    box.innerHTML = `
+      <h2 class="starter-h">เริ่มด้วย Dashboard พื้นฐานไหม?</h2>
+      <p class="muted starter-lead">เลือกชุดแล้วกด “ใส่ให้เลย” ระบบใส่เฉพาะ widget ที่มีข้อมูลของบริษัทนี้แล้ว แก้ต่อทีหลังได้เสมอ</p>
+      <div class="starter-grid" role="radiogroup" aria-label="ชุดเริ่มต้น">
+        ${options
+          .map(
+            (o) => `<label class="starter-opt${o.ready.length ? '' : ' off'}${o.key === pick ? ' on' : ''}">
+              <input type="radio" name="starter" value="${esc(o.key)}"${o.key === pick ? ' checked' : ''}${o.ready.length ? '' : ' disabled'}>
+              ${o.role ? `<span class="starter-role">${esc(o.role)}</span>` : '<span class="starter-role">แนะนำ</span>'}
+              <b class="starter-title">${esc(o.title)}</b>
+              <span class="starter-desc">${esc(o.description)}</span>
+              <span class="starter-count">${o.ready.length ? `พร้อมแสดง ${o.ready.length} widget` : 'ยังไม่มีข้อมูลสำหรับชุดนี้'}</span>
+              ${skippedLine(o)}
+            </label>`
+          )
+          .join('')}
+      </div>
+      <div class="starter-actions">
+        <button type="button" class="btn primary starter-go"${pick ? '' : ' disabled'}>ใส่ให้เลย</button>
+        <button type="button" class="btn ghost starter-lib">เลือกเองจากคลัง Widget</button>
+      </div>
+      <div class="starter-msg" role="status"></div>`;
+    box.querySelectorAll('input[name="starter"]').forEach((r) =>
+      r.addEventListener('change', () => {
+        pick = r.value;
+        box.querySelectorAll('.starter-opt').forEach((l) => l.classList.toggle('on', l.querySelector('input').value === pick));
+      })
+    );
+    box.querySelector('.starter-lib').addEventListener('click', () => openLibrary({ dashboardId: this.dashboard.id }));
+    const go = box.querySelector('.starter-go');
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      go.textContent = 'กำลังใส่ widget...';
+      try {
+        await api(`/api/admin/companies/${cid}/dashboards/${this.dashboard.id}/starter`, { method: 'POST', body: JSON.stringify({ key: pick }) });
+        selectDashboard(this.dashboard.id);
+      } catch (err) {
+        go.disabled = false;
+        go.textContent = 'ใส่ให้เลย';
+        box.querySelector('.starter-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+      }
+    });
   }
 
   // A custom range picked from code (the POS "show the file's days" button).
@@ -788,15 +1097,16 @@ class DashboardView {
         const params = new URLSearchParams();
         if (info.grouping) params.set('group', info.grouping);
         if (this.useSaved) params.set('saved', '1');
+        if (this.preview && isSuper()) params.set('company_id', this.dashboard.company_id);
         const qs = params.toString() ? `?${params}` : '';
         try {
-          this.results[key] = await api(`/api/dashboards/${this.dashboard.id}/data/${info.source || key}${qs}`);
+          this.results[key] = await api(`${this.dataBase}/data/${info.source || key}${qs}`);
         } catch (err) {
           this.results[key] = { error: err.message, code: err.code, health: err.data && err.data.health };
         }
       })
     );
-    if (state.activeDashboardId !== this.dashboard.id) return;
+    if (this.preview ? !this.wrap.isConnected : state.activeDashboardId !== this.dashboard.id) return;
     this.applyAnchor();
     this.renderStatus();
     this.renderPageFilter();
@@ -945,6 +1255,7 @@ class DashboardView {
   }
 
   renderStatus() {
+    if (this.preview) return;
     const ok = Object.values(this.results).filter((r) => r && !r.error);
     const errors = Object.values(this.results).filter((r) => r && r.error);
     const keyMissing = errors.some((r) => r.code === 'FMH_KEY_MISSING');
@@ -1074,6 +1385,8 @@ class DashboardView {
   renderWidgets() {
     destroyCharts();
     this.renderCoverage();
+    // What each widget drew, for its "อธิบาย" button (public/explain.js).
+    this.explainData = new Map();
     (this.cards || []).forEach(({ widget, body }) => {
       body.innerHTML = '';
       const key = this.keyFor(widget);
@@ -1099,6 +1412,7 @@ class DashboardView {
           const r = this.results[p.key];
           byAlias[p.as] = r && !r.error ? this.rowsFor(p.key) || [] : null;
         });
+        this.explainData.set(widget.id, { panels: true });
         try {
           renderPanels(body, byAlias, cfg);
         } catch (err) {
@@ -1137,6 +1451,7 @@ class DashboardView {
         const dated = !widget.pulls && !!(this.sources[key] && this.sources[key].date_field) && this.hasDateSource;
         // An alert widget with nothing found is good news, or says why it can't look.
         const watch = res && res.meta && res.meta.quota && res.meta.quota.watch;
+        this.explainData.set(widget.id, { empty: watch && !raw.length ? watch.note || cfg.empty_message || 'ไม่มีเรื่องผิดปกติในวันนี้' : cfg.empty_message || 'ไม่พบข้อมูลในช่วงวันที่และตัวกรองที่เลือก' });
         body.innerHTML = `<p class="muted">${esc(
           watch && !raw.length
             ? watch.note || cfg.empty_message || 'ไม่มีเรื่องผิดปกติ'
@@ -1197,6 +1512,7 @@ class DashboardView {
       const skipped = this.unfilteredBy(base && base.data);
       try {
         renderer(body, rows, useCfg);
+        this.explainData.set(widget.id, { rows, cfg: useCfg, range: this.range });
         if (skipped.length) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">widget นี้ไม่มีข้อมูล${esc(skipped.map((f) => ({ customer: 'ลูกค้า', branch: 'สาขา', supplier: 'ซัพพลายเออร์' })[f] || f).join(', '))} จึงแสดงทั้งหมด ไม่ได้กรองตามตัวเลือกด้านบน</p>`);
         // A note on how to read the widget. Renderers that place it themselves
         // (range) are left alone.
@@ -1206,6 +1522,10 @@ class DashboardView {
         console.error('Widget render failed', widget, err);
         body.innerHTML = `<p class="muted">แสดงผล widget นี้ไม่สำเร็จ (${esc(err.message)})</p>`;
       }
+    });
+    // An open explanation follows the new range / filters.
+    (this.cards || []).forEach(({ widget, box }) => {
+      if (box && !box.hidden) box.innerHTML = explainWidget(widget, this.explainData.get(widget.id));
     });
   }
 }
