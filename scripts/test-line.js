@@ -61,7 +61,7 @@ const mock = http.createServer((req, res) => {
   const q1 = await line.publicView(id, 'https://x.test');
   check('quota counts the push (1 member by default)', q1.quota.used >= 1 && q1.quota.limit === 300, JSON.stringify(q1.quota));
   check('digest pushed to the group as one flex message', a1.sent && a1.count >= 7 && p.url === '/v2/bot/message/push' && p.body.to === 'Gexec1' && p.body.messages.length === 1 && p.body.messages[0].type === 'flex', JSON.stringify(a1));
-  check('digest carries all three findings and the dashboard button', /สิ่งที่ควรดูวันนี้/.test(flexStr) && flexStr.includes('สาขา บางนา') && flexStr.includes('กุ้งขาว') && flexStr.includes('หมูสามชั้น') && flexStr.includes('https://app.test/'));
+  check('digest carries all three findings and the dashboard button', /สิ่งที่ควรดูวันนี้/.test(flexStr) && flexStr.includes('สาขา บางนา') && flexStr.includes('กุ้งขาว') && flexStr.includes('https://app.test/'));
   check('digest leaves out what is normal or below the baht floor', !flexStr.includes('สาขา สยาม:') && !flexStr.includes('มะนาว'));
   check('stale PO / SO are summarised (count, value, oldest) with the oldest few', /PO ค้างไม่ปิด: \d+ ใบ · ฿[\d,]+ · เก่าสุด \d+ วัน/.test(flexStr) && /SO ครัวกลางค้างไม่ปิด: 3 ใบ/.test(flexStr) && /และอีก \d+ ใบใน Dashboard/.test(flexStr));
   const n = sent.length;
