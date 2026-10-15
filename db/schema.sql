@@ -339,6 +339,27 @@ CREATE TABLE IF NOT EXISTS company_line (
   last_sent_at TIMESTAMP NULL,
   last_event_at TIMESTAMP NULL,
   last_event_note VARCHAR(255) NULL,
+  watch_json TEXT NULL,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
+-- Alert widgets (lib/alerts.js): one row per thing a watcher found, kept while
+-- it lasts and 14 days after. sig = how bad it is now; sent_sig = how bad it
+-- was when last sent to LINE, so only new or worse findings are sent again.
+CREATE TABLE IF NOT EXISTS alert_events (
+  company_id INT NOT NULL,
+  watcher VARCHAR(20) NOT NULL,
+  finding_key VARCHAR(191) NOT NULL,
+  first_seen DATE NOT NULL,
+  last_seen DATE NOT NULL,
+  severity VARCHAR(10) NOT NULL DEFAULT 'กลาง',
+  impact DECIMAL(14,2) NOT NULL DEFAULT 0,
+  payload_json TEXT NOT NULL,
+  sig VARCHAR(64) NOT NULL DEFAULT '',
+  sent_sig VARCHAR(64) NULL,
+  sent_at TIMESTAMP NULL,
+  PRIMARY KEY (company_id, watcher, finding_key),
+  INDEX (company_id, last_seen),
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;

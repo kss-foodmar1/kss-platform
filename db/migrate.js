@@ -81,6 +81,10 @@ async function upgradeLine() {
   if (!(await columnInfo('company_line', 'last_event_at'))) {
     await pool.query(`ALTER TABLE company_line ADD COLUMN last_event_at TIMESTAMP NULL, ADD COLUMN last_event_note VARCHAR(255) NULL`);
   }
+  // watch_json: which alert widgets go to LINE, and their thresholds.
+  if (!(await columnInfo('company_line', 'watch_json'))) {
+    await pool.query(`ALTER TABLE company_line ADD COLUMN watch_json TEXT NULL`);
+  }
 }
 
 async function upgradeCompanies() {

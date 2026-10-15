@@ -2,7 +2,7 @@
 // webhook LINE calls.
 //
 //   GET    /api/line/companies/:id            settings (secrets never returned)
-//   PUT    /api/line/companies/:id            { channel_secret, access_token, enabled }
+//   PUT    /api/line/companies/:id            { channel_secret, access_token, enabled, watch: { price: { line, threshold, min_impact }, ck: { line } } }
 //   POST   /api/line/companies/:id/test       plain test message to the bound group
 //   POST   /api/line/companies/:id/send       { force } send the branch alert now
 //   DELETE /api/line/companies/:id/group      unbind the group
@@ -36,8 +36,9 @@ const send = (fn) => wrap(async (req, res) => {
 router.use(requireAuth);
 router.get('/companies/:id', companyAccess, send(async (req, res) => res.json(await line.publicView(req.companyId, baseUrl(req)))));
 router.put('/companies/:id', companyAccess, send(async (req, res) => {
-  const { channel_secret, access_token, enabled } = req.body || {};
+  const { channel_secret, access_token, enabled, watch } = req.body || {};
   await line.save(req.companyId, { channel_secret, access_token, enabled: typeof enabled === 'boolean' ? enabled : undefined });
+  if (watch && typeof watch === 'object') await require('../lib/alerts').saveSettings(req.companyId, watch);
   res.json(await line.publicView(req.companyId, baseUrl(req)));
 }));
 router.post('/companies/:id/test', companyAccess, send(async (req, res) => { await line.sendTest(req.companyId); res.json({ ok: true }); }));

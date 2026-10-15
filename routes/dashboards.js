@@ -140,6 +140,12 @@ router.get(
       await fmhFiles.rebuild(dashboard.company_id, source).catch((err) => console.error(`File history build failed (${dashboard.company_id}/${source}):`, err.message));
       cached = await getCached(dashboard.company_id, source, null);
     }
+    // An alert widget's findings are about today: last night's build is
+    // rebuilt once the day has turned (cheap — it reads cached reports).
+    if (cached && !wantSaved && cfg.localBuild === 'alerts') {
+      const w = cached.quota && cached.quota.watch;
+      if (!w || w.evaluated_on !== require('../lib/alerts').bkkToday()) cached = null;
+    }
     if (!cached && cfg.local) {
       await syncOne(dashboard.company_id, source, null).catch((err) => console.error(`Local build failed (${dashboard.company_id}/${source}):`, err.message));
       cached = await getCached(dashboard.company_id, source, null);

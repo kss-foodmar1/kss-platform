@@ -1135,8 +1135,12 @@ class DashboardView {
         // looking at the range picker when the pull itself was empty.
         const filtered = raw.length && !rows.length;
         const dated = !widget.pulls && !!(this.sources[key] && this.sources[key].date_field) && this.hasDateSource;
+        // An alert widget with nothing found is good news, or says why it can't look.
+        const watch = res && res.meta && res.meta.quota && res.meta.quota.watch;
         body.innerHTML = `<p class="muted">${esc(
-          filtered
+          watch && !raw.length
+            ? watch.note || cfg.empty_message || 'ไม่มีเรื่องผิดปกติ'
+            : filtered
             ? cfg.empty_message || 'ไม่พบรายการที่เข้าเงื่อนไขของ widget นี้'
             : dated
               ? 'ไม่พบข้อมูลในช่วงวันที่เลือก'

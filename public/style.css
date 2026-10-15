@@ -550,3 +550,9 @@ html.login-hero-on #login-screen > .login-card { flex: 0 0 400px; max-width: 400
 .line-form .check-row { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin-top: 10px; }
 .line-form .btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .line-msg:empty { display: none; }
+.line-watchers { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px 4px; margin-top: 10px; }
+.line-watchers legend { font-size: 12px; font-weight: 600; padding: 0 4px; }
+.line-watchers .watcher-row { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 4px 0; }
+.line-watchers .watcher-row .check-row { margin-top: 0; }
+.line-watchers .w-num { font-size: 12px; display: inline-flex; gap: 4px; align-items: center; }
+.line-watchers .w-num input { width: 72px; }

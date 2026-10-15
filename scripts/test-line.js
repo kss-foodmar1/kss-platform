@@ -20,6 +20,7 @@ const mock = http.createServer((req, res) => {
   if (!demo) { console.log('no demo company — skipped'); process.exit(0); }
   const id = demo.id;
   await pool.query(`DELETE FROM company_line WHERE company_id = ?`, [id]);
+  await pool.query(`DELETE FROM alert_events WHERE company_id = ?`, [id]);
   const SECRET = 'test-secret-abc123', TOKEN = 'test-token-xyz789';
   const v0 = await line.publicView(id, 'https://x.test');
   check('not ready before keys are set', v0.ready === false && /\/api\/webhooks\/line\/[0-9a-f]{36}$/.test(v0.webhook_url));
@@ -53,22 +54,38 @@ const mock = http.createServer((req, res) => {
   check('1:1 chat ignored', sent.length === 1);
   await post([{ type: 'message', source: G1, replyToken: 'r4', message: { type: 'text', text: 'สถานะ' } }]);
   const st = sent[sent.length - 1];
-  check('"สถานะ" in bound group answers with flagged branch', sent.length === 2 && st.body.messages[0].text.includes('บางนา'), JSON.stringify(st.body));
-  check('status text explains a missing side', /ยังไม่มียอดขาย POS/.test(line.statusText({ month: null, flagged: [], missing: { pos: true, ck: false } })) && /ครัวกลาง/.test(line.statusText({ month: null, flagged: [], missing: { pos: false, ck: true } })));
+  check('"สถานะ" lists every open alert (branch audit + price)', sent.length === 2 && /บางนา/.test(st.body.messages[0].text) && /กุ้งขาว/.test(st.body.messages[0].text), JSON.stringify(st.body));
   const a1 = await line.sendAlert(id, { base: 'https://app.test' });
   const p = sent[sent.length - 1];
-  check('alert pushed to the group as flex', a1.sent && p.url === '/v2/bot/message/push' && p.body.to === 'Gexec1' && p.body.messages[0].type === 'flex' && p.body.messages[0].altText.includes('บางนา'), JSON.stringify(a1));
   const flexStr = JSON.stringify(p.body.messages[0]);
-  check('alert names only Bangna and has dashboard button', flexStr.includes('สาขา บางนา') && !flexStr.includes('สยาม') && flexStr.includes('https://app.test/'));
+  check('digest pushed to the group as one flex message', a1.sent && a1.count === 3 && p.url === '/v2/bot/message/push' && p.body.to === 'Gexec1' && p.body.messages.length === 1 && p.body.messages[0].type === 'flex', JSON.stringify(a1));
+  check('digest carries all three findings and the dashboard button', /สิ่งที่ควรดูวันนี้/.test(flexStr) && flexStr.includes('สาขา บางนา') && flexStr.includes('กุ้งขาว') && flexStr.includes('หมูสามชั้น') && flexStr.includes('https://app.test/'));
+  check('digest leaves out what is normal or below the baht floor', !flexStr.includes('สยาม') && !flexStr.includes('มะนาว'));
   const n = sent.length;
   const a2 = await line.sendAlert(id, { base: 'https://app.test' });
-  check('same list is not sent again', a2.sent === false && sent.length === n, JSON.stringify(a2));
-  const a3 = await line.sendAlert(id, { force: true, base: 'https://app.test' });
-  check('force sends again', a3.sent === true && sent.length === n + 1);
+  check('nothing new → nothing sent', a2.sent === false && sent.length === n, JSON.stringify(a2));
+  await pool.query(`UPDATE alert_events SET sig = 'worse' WHERE company_id = ? AND watcher = 'price' AND finding_key LIKE 'SEA-001%'`, [id]);
+  const alerts = require('../lib/alerts');
+  const realEval = alerts.evaluate;
+  alerts.evaluate = async (c, k) => ({ findings: [], note: '' }); // keep the hand-made "worse" sig for this send
+  const a3 = await line.sendAlert(id, { base: 'https://app.test' });
+  alerts.evaluate = realEval;
+  const p3 = JSON.stringify(sent[sent.length - 1].body.messages[0]);
+  check('a finding that got worse is sent again, alone', a3.sent && a3.count === 1 && p3.includes('กุ้งขาว') && !p3.includes('หมูสามชั้น') && /ยังเปิดอยู่อีก 2 เรื่อง/.test(p3), JSON.stringify(a3));
+  await alerts.saveSettings(id, { price: { line: false } });
+  const a4 = await line.sendAlert(id, { force: true, base: 'https://app.test' });
+  const p4 = JSON.stringify(sent[sent.length - 1].body.messages[0]);
+  check('a watcher switched off for LINE is left out', a4.sent && p4.includes('บางนา') && !p4.includes('กุ้งขาว'), p4.slice(0, 300));
+  const v2 = await line.publicView(id, 'https://x.test');
+  check('Admin view lists watchers with their LINE switch', v2.watchers.length === 2 && v2.watchers.find((w) => w.key === 'price').line === false && v2.watchers.find((w) => w.key === 'ck').line === true);
+  await alerts.saveSettings(id, { price: { line: true } });
   await line.unbindGroup(id);
   let err = null; try { await line.sendAlert(id); } catch (e) { err = e; }
   check('no group → clear error', err && /ผูกกลุ่ม/.test(err.message));
+  const [[left]] = await pool.query(`SELECT COUNT(*) n FROM alert_events WHERE company_id = ? AND sent_sig IS NOT NULL`, [id]);
+  check('unbinding the group forgets what was sent', left.n === 0);
   await pool.query(`DELETE FROM company_line WHERE company_id = ?`, [id]);
+  await pool.query(`DELETE FROM alert_events WHERE company_id = ?`, [id]);
   console.log(`\n${pass} passed, ${fail} failed`);
   mock.close();
   await pool.end();

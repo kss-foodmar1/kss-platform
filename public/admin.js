@@ -1279,9 +1279,9 @@ async function renderLinePanel(container, companyId, flash = '') {
     container.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
     return;
   }
-  const state = !v.ready ? 'ยังไม่ได้ใส่ Channel secret / Access token' : !v.group_bound ? 'รอผูกกลุ่ม — เชิญบอทเข้ากลุ่ม LINE แล้วพิมพ์ข้อความ 1 ข้อความ' : v.enabled ? 'เปิดใช้งาน · ส่งสรุปทุกวัน 08:30 เมื่อรายชื่อสาขาที่ควรตรวจเปลี่ยน' : 'ผูกกลุ่มแล้ว · ปิดการส่งอัตโนมัติอยู่';
+  const state = !v.ready ? 'ยังไม่ได้ใส่ Channel secret / Access token' : !v.group_bound ? 'รอผูกกลุ่ม — เชิญบอทเข้ากลุ่ม LINE แล้วพิมพ์ข้อความ 1 ข้อความ' : v.enabled ? 'เปิดใช้งาน · ส่งสรุปทุกวัน 08:30 เมื่อมีเรื่องใหม่หรือแย่ลง' : 'ผูกกลุ่มแล้ว · ปิดการส่งอัตโนมัติอยู่';
   container.innerHTML = `
-    <p class="helper-text" style="margin-top:0;">แจ้ง "สาขาที่ควรตรวจสอบ" (จากรายงานตรวจสาขา) เข้ากลุ่ม LINE ของผู้บริหาร ใช้ LINE Official Account ของบริษัทเอง ข้อความที่ตอบเมื่อมีคนพิมพ์ "สถานะ" ในกลุ่มไม่นับโควต้า ส่วนข้อความแจ้งเตือนอัตโนมัติจะนับตามแพ็กเกจของ OA</p>
+    <p class="helper-text" style="margin-top:0;">ส่งสรุป "สิ่งที่ควรดูวันนี้" จาก widget ตัวเตือน เข้ากลุ่ม LINE ของผู้บริหาร ใช้ LINE Official Account ของบริษัทเอง ข้อความที่ตอบเมื่อมีคนพิมพ์ "สถานะ" ในกลุ่มไม่นับโควต้า ส่วนข้อความแจ้งเตือนอัตโนมัติจะนับตามแพ็กเกจของ OA</p>
     <p class="status-line"><span class="dot ${v.ready && v.group_bound && v.enabled ? 'dot-good' : 'dot-off'}" aria-hidden="true"></span> ${esc(state)}${v.last_sent_at ? ` · ส่งล่าสุด ${esc(fmtDateTime(v.last_sent_at))}` : ''}</p>
     <p class="helper-text line-event">${v.last_event_at ? `Webhook ล่าสุด ${esc(fmtDateTime(v.last_event_at))}: ${esc(v.last_event_note)}` : 'ยังไม่เคยมี LINE เรียก webhook นี้ (ถ้าตั้งค่าแล้ว ให้กด Verify ใน LINE Developers และตรวจว่า Use webhook เปิดอยู่)'}</p>
     <div class="line-msg">${flash}</div>
@@ -1292,11 +1292,21 @@ async function renderLinePanel(container, companyId, flash = '') {
       <input type="password" class="line-secret" autocomplete="off" placeholder="${v.has_secret ? 'ใส่ใหม่เพื่อเปลี่ยน' : 'Channel secret'}" aria-label="Channel secret">
       <label class="field-label">Channel access token (long-lived) ${v.has_token ? `<span class="muted">(บันทึกแล้ว ${esc(v.token_hint)})</span>` : ''}</label>
       <input type="password" class="line-token" autocomplete="off" placeholder="${v.has_token ? 'ใส่ใหม่เพื่อเปลี่ยน' : 'Channel access token'}" aria-label="Channel access token">
-      <label class="check-row"><input type="checkbox" class="line-enabled" ${v.enabled ? 'checked' : ''}> ส่งแจ้งเตือนอัตโนมัติทุกวัน 08:30 (เมื่อมีสาขาที่ควรตรวจและรายการเปลี่ยนจากครั้งก่อน)</label>
+      <label class="check-row"><input type="checkbox" class="line-enabled" ${v.enabled ? 'checked' : ''}> ส่งสรุป "สิ่งที่ควรดูวันนี้" อัตโนมัติทุกวัน 08:30 (เฉพาะเรื่องใหม่หรือแย่ลง)</label>
+      <fieldset class="line-watchers">
+        <legend>ตัวเตือนที่ส่งเข้า LINE</legend>
+        ${(v.watchers || []).map((w) => `
+          <div class="watcher-row" data-k="${esc(w.key)}">
+            <label class="check-row"><input type="checkbox" class="w-line" ${w.line ? 'checked' : ''}> ${esc(w.name)} <span class="muted">(${esc(w.cadence)})</span></label>
+            ${'threshold' in w.defaults ? `<label class="w-num">แพงขึ้นเกิน <input type="number" min="0" step="1" class="w-threshold" value="${esc(w.threshold)}"> %</label>` : ''}
+            ${'min_impact' in w.defaults ? `<label class="w-num">และจ่ายเกินอย่างน้อย ฿<input type="number" min="0" step="50" class="w-min" value="${esc(w.min_impact)}"></label>` : ''}
+          </div>`).join('')}
+        <p class="helper-text">เกณฑ์ชุดเดียวกันใช้กับ widget ตัวเตือนบน Dashboard ตัวเลขในการ์ด LINE จึงตรงกับหน้าจอ</p>
+      </fieldset>
       <div class="btn-row">
         <button type="submit" class="btn small primary">บันทึก</button>
         <button type="button" class="btn small ghost line-test" ${v.ready && v.group_bound ? '' : 'disabled'}>ส่งข้อความทดสอบ</button>
-        <button type="button" class="btn small ghost line-send" ${v.ready && v.group_bound ? '' : 'disabled'}>ส่งสรุปสาขาตอนนี้</button>
+        <button type="button" class="btn small ghost line-send" ${v.ready && v.group_bound ? '' : 'disabled'}>ส่งสรุปตอนนี้</button>
         ${v.group_bound ? '<button type="button" class="btn small danger line-unbind">ยกเลิกการผูกกลุ่ม</button>' : ''}
       </div>
     </form>`;
@@ -1306,7 +1316,18 @@ async function renderLinePanel(container, companyId, flash = '') {
     try {
       await api(`/api/line/companies/${companyId}`, {
         method: 'PUT',
-        body: JSON.stringify({ channel_secret: container.querySelector('.line-secret').value, access_token: container.querySelector('.line-token').value, enabled: container.querySelector('.line-enabled').checked }),
+        body: JSON.stringify({
+          channel_secret: container.querySelector('.line-secret').value,
+          access_token: container.querySelector('.line-token').value,
+          enabled: container.querySelector('.line-enabled').checked,
+          watch: Object.fromEntries([...container.querySelectorAll('.watcher-row')].map((row) => {
+            const o = { line: row.querySelector('.w-line').checked };
+            const t = row.querySelector('.w-threshold'), m = row.querySelector('.w-min');
+            if (t) o.threshold = Number(t.value);
+            if (m) o.min_impact = Number(m.value);
+            return [row.dataset.k, o];
+          })),
+        }),
       });
       renderLinePanel(container, companyId, '<div class="ok-msg">บันทึกแล้ว</div>');
     } catch (err) {
@@ -1317,7 +1338,7 @@ async function renderLinePanel(container, companyId, flash = '') {
   act('.line-test', async () => { await api(`/api/line/companies/${companyId}/test`, { method: 'POST', body: '{}' }); show('<div class="ok-msg">ส่งข้อความทดสอบแล้ว — ดูในกลุ่ม LINE</div>'); });
   act('.line-send', async () => {
     const r = await api(`/api/line/companies/${companyId}/send`, { method: 'POST', body: JSON.stringify({ force: true }) });
-    show(`<div class="ok-msg">${r.sent ? `ส่งแล้ว (${r.flagged} สาขาที่ควรตรวจ)` : esc(r.reason || 'ไม่ได้ส่ง')}</div>`);
+    show(`<div class="ok-msg">${r.sent ? (r.count ? `ส่งแล้ว ${r.count} เรื่อง` : 'ส่งแล้ว: ไม่มีเรื่องผิดปกติ') : esc(r.reason || 'ไม่ได้ส่ง')}</div>`);
   });
   act('.line-unbind', async () => { await api(`/api/line/companies/${companyId}/group`, { method: 'DELETE' }); renderLinePanel(container, companyId, '<div class="ok-msg">ยกเลิกการผูกกลุ่มแล้ว — เชิญบอทเข้ากลุ่มใหม่ได้</div>'); });
 }
@@ -1709,6 +1730,7 @@ async function renderPosPanel(container, companyId, view = { filter: 'unmatched'
 // ---------- step 2: pick widgets for one dashboard from the catalog ----------
 // Catalog groups in the order a client usually thinks about them, with Thai names.
 const CAT_ORDER = [
+  ['Alerts', 'ตัวเตือน: สิ่งที่ต้องดูวันนี้ (ส่งเข้า LINE ได้)'],
   ['Cost Control', 'ต้นทุนและกำไรขั้นต้น'],
   ['POS COGS', 'ต้นทุนจากยอดขาย POS (อัปโหลดไฟล์ เช่น Foodstory)'],
   ['Branch Audit', 'ตรวจสาขา: ซื้อจากครัวกลางสมส่วนกับยอดขายไหม'],

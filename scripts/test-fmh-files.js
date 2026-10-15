@@ -142,7 +142,7 @@ async function upload(s, cid, source, filename, rows) {
   const fileN = cached.data.filter((x) => x._file).length;
   const apiN = cached.data.length - fileN;
   check('full sync keeps file history before the API window', fileN === m4.length + m5.length && apiN > 0 && cached.quota.history.api_from === apiFrom, `${fileN} file, ${apiN} api`);
-  await fc.syncOne(a, 'sales-analysis', null);
+  await fc.syncOne(a, 'sales-analysis', null, { demoIncremental: true });
   const after = await fc.getCached(a, 'sales-analysis');
   check('incremental sync neither drops nor doubles file rows', after.quota.last_mode === 'incremental' && after.data.filter((x) => x._file).length === fileN && after.data.length === cached.data.length, `${after.quota.last_mode} ${after.data.length} vs ${cached.data.length}`);
   const syncedAt = String(after.syncedAt);
