@@ -316,6 +316,14 @@ async function upgradeLineQuota() {
   }
 }
 
+async function upgradeLineSummary() {
+  // Once-a-day numbers: remember the last day they went out.
+  if (!(await columnInfo('company_line', 'summary_day'))) {
+    await pool.query(`ALTER TABLE company_line ADD COLUMN summary_day CHAR(10) NULL`);
+    console.log('  company_line: added summary_day');
+  }
+}
+
 async function upgradeHomeBranch() {
   // A branch manager's own branch: their dashboards open filtered to it.
   if (!(await columnInfo('users', 'home_branch'))) {
@@ -383,6 +391,7 @@ async function main() {
   await upgradeAlertAck();
   await upgradeHomeBranch();
   await upgradeLineQuota();
+  await upgradeLineSummary();
   // First run with the saved-data fallback: every cache that has rows today
   // becomes the "last good" copy, so the fallback works before the next sync.
   const [bf] = await pool.query(

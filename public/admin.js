@@ -1408,7 +1408,7 @@ async function renderLinePanel(container, companyId, flash = '') {
       <input type="password" class="line-secret" autocomplete="off" placeholder="${v.has_secret ? 'ใส่ใหม่เพื่อเปลี่ยน' : 'Channel secret'}" aria-label="Channel secret">
       <label class="field-label">Channel access token (long-lived) ${v.has_token ? `<span class="muted">(บันทึกแล้ว ${esc(v.token_hint)})</span>` : ''}</label>
       <input type="password" class="line-token" autocomplete="off" placeholder="${v.has_token ? 'ใส่ใหม่เพื่อเปลี่ยน' : 'Channel access token'}" aria-label="Channel access token">
-      <label class="check-row"><input type="checkbox" class="line-enabled" ${v.enabled ? 'checked' : ''}> ส่งสรุป "สิ่งที่ควรดูวันนี้" อัตโนมัติทุกวัน 08:30 (เฉพาะเรื่องใหม่หรือแย่ลง)</label>
+      <label class="check-row"><input type="checkbox" class="line-enabled" ${v.enabled ? 'checked' : ''}> ส่งสรุปอัตโนมัติทุกวัน 08:30 (เรื่องใหม่หรือแย่ลง + ตัวเลขรายวันที่เลือกด้านล่าง)</label>
       <fieldset class="line-watchers">
         <legend>ตัวเตือนที่ส่งเข้า LINE</legend>
         ${(v.watchers || []).map((w) => `
@@ -1419,6 +1419,15 @@ async function renderLinePanel(container, companyId, flash = '') {
             ${'days' in w.defaults ? `<label class="w-num">ค้างเกิน <input type="number" min="1" step="1" class="w-days" value="${esc(w.days)}"> วัน</label>` : ''}
           </div>`).join('')}
         <p class="helper-text">เกณฑ์ชุดเดียวกันใช้กับ widget ตัวเตือนบน Dashboard ตัวเลขในการ์ด LINE จึงตรงกับหน้าจอ</p>
+      </fieldset>
+      <fieldset class="line-watchers line-summaries">
+        <legend>สรุปตัวเลขรายวัน (ส่งพร้อมสรุปตอน 08:30)</legend>
+        ${(v.summaries || []).map((s) => `
+          <label class="check-row sum-row${s.available ? '' : ' is-off'}" ${s.available ? '' : 'title="ยังไม่มี widget ในแดชบอร์ดไหนใช้ข้อมูลนี้ — เพิ่ม widget ที่เกี่ยวข้องก่อนจึงจะเลือกได้"'}>
+            <input type="checkbox" class="s-pick" value="${esc(s.key)}" ${s.selected ? 'checked' : ''} ${s.available ? '' : 'disabled'}>
+            <span>${esc(s.name)} <span class="muted">· ${esc(s.desc)}</span>${s.available ? '' : ' <span class="sum-off-note">(ยังไม่มี widget นี้ในแดชบอร์ด)</span>'}</span>
+          </label>`).join('')}
+        <p class="helper-text">ตัวเลขคำนวณจากข้อมูลเดียวกับ widget บนแดชบอร์ด ถ้าไม่มีแดชบอร์ดไหนใช้ widget ของหัวข้อนั้น หัวข้อจะเป็นสีเทาและไม่ถูกส่ง ส่งวันละครั้ง ไม่เพิ่มจำนวนข้อความ</p>
       </fieldset>
       <div class="btn-row">
         <button type="submit" class="btn small primary">บันทึก</button>
@@ -1437,6 +1446,7 @@ async function renderLinePanel(container, companyId, flash = '') {
           channel_secret: container.querySelector('.line-secret').value,
           access_token: container.querySelector('.line-token').value,
           enabled: container.querySelector('.line-enabled').checked,
+          summary: [...container.querySelectorAll('.s-pick:checked')].map((x) => x.value),
           watch: Object.fromEntries([...container.querySelectorAll('.watcher-row')].map((row) => {
             const o = { line: row.querySelector('.w-line').checked };
             const t = row.querySelector('.w-threshold'), m = row.querySelector('.w-min');

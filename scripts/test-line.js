@@ -87,6 +87,25 @@ const mock = http.createServer((req, res) => {
   const v2 = await line.publicView(id, 'https://x.test');
   check('Admin view lists watchers with their LINE switch', v2.watchers.length === 4 && v2.watchers.find((w) => w.key === 'price').line === false && v2.watchers.find((w) => w.key === 'ck').line === true);
   await alerts.saveSettings(id, { price: { line: true } });
+  // ---- daily summary picks ----
+  const sm = require('../lib/lineSummary');
+  const sv = await sm.view(id);
+  check('summary list: every family present, defaults ticked', sv.length === 7 && sv.find((x) => x.key === 'cks_sales').selected === true && sv.find((x) => x.key === 'wastage').selected === false);
+  await sm.save(id, ['pos_sales', 'nope']);
+  const sv2 = await sm.view(id);
+  check('summary picks saved, unknown keys dropped', sv2.filter((x) => x.selected).map((x) => x.key).join() === 'pos_sales');
+  await require('../lib/alerts').saveSettings(id, { po: { line: true } });
+  check('saving alert settings keeps the summary picks', (await sm.view(id)).find((x) => x.key === 'pos_sales').selected === true);
+  const nums = await sm.numbers(id, require('../lib/alerts').bkkToday());
+  check('numbers only for ticked families', nums.length <= 1 && nums.every((n) => /ขายหน้าร้าน/.test(n.label)), JSON.stringify(nums));
+  const [[bare]] = await pool.query(`SELECT c.id FROM companies c WHERE NOT EXISTS (SELECT 1 FROM dashboards d WHERE d.company_id = c.id) ORDER BY c.id LIMIT 1`);
+  if (bare) {
+    await line.ensure(bare.id);
+    const vb = await sm.view(bare.id);
+    check('a family no dashboard uses is unavailable and never selected', vb.every((x) => !x.available && !x.selected), JSON.stringify(vb));
+    await pool.query(`DELETE FROM company_line WHERE company_id = ?`, [bare.id]);
+  }
+  await sm.save(id, ['cks_sales', 'purchases']);
   await line.unbindGroup(id);
   let err = null; try { await line.sendAlert(id); } catch (e) { err = e; }
   check('no group → clear error', err && /ผูกกลุ่ม/.test(err.message));
