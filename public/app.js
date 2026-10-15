@@ -28,6 +28,12 @@ function onColor(bg) {
   const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
   return L > 0.32 ? '#101828' : '#fff';
 }
+const withAlpha = (c, a) => {
+  const h = /^#([0-9a-f]{6})$/i.exec(String(c).trim());
+  if (h) return `rgba(${parseInt(h[1].slice(0, 2), 16)}, ${parseInt(h[1].slice(2, 4), 16)}, ${parseInt(h[1].slice(4, 6), 16)}, ${a})`;
+  const m = /rgba?\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/.exec(String(c));
+  return m ? `rgba(${m[1]}, ${m[2]}, ${m[3]}, ${a})` : c;
+};
 const SKELETON = '<div class="skel" role="status" aria-label="กำลังโหลด"><span></span><span></span><span></span></div>';
 const tokenList = (names) => new Proxy(names, { get: (t, k) => (/^\d+$/.test(String(k)) ? cssv(t[k]) : t[k]) });
 
@@ -1800,7 +1806,10 @@ function renderLine(body, rows, cfg) {
           pointStyle: ['circle', 'rect', 'triangle', 'rectRot', 'crossRot', 'star'][si % 6],
           borderDash: si >= 2 ? [6, 4] : undefined,
           pointRadius: si ? 4 : 3,
-          segment: partialLast ? { borderDash: (c) => (c.p1DataIndex === keys.length - 1 ? [3, 4] : si >= 2 ? [6, 4] : undefined) } : undefined,
+          segment: partialLast ? {
+            borderDash: (c) => (c.p1DataIndex === keys.length - 1 ? [2, 4] : si >= 2 ? [6, 4] : undefined),
+            borderColor: (c) => (c.p1DataIndex === keys.length - 1 ? withAlpha(s.color, 0.45) : undefined),
+          } : undefined,
           pointHoverRadius: 6,
           pointBorderColor: cssv('--surface'),
           pointBorderWidth: 1.5,
@@ -1846,7 +1855,9 @@ function renderTable(body, rows, cfg) {
   const SEV = { 'สูง': 'high', 'กลาง': 'mid', 'ต่ำ': 'low', high: 'high', medium: 'mid', low: 'low', 'ใหม่': 'new' };
   const pillCols = new Set(columns.filter((c) => {
     const vals = rows.map((r) => r[c.field]).filter((v) => v != null && v !== '');
-    return vals.length && new Set(vals).size > 1 && vals.every((v) => typeof v === 'string' && SEV[v.trim().toLowerCase()] || SEV[v]);
+    if (!vals.length || !vals.every((v) => typeof v === 'string' && SEV[v.trim().toLowerCase()] || SEV[v])) return false;
+    // Severity always shows as a pill; a status that is the same on every row ("ใหม่") is noise.
+    return vals.some((v) => SEV[String(v).trim().toLowerCase()] !== 'new') || new Set(vals).size > 1;
   }).map((c) => c.field));
   // Long lists open short: the first rows are what to act on today; the rest is one click away.
   const PREVIEW = cfg.preview_rows || 8;
@@ -1887,7 +1898,7 @@ function renderTable(body, rows, cfg) {
             .map((c) => {
               const v = r[c.field];
               return typeof v === 'number'
-                ? `<td class="num">${esc(c.format ? fmtValue(v, c.format) : v.toLocaleString('th-TH', { maximumFractionDigits: 2 }))}</td>`
+                ? `<td class="num" data-label="${esc(c.label || c.field.replace(/_/g, ' '))}">${esc(c.format ? fmtValue(v, c.format) : v.toLocaleString('th-TH', { maximumFractionDigits: 2 }))}</td>`
                 : pillCols.has(c.field) && v != null && v !== ''
                   ? `<td><span class="sev-pill sev-${SEV[String(v).trim().toLowerCase()] || SEV[v]}">${esc(v)}</span></td>`
                   : `<td>${esc(v)}</td>`;

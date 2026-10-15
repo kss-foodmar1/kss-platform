@@ -1056,9 +1056,11 @@ html.login-hero-on #login-screen > .login-card { flex: 0 0 400px; max-width: 400
 @media (max-width: 700px) {
   .table-scroll table.report-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .table-scroll table.report-table, .table-scroll table.report-table tbody { display: block; }
-  .table-scroll table.report-table tr { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 10px 2px; border-bottom: 1px solid var(--line-soft); }
+  .table-scroll table.report-table tr { display: grid; grid-auto-flow: row dense; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 10px 2px; border-bottom: 1px solid var(--line-soft); }
   .table-scroll table.report-table td { display: block; padding: 0; border: 0; min-width: 0; overflow-wrap: anywhere; }
-  .table-scroll table.report-table td.num { text-align: right; font-weight: 700; }
+  .table-scroll table.report-table td:not(.num) { grid-column: 1; }
+  .table-scroll table.report-table td.num { grid-column: 2; text-align: right; font-weight: 700; }
+  .table-scroll table.report-table td.num::before { content: attr(data-label); display: block; font-size: 11px; font-weight: 600; color: var(--muted); }
   .table-scroll table.report-table td:empty { display: none; }
   .table-scroll table.report-table tr:hover td { background: none; }
 }
