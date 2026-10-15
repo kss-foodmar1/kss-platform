@@ -14,6 +14,7 @@ raw rows. The model is told to answer only from that summary.
 |---|---|
 | `GEMINI_API_KEY` | From Google AI Studio. Unset = no chat button anywhere. |
 | `GEMINI_TIER` | `free` (default) or `paid`. **Free = demo-data companies only**: on Google's free tier, submitted content may be used to improve Google's products and read by human reviewers. Switch to `paid` (billing on the key's project) before real customers use it. |
+| `GEMINI_FREE_REAL` | `on` lets companies with real data use the chat on a free key. Owner's accepted risk for the small test-sales period: Google may use submitted content to improve its products. Remove it (or go `paid`) once there are more customers. |
 | `GEMINI_MODEL` | Default `gemini-3.1-flash-lite`. |
 | `AI_DAILY_LIMIT` | Questions per company per day, default 30 (`ai_usage` table counts them). |
 

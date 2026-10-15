@@ -2322,7 +2322,7 @@ async function renderAiQuestions(main, view = {}) {
     out.textContent = 'กำลังทดสอบ...';
     try {
       const r = await api('/api/ai/selftest', { method: 'POST' });
-      const base = `รุ่น ${r.model} · ระดับ ${r.tier === 'paid' ? 'เสียเงิน (ใช้กับลูกค้าจริงได้)' : 'ฟรี (ใช้ได้เฉพาะบริษัทเดโม)'} · จำกัด ${r.daily_limit} คำถาม/บริษัท/วัน`;
+      const base = `รุ่น ${r.model} · ระดับ ${r.tier === 'paid' ? 'เสียเงิน (ใช้กับลูกค้าจริงได้)' : (r.free_real ? 'ฟรี (เปิดให้ลูกค้าจริงใช้ด้วย — Google อาจนำข้อมูลไปปรับปรุงผลิตภัณฑ์)' : 'ฟรี (ใช้ได้เฉพาะบริษัทเดโม)')} · จำกัด ${r.daily_limit} คำถาม/บริษัท/วัน`;
       out.textContent = r.ok ? `✅ เชื่อมต่อสำเร็จ (${r.ms} ms) · ${base}` : `❌ ${r.message} · ${base}`;
     } catch (err) {
       out.textContent = '❌ ' + err.message;
