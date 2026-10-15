@@ -216,6 +216,18 @@ async function serveData(req, res, companyId, widgets) {
       cached = await getCached(companyId, source, grouping);
     }
   }
+  // Demo data moves with the calendar: a pull built before today (Bangkok) is rebuilt on view,
+  // so a demo never shows yesterday's "today". Costs no quota.
+  if (cached && !cfg.local && cached.syncedAt) {
+    const bkk = (d) => new Date(new Date(d).getTime() + 7 * 3600000).toISOString().slice(0, 10);
+    if (bkk(cached.syncedAt) < bkk(Date.now())) {
+      const [[co]] = await pool.query(`SELECT data_source FROM companies WHERE id = ?`, [companyId]);
+      if (co && co.data_source === 'demo') {
+        await syncOne(companyId, source, grouping, { full: true }).catch((err) => console.error(`Demo refresh failed (${companyId}/${source}):`, err.message));
+        cached = (wantSaved && (await getSaved(companyId, source, grouping))) || (await getCached(companyId, source, grouping));
+      }
+    }
+  }
   // A company whose history comes from uploaded FMH files can have data
   // before (or without) any API sync: build it from the files.
   if (!cached && !grouping && !wantSaved && (await fmhFiles.hasFiles(companyId, source))) {
