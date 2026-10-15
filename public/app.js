@@ -1456,37 +1456,39 @@ class DashboardView {
     let data;
     try { data = await api(`/api/dashboards/${this.dashboard.id}/today`); } catch (e) { box.hidden = true; return; }
     // A branch manager sees their branch's items plus company-wide ones.
-    const home = state.user && state.user.home_branch;
-    if (home) data.items = data.items.filter((i) => !i.branch || i.branch === home);
     const open = data.items.filter((i) => !i.ack_status);
     const taken = data.items.filter((i) => i.ack_status);
     if (!data.items.length) { box.hidden = true; return; }
     box.hidden = false;
     const fold = `kss_today_fold_${this.dashboard.id}_${data.day}`;
+    const phone = matchMedia('(max-width: 700px)').matches;
     let folded = false;
-    try { folded = localStorage.getItem(fold) === '1'; } catch (e) { /* private window */ }
+    try { const v = localStorage.getItem(fold); folded = v === '1'; } catch (e) { /* private window */ }
+    const SHOW = phone ? 3 : 5;
+    const crit = data.items.filter((i) => !i.ack_status && i.severity === 'วิกฤต').length;
+    const sumOpen = data.items.filter((i) => !i.ack_status).reduce((a, i) => a + (Number(i.impact) || 0), 0);
     const sevCls = { 'วิกฤต': 'crit', 'สูง': 'high', 'กลาง': 'mid' };
     const money = (v) => (v ? '฿' + Math.round(v).toLocaleString('th-TH') : '');
     const people = data.people || [];
     const item = (it, i) => `<li class="today-item" data-i="${i}">
         <span class="sev-pill sev-${sevCls[it.severity] || 'mid'}">${esc(it.severity)}</span>
-        <div class="today-main"><b>${esc(it.subject || it.detail)}</b><span>${esc(it.subject ? it.detail : '')}</span>
+        <div class="today-main"><b>${esc(it.subject || it.detail)}</b>${it.owner ? `<span class="today-owner">งาน${esc(it.owner)}</span>` : ''}<span>${esc(it.subject ? it.detail : '')}</span>
           <span class="today-meta">${[it.branch, it.age_days != null ? `ค้าง ${it.age_days} วัน` : '', money(it.impact)].filter(Boolean).map(esc).join(' · ')}${it.handled ? ` · <em>${esc(it.handled)}</em>` : ''}</span></div>
         <div class="today-acts">${
           it.ack_status
             ? '<button type="button" class="btn small ghost t-clear">ยกเลิก</button>'
             : '<button type="button" class="btn small ghost t-ack">รับทราบ</button><button type="button" class="btn small ghost t-assign">มอบหมาย</button>'
-        }${it.source && this.widgets.some((w) => w.report_source === it.source) ? '<button type="button" class="link-btn t-go">ดูในรายการ</button>' : ''}</div>
+        }${it.source && this.widgets.some((w) => w.report_source === it.source) ? '<button type="button" class="btn small ghost t-go">ดูในรายการ</button>' : ''}</div>
         <form class="today-assign" hidden><label class="sr-only" for="ta-${i}">มอบหมายให้</label><input id="ta-${i}" list="today-people-${this.dashboard.id}" placeholder="ชื่อผู้รับผิดชอบ" maxlength="80" required><button type="submit" class="btn small primary">มอบหมาย</button></form>
       </li>`;
     const all = [...open, ...taken];
     box.innerHTML = `<div class="today-head">
-        <div><h2>เช้านี้ต้องทำ</h2><p>${open.length ? `${open.length} เรื่องยังไม่มีคนรับ` : 'ทุกเรื่องมีคนรับแล้ว'}${taken.length ? ` · รับแล้ว ${taken.length}` : ''}</p></div>
-        <button type="button" class="icon-mini today-fold" aria-expanded="${!folded}" title="${folded ? 'แสดง' : 'ย่อ'}">${folded ? '▾' : '▴'}</button>
+        <div><h2>เช้านี้ต้องทำ</h2><p>${open.length ? `${open.length} เรื่องยังไม่มีคนรับ${crit ? ` · วิกฤต ${crit}` : ''}${sumOpen ? ` · ยอดค้าง ฿${Math.round(sumOpen).toLocaleString('th-TH')}` : ''}` : 'ทุกเรื่องมีคนรับแล้ว'}${taken.length ? ` · รับแล้ว ${taken.length}` : ''}</p></div>
+        <button type="button" class="btn small ghost today-fold" aria-expanded="${!folded}" aria-label="${folded ? 'แสดงรายการเช้านี้ต้องทำ' : 'ย่อรายการเช้านี้ต้องทำ'}">${folded ? 'แสดง' : 'ย่อ'}</button>
       </div>
       <div class="today-body"${folded ? ' hidden' : ''}>
-        <ul class="today-list">${open.slice(0, 5).map((it) => item(it, all.indexOf(it))).join('') || '<li class="today-empty">ไม่มีเรื่องค้างที่ยังไม่มีคนรับ</li>'}</ul>
-        ${open.length > 5 ? `<p class="today-more">และอีก ${open.length - 5} เรื่องในตารางตัวเตือนด้านล่าง</p>` : ''}
+        <ul class="today-list">${open.slice(0, SHOW).map((it) => item(it, all.indexOf(it))).join('') || '<li class="today-empty">ไม่มีเรื่องค้างที่ยังไม่มีคนรับ</li>'}</ul>
+        ${open.length > SHOW ? `<p class="today-more">และอีก ${open.length - SHOW} เรื่องในตารางตัวเตือนด้านล่าง</p>` : ''}
         ${taken.length ? `<details class="today-taken"><summary>รับแล้ว ${taken.length} เรื่อง</summary><ul class="today-list">${taken.map((it) => item(it, all.indexOf(it))).join('')}</ul></details>` : ''}
         <datalist id="today-people-${this.dashboard.id}">${people.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
         <p class="today-msg" role="status"></p>
@@ -1499,6 +1501,12 @@ class DashboardView {
       try {
         await api(`/api/dashboards/${this.dashboard.id}/today/ack`, { method: 'POST', body: JSON.stringify({ watcher: it.watcher, finding_key: it.finding_key, ...body }) });
         await this.renderToday();
+        const m = box.querySelector('.today-msg');
+        if (m && body.action !== 'clear') {
+          m.className = 'today-msg ok';
+          m.innerHTML = `${body.action === 'assign' ? 'มอบหมายแล้ว' : 'รับทราบแล้ว'}: ${esc(it.subject || '')} <button type="button" class="link-btn t-undo">เลิกทำ</button>`;
+          m.querySelector('.t-undo').addEventListener('click', () => send(it, { action: 'clear' }));
+        }
       } catch (err) { const m = box.querySelector('.today-msg'); if (m) m.textContent = err.message; }
     };
     box.querySelectorAll('.today-item').forEach((li) => {
@@ -1537,12 +1545,20 @@ class DashboardView {
       <p class="arrange-msg" role="status"></p>`;
     grid.before(bar);
     grid.classList.add('arranging');
+    document.body.classList.add('arranging-on');
+    const hidden = [this.todayEl, this.filterEl, this.statusEl].filter(Boolean);
+    hidden.forEach((n) => n.classList.add('arr-hide'));
     const markDirty = () => { dirty = true; bar.querySelector('.arr-save').disabled = false; };
 
     const setSize = (c, size) => {
       c.classList.remove('size-third', 'size-half', 'size-full');
       c.classList.add(`size-${size}`);
       c.querySelectorAll('.arr-size button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.size === size ? 'true' : 'false'));
+      // A table squeezed into ⅓ cuts its text: say so rather than refuse.
+      const tools = c.querySelector('.arr-tools');
+      const old = c.querySelector('.arr-warn');
+      if (old) old.remove();
+      if (size === 'third' && c.classList.contains('widget-table') && tools) tools.insertAdjacentHTML('afterend', '<p class="arr-warn">ตารางแคบเกินไปที่ ⅓ แถว แนะนำ ½ หรือเต็มแถว</p>');
     };
     const setRows = (c, n) => { c.classList.remove('rows-2', 'rows-3'); if (n > 1) c.classList.add(`rows-${n}`); };
 
@@ -1607,9 +1623,10 @@ class DashboardView {
           if (size !== sizeOf(c)) { setSize(c, size); markDirty(); }
           if (rows !== rowsOf(c)) { setRows(c, rows); markDirty(); }
         };
-        const up = () => { c.classList.remove('arr-resizing'); rz.removeEventListener('pointermove', move); rz.removeEventListener('pointerup', up); };
+        const up = () => { c.classList.remove('arr-resizing'); rz.removeEventListener('pointermove', move); rz.removeEventListener('pointerup', up); rz.removeEventListener('pointercancel', up); };
         rz.addEventListener('pointermove', move);
         rz.addEventListener('pointerup', up);
+        rz.addEventListener('pointercancel', up);
       });
       rz.addEventListener('keydown', (e) => {
         const order = ['third', 'half', 'full'];
@@ -1627,7 +1644,9 @@ class DashboardView {
       this.arranging = false;
       bar.remove();
       grid.classList.remove('arranging');
-      grid.querySelectorAll('.arr-tools, .arr-resize').forEach((n) => n.remove());
+      grid.querySelectorAll('.arr-tools, .arr-resize, .arr-warn').forEach((n) => n.remove());
+      document.body.classList.remove('arranging-on');
+      hidden.forEach((n) => n.classList.remove('arr-hide'));
     };
     bar.querySelector('.arr-cancel').addEventListener('click', () => {
       before.forEach(({ el, size, rows }) => { grid.appendChild(el); setSize(el, size); setRows(el, rows); });
@@ -1660,10 +1679,9 @@ class DashboardView {
         btn.textContent = 'บันทึกการจัดเรียง';
       }
     });
-    bar.querySelector('.arr-grip, .arr-save');
     const first = grid.querySelector('.arr-grip');
     if (first) first.focus({ preventScroll: true });
-    bar.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    bar.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }
 
   renderWidgets() {

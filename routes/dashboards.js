@@ -148,7 +148,7 @@ router.get(
   wrap(async (req, res) => {
     const dashboard = await getDashboardForUser(req.user, req.params.id);
     if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
-    const t = await require('../lib/alerts').today(dashboard.company_id);
+    const t = await require('../lib/alerts').today(dashboard.company_id, req.user.home_branch || null);
     const [people] = await pool.query(`SELECT display_name FROM users WHERE company_id = ? ORDER BY display_name LIMIT 100`, [dashboard.company_id]).catch(() => [[]]);
     res.json({ ...t, people: people.map((p) => p.display_name).filter(Boolean) });
   })
