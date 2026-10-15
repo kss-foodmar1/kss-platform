@@ -911,6 +911,14 @@ const savedMode = {
   },
 };
 
+// users.home_branch: one name, or a JSON array of names (district manager).
+function homeBranchList(raw) {
+  if (!raw) return [];
+  const s = String(raw).trim();
+  if (s.startsWith('[')) { try { return JSON.parse(s).map(String).filter(Boolean); } catch (e) { return []; } }
+  return s ? [s] : [];
+}
+
 class DashboardView {
   constructor(wrap, { dashboard, widgets, sources }) {
     this.wrap = wrap;
@@ -1011,8 +1019,8 @@ class DashboardView {
     });
     this.filters = {}; // field -> chosen value
     // A branch manager opens on their own branch (users.home_branch); they can still pick "ทุกสาขา".
-    const home = state.user && state.user.home_branch;
-    if (home && this.filterFields.includes('branch')) this.filters.branch = home;
+    this.homeBranches = homeBranchList(state.user && state.user.home_branch);
+    if (this.homeBranches.length && this.filterFields.includes('branch')) this.filters.branch = this.homeBranches[0];
     this.bucketPick = new Map();
     this.filterEl = document.createElement('div');
     this.filterEl.className = 'page-filter';
@@ -1194,7 +1202,10 @@ class DashboardView {
           totals.set(String(row[f]), (totals.get(String(row[f])) || 0) + num(row.total ?? 1));
         });
       });
-      return { f, values: [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([v]) => v) };
+      let values = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([v]) => v);
+      // A manager with several branches picks among theirs (one branch alone needs no picker).
+      if (f === 'branch' && this.homeBranches && this.homeBranches.length > 1) values = values.filter((v) => this.homeBranches.includes(v));
+      return { f, values };
     }).filter((g) => g.values.length > 1);
     if (!groups.length) { this.filterEl.innerHTML = ''; return; }
     // A few values read best as chips; a long list (fifty suppliers) as a menu.

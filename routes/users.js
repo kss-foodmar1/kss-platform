@@ -131,14 +131,19 @@ router.patch(
   wrap(async (req, res) => {
     const loaded = await loadTargetUser(req, res);
     if (!loaded) return;
-    const v = String((req.body || {}).home_branch || '').trim().slice(0, 120);
-    if (v && loaded.scope.companyId) {
+    const hb = require('../lib/homeBranch');
+    const b = req.body || {};
+    const list = hb.parse(JSON.stringify(Array.isArray(b.home_branches) ? b.home_branches : [String(b.home_branch || '')])).slice(0, 30);
+    if (list.some((x) => x.length > 120)) return res.status(400).json({ error: 'ชื่อสาขายาวเกินไป' });
+    if (list.length && loaded.scope.companyId) {
       const [[cur]] = await pool.query(`SELECT home_branch FROM users WHERE id = ?`, [loaded.target.id]);
-      const ok = (await require('../lib/alerts').branchesOf(loaded.scope.companyId)).includes(v);
-      if (!ok && !(cur && cur.home_branch === v)) return res.status(400).json({ error: 'ไม่พบสาขานี้ในข้อมูลของบริษัท' });
+      const known = new Set([...(await require('../lib/alerts').branchesOf(loaded.scope.companyId)), ...hb.parse(cur && cur.home_branch)]);
+      const bad = list.find((x) => !known.has(x));
+      if (bad) return res.status(400).json({ error: `ไม่พบสาขา "${bad}" ในข้อมูลของบริษัท` });
     }
-    await pool.query(`UPDATE users SET home_branch = ? WHERE id = ?`, [v || null, loaded.target.id]);
-    res.json({ ok: true, home_branch: v || null });
+    const v = hb.serialize(list);
+    await pool.query(`UPDATE users SET home_branch = ? WHERE id = ?`, [v, loaded.target.id]);
+    res.json({ ok: true, home_branch: v, home_branches: list });
   })
 );
 

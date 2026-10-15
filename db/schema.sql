@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(255) UNIQUE NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   display_name VARCHAR(255) NOT NULL,
-  home_branch VARCHAR(120) NULL,
+  home_branch TEXT NULL,
   role ENUM('kss_superadmin','company_admin','client') NOT NULL DEFAULT 'client',
   company_id INT NULL,
   must_change_password BOOLEAN NOT NULL DEFAULT FALSE,

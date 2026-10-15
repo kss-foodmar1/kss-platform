@@ -314,6 +314,12 @@ async function upgradeHomeBranch() {
     await pool.query(`ALTER TABLE users ADD COLUMN home_branch VARCHAR(120) NULL`);
     console.log('  users: added home_branch');
   }
+  // Several branches per user are stored as a JSON array, so the column must hold more than 120 chars.
+  const ci = await columnInfo('users', 'home_branch');
+  if (ci && /varchar/i.test(String(ci.DATA_TYPE || ci.Type || ci.COLUMN_TYPE || ''))) {
+    await pool.query(`ALTER TABLE users MODIFY COLUMN home_branch TEXT NULL`);
+    console.log('  users: home_branch widened to TEXT');
+  }
 }
 
 async function upgradeAlertAck() {

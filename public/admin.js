@@ -64,9 +64,16 @@ async function renderUserManager(container, scope) {
   if (!scope.kss) {
     try { branches = (await api(`/api/users/branches${qs}`)).branches || []; } catch (_) {}
   }
-  const branchOptions = (cur) => {
-    const list = cur && !branches.includes(cur) ? [cur, ...branches] : branches;
-    return `<option value="">ทุกสาขา</option>` + list.map((b) => `<option value="${esc(b)}" ${b === cur ? 'selected' : ''}>${esc(b)}${branches.includes(b) ? '' : ' (ไม่พบในข้อมูลล่าสุด)'}</option>`).join('');
+  const homeList = (raw) => {
+    if (!raw) return [];
+    const t = String(raw).trim();
+    if (t.startsWith('[')) { try { return JSON.parse(t).map(String).filter(Boolean); } catch (e) { return []; } }
+    return t ? [t] : [];
+  };
+  const branchSummary = (cur) => (cur.length ? (cur.length > 1 ? `${cur.length} สาขา` : cur.join(', ')) : 'ทุกสาขา');
+  const branchChecks = (cur) => {
+    const list = [...cur.filter((c) => !branches.includes(c)), ...branches];
+    return list.map((b) => `<label class="hb-opt"><input type="checkbox" value="${esc(b)}" ${cur.includes(b) ? 'checked' : ''}><span>${esc(b)}${branches.includes(b) ? '' : ' (ไม่พบในข้อมูลล่าสุด)'}</span></label>`).join('');
   };
   const roleLabel = { kss_superadmin: 'KSS', company_admin: 'Admin บริษัท', client: 'ผู้ใช้งาน' };
 
@@ -112,7 +119,10 @@ async function renderUserManager(container, scope) {
                    <option value="company_admin" ${u.role === 'company_admin' ? 'selected' : ''}>Admin บริษัท</option>
                  </select>
                  <button type="button" class="btn small ghost toggle-access">Dashboard ▾</button>
-                 <label class="home-branch"><span>สาขาประจำ${!scope.kss && !branches.length ? ' (ยังไม่มีข้อมูลสาขา — ซิงก์ FMH ก่อน)' : ''}</span><select title="${esc(u.home_branch || 'ทุกสาขา')}" ${branches.length || u.home_branch ? '' : 'disabled'} aria-label="สาขาประจำของ ${esc(u.display_name)}">${branchOptions(u.home_branch)}</select></label>`
+                 <details class="home-branch" ${branches.length || u.home_branch ? '' : 'data-empty'}>
+                   <summary title="${esc(homeList(u.home_branch).join(', ') || 'ทุกสาขา')}" aria-label="สาขาประจำของ ${esc(u.display_name)}"><span class="hb-label">สาขาประจำ</span> <b class="hb-val">${esc(branchSummary(homeList(u.home_branch)))}</b></summary>
+                   <div class="hb-menu">${branches.length || u.home_branch ? `<p class="hb-hint">เลือกได้หลายสาขา · ไม่เลือก = ทุกสาขา</p>${branchChecks(homeList(u.home_branch))}` : '<p class="hb-hint">ยังไม่มีข้อมูลสาขา — ซิงก์ FMH ก่อน</p>'}</div>
+                 </details>`
           }
           <button type="button" class="btn small ghost toggle-reset">รีเซ็ตรหัส</button>
           <button type="button" class="btn small danger delete-user" ${self ? 'disabled' : ''}>ลบ</button>
@@ -126,21 +136,27 @@ async function renderUserManager(container, scope) {
       <div class="user-subpanel access-panel hidden"></div>`;
     list.appendChild(wrap);
 
-    const hb = wrap.querySelector('.home-branch select');
+    const hb = wrap.querySelector('.home-branch');
     if (hb) {
-      hb.addEventListener('change', async () => {
-        hb.disabled = true;
+      hb.addEventListener('change', async (ev) => {
+        if (!ev.target.matches('input[type=checkbox]')) return;
+        const boxes = [...hb.querySelectorAll('input[type=checkbox]')];
+        boxes.forEach((x) => (x.disabled = true));
+        const val = hb.querySelector('.hb-val');
         try {
-          await api(`/api/users/${u.id}/home-branch${qs}`, { method: 'PATCH', body: JSON.stringify({ home_branch: hb.value }) });
-          u.home_branch = hb.value || null; hb.title = hb.value || 'ทุกสาขา';
+          const chosen = boxes.filter((x) => x.checked).map((x) => x.value);
+          const r = await api(`/api/users/${u.id}/home-branch${qs}`, { method: 'PATCH', body: JSON.stringify({ home_branches: chosen }) });
+          u.home_branch = r.home_branch;
+          val.textContent = branchSummary(chosen);
+          hb.querySelector('summary').title = chosen.join(', ') || 'ทุกสาขา';
           hb.classList.add('saved');
           setTimeout(() => hb.classList.remove('saved'), 1200);
         } catch (err) {
-          hb.value = u.home_branch || '';
-          hb.title = `บันทึกไม่สำเร็จ: ${err.message} — ลองรีเฟรชหน้าหรือซิงก์ข้อมูลก่อน`;
+          const cur = homeList(u.home_branch);
+          boxes.forEach((x) => (x.checked = cur.includes(x.value)));
           hb.classList.add('err'); setTimeout(() => hb.classList.remove('err'), 3000);
           alert(`บันทึกสาขาไม่สำเร็จ: ${err.message} — ลองรีเฟรชหน้าหรือซิงก์ข้อมูลก่อน`);
-        } finally { hb.disabled = false; }
+        } finally { boxes.forEach((x) => (x.disabled = false)); }
       });
     }
 
