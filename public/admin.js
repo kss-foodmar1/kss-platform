@@ -66,7 +66,7 @@ async function renderUserManager(container, scope) {
   }
   const branchOptions = (cur) => {
     const list = cur && !branches.includes(cur) ? [cur, ...branches] : branches;
-    return `<option value="">ทุกสาขา</option>` + list.map((b) => `<option value="${esc(b)}" ${b === cur ? 'selected' : ''}>${esc(b)}${branches.includes(b) ? '' : ' (ปัจจุบัน)'}</option>`).join('');
+    return `<option value="">ทุกสาขา</option>` + list.map((b) => `<option value="${esc(b)}" ${b === cur ? 'selected' : ''}>${esc(b)}${branches.includes(b) ? '' : ' (ไม่พบในข้อมูลล่าสุด)'}</option>`).join('');
   };
   const roleLabel = { kss_superadmin: 'KSS', company_admin: 'Admin บริษัท', client: 'ผู้ใช้งาน' };
 
@@ -112,7 +112,7 @@ async function renderUserManager(container, scope) {
                    <option value="company_admin" ${u.role === 'company_admin' ? 'selected' : ''}>Admin บริษัท</option>
                  </select>
                  <button type="button" class="btn small ghost toggle-access">Dashboard ▾</button>
-                 <label class="home-branch"><span>สาขาประจำ</span><select aria-label="สาขาประจำของ ${esc(u.display_name)}">${branchOptions(u.home_branch)}</select></label>`
+                 <label class="home-branch"><span>สาขาประจำ${!scope.kss && !branches.length ? ' (ยังไม่มีข้อมูลสาขา — ซิงก์ FMH ก่อน)' : ''}</span><select title="${esc(u.home_branch || 'ทุกสาขา')}" ${branches.length || u.home_branch ? '' : 'disabled'} aria-label="สาขาประจำของ ${esc(u.display_name)}">${branchOptions(u.home_branch)}</select></label>`
           }
           <button type="button" class="btn small ghost toggle-reset">รีเซ็ตรหัส</button>
           <button type="button" class="btn small danger delete-user" ${self ? 'disabled' : ''}>ลบ</button>
@@ -129,14 +129,18 @@ async function renderUserManager(container, scope) {
     const hb = wrap.querySelector('.home-branch select');
     if (hb) {
       hb.addEventListener('change', async () => {
+        hb.disabled = true;
         try {
           await api(`/api/users/${u.id}/home-branch${qs}`, { method: 'PATCH', body: JSON.stringify({ home_branch: hb.value }) });
+          u.home_branch = hb.value || null; hb.title = hb.value || 'ทุกสาขา';
           hb.classList.add('saved');
           setTimeout(() => hb.classList.remove('saved'), 1200);
         } catch (err) {
           hb.value = u.home_branch || '';
-          alert(`บันทึกสาขาไม่สำเร็จ: ${err.message}`);
-        }
+          hb.title = `บันทึกไม่สำเร็จ: ${err.message} — ลองรีเฟรชหน้าหรือซิงก์ข้อมูลก่อน`;
+          hb.classList.add('err'); setTimeout(() => hb.classList.remove('err'), 3000);
+          alert(`บันทึกสาขาไม่สำเร็จ: ${err.message} — ลองรีเฟรชหน้าหรือซิงก์ข้อมูลก่อน`);
+        } finally { hb.disabled = false; }
       });
     }
 
