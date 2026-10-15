@@ -264,6 +264,8 @@ const CHART_LABEL = {
 const sourceLabel = (s) => (adminState.meta && adminState.meta.report_sources[s] ? adminState.meta.report_sources[s].label : s);
 
 el('open-admin-btn').addEventListener('click', () => {
+  // In the library a company admin is inside settings: the button goes back.
+  if (!isSuper() && !el('library-view').classList.contains('hidden')) return goDashboard(lib.target || state.activeDashboardId || (state.dashboards[0] || {}).id);
   if (el('admin-view').classList.contains('hidden')) openAdminConsole();
   else {
     if (!leavePicker()) return;
