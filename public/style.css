@@ -1199,3 +1199,8 @@ body.arranging-on .ai-fab { display: none; }
 
 .page-filter-group .chip-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 @media (max-width: 700px) { .page-filter-group .chip-row { flex-wrap: nowrap; } .page-filter-group .range-chip { min-height: 44px; } }
+/* Tablet: a table squeezed into a ⅓/½ card breaks every word onto its own line — give it the full row. */
+@media (min-width: 701px) and (max-width: 1100px) {
+  .widget-grid:not(.arranging) .widget-card:has(.report-table) { grid-column: span 6; }
+  .report-table td:first-child, .report-table th:first-child { white-space: nowrap; }
+}
