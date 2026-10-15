@@ -308,6 +308,14 @@ async function upgradeAiFeedback() {
   }
 }
 
+async function upgradeLineQuota() {
+  // LINE counts a group push once per member, against the OA's monthly quota: track what we used.
+  if (!(await columnInfo('company_line', 'quota_used'))) {
+    await pool.query(`ALTER TABLE company_line ADD COLUMN quota_month CHAR(7) NULL, ADD COLUMN quota_used INT NOT NULL DEFAULT 0, ADD COLUMN monthly_quota INT NOT NULL DEFAULT 300, ADD COLUMN members INT NULL`);
+    console.log('  company_line: added quota columns');
+  }
+}
+
 async function upgradeHomeBranch() {
   // A branch manager's own branch: their dashboards open filtered to it.
   if (!(await columnInfo('users', 'home_branch'))) {
@@ -374,6 +382,7 @@ async function main() {
   await upgradeAiFeedback();
   await upgradeAlertAck();
   await upgradeHomeBranch();
+  await upgradeLineQuota();
   // First run with the saved-data fallback: every cache that has rows today
   // becomes the "last good" copy, so the fallback works before the next sync.
   const [bf] = await pool.query(

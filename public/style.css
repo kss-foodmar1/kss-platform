@@ -1217,3 +1217,5 @@ body.arranging-on .ai-fab { display: none; }
   .widget-grid:not(.arranging) { padding-bottom: 76px; }
   .table-scroll table.report-table.nums-many td.num::before { font-size: 12px; color: var(--ink-2); }
 }
+
+.line-quota.warn { color: var(--danger-ink); font-weight: 600; }

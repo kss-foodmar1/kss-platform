@@ -351,6 +351,10 @@ CREATE TABLE IF NOT EXISTS company_line (
   last_event_at TIMESTAMP NULL,
   last_event_note VARCHAR(255) NULL,
   watch_json TEXT NULL,
+  quota_month CHAR(7) NULL,
+  quota_used INT NOT NULL DEFAULT 0,
+  monthly_quota INT NOT NULL DEFAULT 300,
+  members INT NULL,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;

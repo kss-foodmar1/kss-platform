@@ -1399,6 +1399,7 @@ async function renderLinePanel(container, companyId, flash = '') {
     <p class="helper-text" style="margin-top:0;">ส่งสรุป "สิ่งที่ควรดูวันนี้" จาก widget ตัวเตือน เข้ากลุ่ม LINE ของผู้บริหาร ใช้ LINE Official Account ของบริษัทเอง ข้อความที่ตอบเมื่อมีคนพิมพ์ "สถานะ" ในกลุ่มไม่นับโควต้า ส่วนข้อความแจ้งเตือนอัตโนมัติจะนับตามแพ็กเกจของ OA</p>
     <p class="status-line"><span class="dot ${v.ready && v.group_bound && v.enabled ? 'dot-good' : 'dot-off'}" aria-hidden="true"></span> ${esc(state)}${v.last_sent_at ? ` · ส่งล่าสุด ${esc(fmtDateTime(v.last_sent_at))}` : ''}</p>
     <p class="helper-text line-event">${v.last_event_at ? `Webhook ล่าสุด ${esc(fmtDateTime(v.last_event_at))}: ${esc(v.last_event_note)}` : 'ยังไม่เคยมี LINE เรียก webhook นี้ (ถ้าตั้งค่าแล้ว ให้กด Verify ใน LINE Developers และตรวจว่า Use webhook เปิดอยู่)'}</p>
+    ${v.quota ? `<p class="helper-text line-quota${v.quota.warn ? ' warn' : ''}" role="status">โควตาข้อความเดือนนี้: ใช้ ${v.quota.used.toLocaleString('th-TH')} / ${v.quota.limit.toLocaleString('th-TH')} (${v.quota.pct}%)${v.quota.members ? ` · กลุ่ม ${v.quota.members} คน ส่ง 1 ครั้ง = ${v.quota.members} ข้อความ` : ''}${v.quota.full ? ' — เต็มแล้ว ระบบส่งเฉพาะเรื่องวิกฤต' : v.quota.warn ? ' — ใกล้เต็ม ควรอัปเกรดแพ็กเกจ LINE OA' : ''}</p>` : ''}
     <div class="line-msg">${flash}</div>
     <form class="line-form">
       <label class="field-label">Webhook URL (ใส่ใน LINE Developers → Messaging API)</label>
