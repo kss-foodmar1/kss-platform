@@ -1576,6 +1576,7 @@ class DashboardView {
       rz.title = 'ลากเพื่อปรับขนาด';
       c.appendChild(rz);
       tools.querySelectorAll('.arr-size button').forEach((b) => b.addEventListener('click', () => { setSize(c, b.dataset.size); markDirty(); }));
+      setSize(c, sizeOf(c));
       const grip = tools.querySelector('.arr-grip');
 
       // Move: the card follows the pointer through the grid; others reflow around it.
