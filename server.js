@@ -106,6 +106,12 @@ app.use('/api/subscription', require('./routes/selfServe').subscriptionRouter);
 app.use('/api/webhooks/line', require('./routes/line').webhookRouter);
 app.use('/api/line', require('./routes/line').router);
 app.use('/api/webhooks', billingRoutes.webhookRouter);
+// Back from the bank's 3-D Secure page after a card charge (lib/cardRenew.js).
+app.get('/pay/card-return/:token', async (req, res) => {
+  let st = null;
+  try { st = await require('./lib/cardRenew').afterReturn(req.params.token); } catch (e) { console.error('Card return failed:', e.message); }
+  res.redirect(303, `/?card=${st === 'paid' ? 'paid' : st === 'failed' ? 'failed' : 'pending'}`);
+});
 app.get('/pay/:token', (req, res, next) => {
   if (!require('./lib/omise').paymentsEnabled()) return next();
   res.set('Cache-Control', 'no-store');
@@ -177,6 +183,15 @@ cron.schedule(
 cron.schedule(
   '30 8 * * *',
   () => require('./lib/line').runDaily(process.env.PUBLIC_BASE_URL ? process.env.PUBLIC_BASE_URL.replace(/\/$/, '') : '').catch((e) => console.error('LINE daily failed:', e.message)),
+  { timezone: 'Asia/Bangkok' }
+);
+
+// Card auto-renew: 06:15 every day, charge plans ending tomorrow (or unpaid since).
+cron.schedule(
+  '15 6 * * *',
+  () => require('./lib/cardRenew').renewDue({ baseUrl: process.env.PUBLIC_BASE_URL ? process.env.PUBLIC_BASE_URL.replace(/\/$/, '') : '' })
+    .then((r) => r && (r.charged || r.failed || r.pending) && console.log('Card renew:', JSON.stringify(r)))
+    .catch((e) => console.error('Card renew failed:', e.message)),
   { timezone: 'Asia/Bangkok' }
 );
 

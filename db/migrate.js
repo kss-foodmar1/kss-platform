@@ -76,6 +76,14 @@ async function upgradeUsers() {
   }
 }
 
+async function upgradeCardPayments() {
+  // pay_method: 'promptpay' | 'card'; authorize_uri: a card charge waiting for
+  // the cardholder's 3-D Secure step.
+  if (!(await columnInfo('payments', 'pay_method'))) {
+    await pool.query(`ALTER TABLE payments ADD COLUMN pay_method VARCHAR(10) NULL, ADD COLUMN authorize_uri TEXT NULL`);
+  }
+}
+
 async function upgradeSelfServe() {
   // self_serve: signed up on the website (trial, self-pay, locks at the end).
   // data_purged_at: KSS cleared the data of a self-serve company locked too long.
@@ -298,6 +306,7 @@ async function main() {
   await upgradeCompanies();
   await upgradeLine();
   await upgradeSelfServe();
+  await upgradeCardPayments();
   await upgradeUsers();
   await upgradeDashboards();
   await upgradePos();

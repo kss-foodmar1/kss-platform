@@ -4,6 +4,10 @@
 //            POST /api/signup                   the signup form
 //   signed   GET  /api/subscription             state, prices, own payments
 //            POST /api/subscription/checkout    { period_months: 1 | 12 } → pay link (company admin)
+//            POST /api/subscription/card/start  { period_months, token } card auto-renew, first charge now
+//            POST /api/subscription/card/change { token }   new card for auto-renew
+//            POST /api/subscription/card/auto   { on, period_months }   switch auto-renew
+//   public   GET  /pay/card-return/:token       back from the bank's 3-D Secure page (server.js)
 //   KSS      GET  /api/admin/self-serve         signups, prices, locked companies
 //            POST /api/admin/self-serve/signups/:id/approve | /reject   { note }
 //            PUT  /api/admin/self-serve/prices  { monthly, yearly } (baht; empty = not offered)
@@ -12,6 +16,13 @@ const express = require('express');
 const { requireAuth, requireSuperadmin } = require('../middleware/auth');
 const { wrap } = require('../lib/access');
 const ss = require('../lib/selfServe');
+const card = require('../lib/cardRenew');
+
+function baseUrl(req) {
+  if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL.replace(/\/$/, '');
+  const proto = (req.get('x-forwarded-proto') || req.protocol).split(',')[0];
+  return `${proto}://${req.get('host')}`;
+}
 
 const send = (fn) => wrap(async (req, res) => {
   try { await fn(req, res); } catch (err) { if (err.status) return res.status(err.status).json({ error: err.message }); throw err; }
@@ -32,7 +43,24 @@ subscriptionRouter.get('/', send(async (req, res) => {
     prices: await ss.prices(),
     payments_enabled: require('../lib/omise').paymentsEnabled(),
     payments: req.user.role === 'company_admin' ? await ss.paymentsOf(companyId) : [],
+    card: {
+      enabled: card.enabled(),
+      public_key: card.enabled() ? require('../lib/omise').publicKey() : null,
+      discount_pct: card.DISCOUNT(),
+      status: req.user.role === 'company_admin' ? await card.status(companyId) : null,
+    },
   });
+}));
+// Card auto-renew (lib/cardRenew.js). Only a token from Omise.js arrives here.
+const adminOnly = (req, res, next) => (req.user.role === 'company_admin' ? next() : res.status(403).json({ error: 'ผู้ดูแลของบริษัทเท่านั้นที่จัดการการชำระเงินได้' }));
+subscriptionRouter.post('/card/start', adminOnly, send(async (req, res) => {
+  const { period_months, token } = req.body || {};
+  res.json(await card.start(req.user.company_id, { periodMonths: period_months, token, userId: req.user.id, email: req.user.email, baseUrl: baseUrl(req) }));
+}));
+subscriptionRouter.post('/card/change', adminOnly, send(async (req, res) => res.json({ status: await card.changeCard(req.user.company_id, (req.body || {}).token) })));
+subscriptionRouter.post('/card/auto', adminOnly, send(async (req, res) => {
+  const { on, period_months } = req.body || {};
+  res.json({ status: await card.setActive(req.user.company_id, !!on, period_months) });
 }));
 subscriptionRouter.post('/checkout', send(async (req, res) => {
   if (req.user.role !== 'company_admin') return res.status(403).json({ error: 'ผู้ดูแลของบริษัทเท่านั้นที่ชำระเงินได้' });
@@ -57,6 +85,8 @@ adminRouter.put('/prices', send(async (req, res) => {
   const { monthly, yearly } = req.body || {};
   try { res.json({ prices: await ss.setPrices({ monthly, yearly }, req.user.id) }); } catch (e) { res.status(400).json({ error: e.message }); }
 }));
+// Run today's card renewals now (the cron does this at 06:15).
+adminRouter.post('/card-renew-now', send(async (req, res) => res.json(await card.renewDue({ baseUrl: baseUrl(req) }))));
 adminRouter.post('/companies/:id/purge', send(async (req, res) => { await ss.purge(Number(req.params.id)); res.json({ ok: true }); }));
 
 module.exports = { publicRouter, subscriptionRouter, adminRouter };

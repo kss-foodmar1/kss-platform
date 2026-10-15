@@ -593,3 +593,17 @@ html.login-hero-on #login-screen > .login-card { flex: 0 0 400px; max-width: 400
 .ss-actions { display: flex; flex-direction: column; gap: 6px; flex: 0 1 260px; }
 .ss-actions input { width: 100%; box-sizing: border-box; }
 .ss-prices + .helper-text, .admin-card .table-scroll + .helper-text { margin-top: 12px; }
+.pay-methods { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; max-width: 640px; margin: 12px 0 4px; }
+.pay-method { display: flex; gap: 10px; align-items: flex-start; border: 1.5px solid var(--line); border-radius: 12px; padding: 12px 14px; cursor: pointer; font-size: 13.5px; line-height: 1.45; background: var(--white); }
+.pay-method.on { border-color: var(--chili); background: #FDF5F2; }
+.pay-method input { margin-top: 3px; }
+.plan-auto { display: inline-block; font-size: 11px; font-weight: 600; color: var(--chili); background: #FBEDE8; border-radius: var(--pill-radius); padding: 1px 8px; margin-left: 4px; vertical-align: middle; }
+.plan-was { font-size: 14px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+.card-on-file { display: flex; flex-wrap: wrap; gap: 10px 20px; justify-content: space-between; align-items: center; border: 1.5px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 10px 0; max-width: 640px; font-size: 13.5px; line-height: 1.6; background: var(--white); }
+.card-on-file.off { background: var(--line-soft); }
+.card-on-file .btn-row, .card-form .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.card-form { max-width: 420px; margin: 12px 0; padding: 14px 16px; border: 1.5px solid var(--line); border-radius: 12px; background: var(--white); }
+.card-form input:not([type=checkbox]) { width: 100%; box-sizing: border-box; }
+.card-form .check-row input { width: auto; flex: 0 0 auto; }
+.card-form .check-row { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; margin: 8px 0; }
+.error-text { color: var(--chili); }

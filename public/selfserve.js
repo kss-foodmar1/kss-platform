@@ -51,6 +51,8 @@ function renderSubBanner() {
   const b = el('sub-banner');
   const sub = state.user && state.user.subscription;
   if (!b) return;
+  // Back from the bank: open the plan page with the result.
+  if (window.__cardReturn && isCompanyAdmin() && sub && sub.self_serve && sub.state !== 'locked') setTimeout(openPlan, 0);
   if (!sub || !sub.self_serve || sub.state === 'locked') { b.classList.add('hidden'); return; }
   const admin = isCompanyAdmin();
   const parts = [];
@@ -79,68 +81,221 @@ function renderSubBanner() {
 }
 
 function openPlan() {
+  adminState.planFlash = window.__cardReturn || '';
+  window.__cardReturn = null;
   adminState.selected = { type: 'my-dashboards', id: state.user.company_id };
   adminState.focus = 'plan';
   openAdminConsole();
 }
 
 // ---------- plan page (company admin) ----------
-async function renderPlanPanel(container) {
+// Two ways to pay: PromptPay QR once, or a card charged automatically every
+// period with CARD_DISCOUNT_PCT off. The card form goes to Omise.js in the
+// browser; only a token reaches KSS.
+let omiseJs = null;
+function loadOmiseJs(publicKey) {
+  if (!omiseJs) {
+    omiseJs = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.omise.co/omise.js';
+      s.onload = () => resolve(window.Omise);
+      s.onerror = () => { omiseJs = null; reject(new Error('โหลดระบบรับชำระบัตร (Omise) ไม่ได้ ลองใหม่อีกครั้ง')); };
+      document.head.appendChild(s);
+    });
+  }
+  return omiseJs.then((O) => { O.setPublicKey(publicKey); return O; });
+}
+function cardToken(publicKey, form) {
+  const [mm, yy] = String(form.exp.value).split('/').map((x) => x.trim());
+  const year = yy && yy.length === 2 ? `20${yy}` : yy;
+  return loadOmiseJs(publicKey).then((O) => new Promise((resolve, reject) => {
+    O.createToken('card', {
+      name: form.holder.value.trim(), number: form.number.value.replace(/\s+/g, ''),
+      expiration_month: Number(mm), expiration_year: Number(year), security_code: form.cvc.value.trim(),
+    }, (code, res) => (code === 200 && res.id ? resolve(res.id) : reject(new Error((res && res.message) || 'ข้อมูลบัตรไม่ถูกต้อง'))));
+  }));
+}
+const cardFormHtml = (cta, consent) => `
+  <form class="card-form">
+    <div class="field"><label>ชื่อบนบัตร</label><input name="holder" required autocomplete="cc-name"></div>
+    <div class="field"><label>หมายเลขบัตร</label><input name="number" required inputmode="numeric" autocomplete="cc-number" placeholder="•••• •••• •••• ••••"></div>
+    <div class="field-row">
+      <div class="field"><label>หมดอายุ (ดด/ปป)</label><input name="exp" required autocomplete="cc-exp" placeholder="MM/YY" maxlength="7"></div>
+      <div class="field"><label>CVV</label><input name="cvc" required inputmode="numeric" autocomplete="cc-csc" maxlength="4"></div>
+    </div>
+    ${consent ? `<label class="check-row"><input type="checkbox" name="agree"> ${consent}</label>` : ''}
+    <p class="helper-text">ข้อมูลบัตรส่งตรงจากเครื่องคุณไปยัง Omise (ผู้ให้บริการรับชำระ) KSS ไม่เห็นและไม่เก็บเลขบัตร</p>
+    <div class="btn-row"><button type="submit" class="btn primary">${cta}</button><button type="button" class="btn ghost card-cancel">ยกเลิก</button></div>
+  </form>`;
+
+async function renderPlanPanel(container, flash = '') {
   container.innerHTML = '<p class="muted">กำลังโหลด...</p>';
   let d;
   try { d = await api('/api/subscription'); } catch (err) { container.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`; return; }
   const sub = d.subscription || {};
   const admin = isCompanyAdmin();
+  const cardInfo = d.card || {};
+  const cs = cardInfo.status;
+  const canCard = admin && cardInfo.enabled;
+  const method = canCard ? container.dataset.method || 'card' : 'promptpay';
+  const disc = Number(cardInfo.discount_pct || 0);
+  const priceOf = (p) => (method === 'card' ? Math.round(p.amount_baht * (1 - disc / 100)) : p.amount_baht);
   const monthly = (d.prices || []).find((p) => p.period_months === 1);
   const yearly = (d.prices || []).find((p) => p.period_months === 12);
   const saving = monthly && yearly && monthly.amount_baht && yearly.amount_baht ? Math.round((1 - yearly.amount_baht / (monthly.amount_baht * 12)) * 100) : 0;
   // "ฟรี N เดือน": how many monthly payments the yearly price leaves out.
   const freeMonths = saving > 0 ? Math.round((monthly.amount_baht * 12 - yearly.amount_baht) / monthly.amount_baht) : 0;
   // Per-day figures are computed from the real prices, so the copy is always true.
-  const perDay = (p) => Math.round(p.amount_baht / (p.period_months === 12 ? 365 : 30)).toLocaleString('th-TH');
+  const perDay = (p) => Math.round(priceOf(p) / (p.period_months === 12 ? 365 : 30)).toLocaleString('th-TH');
   const status =
     sub.state === 'trial' ? `ทดลองใช้ฟรี ถึง ${esc(ssDay(sub.ends_at))} (เหลือ ${sub.days_left} วัน) — ชำระตอนนี้ วันที่เหลือของช่วงทดลองไม่หาย แพ็กเกจเริ่มนับต่อจากวันหมดทดลอง`
     : sub.state === 'locked' ? `หมดอายุตั้งแต่ ${esc(ssDay(sub.ends_at))} — ชำระแล้วใช้งานต่อได้ทันที`
     : `ใช้งานได้ถึง ${esc(ssDay(sub.ends_at))}${sub.in_grace ? ' (หมดอายุแล้ว อยู่ในช่วงผ่อนผัน)' : ''} — ต่ออายุตอนนี้ เริ่มนับต่อจากวันหมดอายุเดิม`;
-  const card = (p, extra) => {
+  const planCard = (p) => {
     if (!p || !p.amount_baht) return '';
-    const per = p.period_months === 12 ? `เฉลี่ย ${ssBaht(Math.round(p.amount_baht / 12))} / เดือน (ตกวันละ ~${perDay(p)} บาท)` : `ต่ออายุทีละเดือน (ตกวันละ ${perDay(p)} บาท)`;
+    const yearlyLine = `เฉลี่ย ${ssBaht(Math.round(priceOf(p) / 12))} / เดือน (ตกวันละ ~${perDay(p)} บาท)`;
+    const per = p.period_months === 12 ? yearlyLine : `ต่ออายุทีละเดือน (ตกวันละ ${perDay(p)} บาท)`;
+    const cta = method === 'card' ? (cs && cs.active ? `เปลี่ยนเป็น${SS_PLAN_LABEL[p.period_months]}` : 'ผูกบัตรและชำระ') : 'ชำระด้วย PromptPay QR';
     return `<div class="plan-option${p.period_months === 12 ? ' best' : ''}">
       ${p.period_months === 12 && saving > 0 ? `<span class="plan-flag">${freeMonths > 0 ? `ฟรี ${freeMonths} เดือน · ` : ''}ประหยัด ${saving}%</span>` : ''}
-      <div class="plan-name">${esc(SS_PLAN_LABEL[p.period_months])}</div>
-      <div class="plan-price">${ssBaht(p.amount_baht)}</div>
-      <div class="plan-per muted">${per}${extra || ''}</div>
-      ${admin ? `<button type="button" class="btn ${p.period_months === 12 ? 'primary' : 'ghost'} block plan-pay" data-m="${p.period_months}" ${d.payments_enabled ? '' : 'disabled'}>ชำระด้วย PromptPay QR</button>` : ''}
+      <div class="plan-name">${esc(SS_PLAN_LABEL[p.period_months])}${method === 'card' ? ` <span class="plan-auto">ตัดบัตรอัตโนมัติ −${disc}%</span>` : ''}</div>
+      <div class="plan-price">${ssBaht(priceOf(p))}${method === 'card' ? ` <s class="plan-was">${ssBaht(p.amount_baht)}</s>` : ''}</div>
+      <div class="plan-per muted">${per}</div>
+      ${!admin ? '' : method === 'card' && cs && cs.active && cs.period_months === p.period_months
+        ? '<button type="button" class="btn ghost block" disabled>แพ็กเกจปัจจุบันของคุณ</button>'
+        : `<button type="button" class="btn ${p.period_months === 12 ? 'primary' : 'ghost'} block plan-pay" data-m="${p.period_months}" ${d.payments_enabled ? '' : 'disabled'}>${cta}</button>`}
     </div>`;
   };
   const anyPrice = (monthly && monthly.amount_baht) || (yearly && yearly.amount_baht);
+  const methodPick = canCard ? `
+    <div class="pay-methods" role="radiogroup" aria-label="วิธีชำระ">
+      <label class="pay-method${method === 'card' ? ' on' : ''}"><input type="radio" name="pm" value="card" ${method === 'card' ? 'checked' : ''}> <span><strong>บัตรเครดิต/เดบิต ตัดอัตโนมัติ</strong><br><span class="muted">ลดเพิ่ม ${disc}% · ไม่ต้องจำวันต่ออายุ · ยกเลิกได้ทุกเมื่อ</span></span></label>
+      <label class="pay-method${method === 'promptpay' ? ' on' : ''}"><input type="radio" name="pm" value="promptpay" ${method === 'promptpay' ? 'checked' : ''}> <span><strong>PromptPay QR</strong><br><span class="muted">จ่ายทีละครั้ง ต่ออายุเองเมื่อใกล้หมด</span></span></label>
+    </div>` : '';
+  const cardBox = cs ? `
+    <div class="card-on-file${cs.active ? '' : ' off'}">
+      <div><strong>${esc((cs.brand || 'บัตร').toUpperCase())} •••• ${esc(cs.last4 || '')}</strong> <span class="muted">หมดอายุ ${esc(cs.expiry || '-')}</span><br>
+        ${cs.active
+          ? `ตัดอัตโนมัติ: <strong>เปิด</strong> · ${esc(SS_PLAN_LABEL[cs.period_months])} ลด ${cs.discount_pct}%${cs.next_charge_on ? ` · ตัดรอบถัดไป ${esc(ssDay(cs.next_charge_on))}` : ''}`
+          : 'ตัดอัตโนมัติ: <strong>ปิด</strong> — ต้องต่ออายุเอง'}
+        ${cs.failures ? `<br><span class="error-text">ตัดบัตรไม่สำเร็จ ${cs.failures} ครั้ง: ${esc(cs.last_error || '')} — เปลี่ยนบัตรเพื่อให้ระบบลองใหม่</span>` : ''}
+        ${cs.needs_authorization ? `<br><a class="btn small primary" href="${esc(cs.needs_authorization)}">ยืนยันการชำระกับธนาคาร</a>` : ''}
+      </div>
+      <div class="btn-row">
+        <button type="button" class="btn small ghost card-change">เปลี่ยนบัตร</button>
+        <button type="button" class="btn small ${cs.active ? 'danger' : 'primary'} card-auto">${cs.active ? 'หยุดตัดอัตโนมัติ' : 'เปิดตัดอัตโนมัติ'}</button>
+      </div>
+    </div>` : '';
   const history = (d.payments || []).length
     ? `<h3 class="pos-h3">ประวัติการชำระ</h3><div class="table-scroll"><table class="mini-table"><thead><tr><th>วันที่</th><th>รายการ</th><th class="num">จำนวนเงิน</th><th>สถานะ</th><th></th></tr></thead><tbody>${d.payments
         .map((p) => `<tr><td>${esc(fmtDateTime(p.paid_at || p.created_at))}</td><td>${esc(p.description)}</td><td class="num">${ssBaht(p.amount_baht)}</td>
-          <td>${p.status === 'paid' ? `ชำระแล้ว${p.extended_to ? ` · ใช้ได้ถึง ${esc(ssDay(p.extended_to))}` : ''}` : p.status === 'pending' ? 'รอชำระ' : 'ยกเลิก'}</td>
-          <td>${p.pay_path ? `<a href="${esc(p.pay_path)}">ไปหน้าชำระ</a>` : ''}</td></tr>`)
+          <td>${p.status === 'paid' ? `ชำระแล้ว${p.extended_to ? ` · ใช้ได้ถึง ${esc(ssDay(p.extended_to))}` : ''}` : p.status === 'pending' ? (p.pay_method === 'card' ? 'รอยืนยันกับธนาคาร' : 'รอชำระ') : 'ไม่สำเร็จ / ยกเลิก'}</td>
+          <td>${p.pay_path ? `<a href="${esc(p.pay_path)}">${p.pay_method === 'card' ? 'ยืนยันกับธนาคาร' : 'ไปหน้าชำระ'}</a>` : ''}</td></tr>`)
         .join('')}</tbody></table></div>`
     : '';
   container.innerHTML = `
     <p class="status-line">${status}</p>
-    ${anyPrice ? `<div class="plan-options">${card(monthly)}${card(yearly)}</div>` : '<p class="muted">ยังไม่ได้ประกาศราคาแพ็กเกจ กรุณาติดต่อทีม KSS</p>'}
+    ${cardBox}
+    ${methodPick}
+    ${anyPrice ? `<div class="plan-options">${planCard(monthly)}${planCard(yearly)}</div>` : '<p class="muted">ยังไม่ได้ประกาศราคาแพ็กเกจ กรุณาติดต่อทีม KSS</p>'}
     ${!d.payments_enabled && anyPrice ? '<p class="warn-msg">ตอนนี้ยังชำระออนไลน์ไม่ได้ ติดต่อทีม KSS เพื่อชำระโดยการโอน แล้วทีมจะต่ออายุให้</p>' : ''}
     ${!admin ? '<p class="muted">ผู้ดูแลของบริษัทเป็นผู้ชำระเงิน</p>' : ''}
-    <div class="plan-msg"></div>
+    <div class="card-slot"></div>
+    <div class="plan-msg">${flash}</div>
     ${history}`;
+  const msg = (html) => { container.querySelector('.plan-msg').innerHTML = html; };
+  const slot = container.querySelector('.card-slot');
+  container.querySelectorAll('input[name=pm]').forEach((r) => r.addEventListener('change', () => { container.dataset.method = r.value; renderPlanPanel(container); }));
+
+  // The card form, for a first charge or a new card.
+  const openCardForm = ({ cta, consent, submit }) => {
+    slot.innerHTML = cardFormHtml(cta, consent);
+    const f = slot.querySelector('form');
+    f.querySelector('.card-cancel').addEventListener('click', () => { slot.innerHTML = ''; });
+    f.exp.addEventListener('input', () => { const v = f.exp.value.replace(/[^\d]/g, '').slice(0, 4); f.exp.value = v.length > 2 ? `${v.slice(0, 2)}/${v.slice(2)}` : v; });
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (f.agree && !f.agree.checked) return msg('<div class="error-msg">กรุณายืนยันการตัดบัตรอัตโนมัติ</div>');
+      const btn = f.querySelector('button[type=submit]');
+      btn.disabled = true;
+      msg('<p class="muted">กำลังตรวจสอบบัตร...</p>');
+      try {
+        const token = await cardToken(cardInfo.public_key, f);
+        await submit(token);
+      } catch (err) {
+        msg(`<div class="error-msg">${esc(err.message)}</div>`);
+        btn.disabled = false;
+      }
+    });
+    f.holder.focus();
+    slot.scrollIntoView({ block: 'nearest' });
+  };
+
   container.querySelectorAll('.plan-pay').forEach((btn) =>
     btn.addEventListener('click', async () => {
+      const m = Number(btn.dataset.m);
+      if (method === 'card') {
+        if (cs && cs.active) {
+          // Already on auto-renew: just switch the period for the next charge.
+          try {
+            await api('/api/subscription/card/auto', { method: 'POST', body: JSON.stringify({ on: true, period_months: m }) });
+            return renderPlanPanel(container, `<div class="ok-msg">เปลี่ยนเป็น${SS_PLAN_LABEL[m]}แล้ว มีผลตั้งแต่รอบตัดบัตรครั้งถัดไป</div>`);
+          } catch (err) { return msg(`<div class="error-msg">${esc(err.message)}</div>`); }
+        }
+        const price = priceOf(m === 12 ? yearly : monthly);
+        return openCardForm({
+          cta: `ชำระ ${ssBaht(price)} และเปิดตัดอัตโนมัติ`,
+          consent: `ยินยอมให้ตัดบัตรนี้ ${ssBaht(price)} ทุก${m === 12 ? 'ปี' : 'เดือน'}อัตโนมัติ จนกว่าจะยกเลิก (ยกเลิกได้ทุกเมื่อในหน้านี้)`,
+          submit: async (token) => {
+            const r = await api('/api/subscription/card/start', { method: 'POST', body: JSON.stringify({ period_months: m, token }) });
+            if (r.authorize_uri) { location.href = r.authorize_uri; return; }
+            await refreshMe();
+            renderPlanPanel(container, `<div class="ok-msg">ชำระแล้ว ใช้งานได้ถึง ${esc(ssDay(r.extended_to))} ระบบจะตัดบัตรรอบถัดไปให้อัตโนมัติ</div>`);
+          },
+        });
+      }
       btn.disabled = true;
       try {
-        const r = await api('/api/subscription/checkout', { method: 'POST', body: JSON.stringify({ period_months: Number(btn.dataset.m) }) });
+        const r = await api('/api/subscription/checkout', { method: 'POST', body: JSON.stringify({ period_months: m }) });
         location.href = r.pay_path;
       } catch (err) {
-        container.querySelector('.plan-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+        msg(`<div class="error-msg">${esc(err.message)}</div>`);
         btn.disabled = false;
       }
     })
   );
+  const change = container.querySelector('.card-change');
+  if (change) change.addEventListener('click', () => openCardForm({
+    cta: 'บันทึกบัตรใหม่',
+    submit: async (token) => {
+      await api('/api/subscription/card/change', { method: 'POST', body: JSON.stringify({ token }) });
+      renderPlanPanel(container, '<div class="ok-msg">เปลี่ยนบัตรแล้ว รอบถัดไปจะตัดจากบัตรใหม่</div>');
+    },
+  }));
+  const auto = container.querySelector('.card-auto');
+  if (auto) auto.addEventListener('click', async () => {
+    if (cs.active && !auto.dataset.armed) { auto.dataset.armed = '1'; auto.textContent = 'กดอีกครั้งเพื่อหยุดตัดอัตโนมัติ'; return; }
+    try {
+      await api('/api/subscription/card/auto', { method: 'POST', body: JSON.stringify({ on: !cs.active }) });
+      renderPlanPanel(container, `<div class="ok-msg">${cs.active ? 'หยุดตัดอัตโนมัติแล้ว ใช้งานได้ถึงวันหมดอายุเดิม' : 'เปิดตัดอัตโนมัติแล้ว'}</div>`);
+    } catch (err) { msg(`<div class="error-msg">${esc(err.message)}</div>`); }
+  });
 }
+async function refreshMe() {
+  try { state.user = (await api('/api/auth/me')).user; renderSubBanner(); } catch (e) { /* keep the old one */ }
+}
+
+// Back from the bank's 3-D Secure page: /?card=paid|failed|pending
+(function cardReturnNotice() {
+  const v = new URLSearchParams(location.search).get('card');
+  if (!v) return;
+  history.replaceState(null, '', location.pathname);
+  window.__cardReturn = {
+    paid: '<div class="ok-msg">ชำระด้วยบัตรสำเร็จ ระบบจะตัดบัตรรอบถัดไปให้อัตโนมัติ</div>',
+    failed: '<div class="error-msg">ธนาคารไม่อนุมัติการชำระ ลองบัตรอื่น หรือชำระด้วย PromptPay</div>',
+    pending: '<div class="warn-msg">ยังไม่ได้รับผลจากธนาคาร ถ้าชำระแล้ว สถานะจะอัปเดตภายในไม่กี่นาที</div>',
+  }[v] || null;
+})();
 
 // ---------- lock screen ----------
 async function showLockScreen() {
@@ -161,7 +316,8 @@ async function showLockScreen() {
       : 'Dashboard การตั้งค่า และข้อมูลของคุณยังอยู่ครบ ชำระเงินแล้วใช้งานต่อได้ทันที'}</p>
     ${isCompanyAdmin() ? '<div class="plan-panel"></div>' : '<p class="muted">ติดต่อผู้ดูแลของบริษัทคุณเพื่อต่ออายุ</p>'}`;
   const panel = body.querySelector('.plan-panel');
-  if (panel) await renderPlanPanel(panel);
+  if (panel) await renderPlanPanel(panel, window.__cardReturn || '');
+  window.__cardReturn = null;
   showLockScreen.busy = false;
 }
 document.querySelector('#lock-screen .lock-logout').addEventListener('click', async () => {

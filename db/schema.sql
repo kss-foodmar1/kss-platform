@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS payments (
   extended_from DATE NULL,
   extended_to DATE NULL,
   created_by INT NULL,
+  pay_method VARCHAR(10) NULL,
+  authorize_uri TEXT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_payments_company (company_id),
   INDEX idx_payments_charge (charge_id)
@@ -397,4 +399,24 @@ CREATE TABLE IF NOT EXISTS billing_prices (
   amount_satang INT NOT NULL,
   updated_by INT NULL,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) DEFAULT CHARSET=utf8mb4;
+
+-- Card auto-renew for self-serve companies (lib/cardRenew.js). The card itself
+-- lives at Omise (customer + card); only its brand / last 4 / expiry are kept
+-- here for display. active = 1 once a first charge succeeded.
+CREATE TABLE IF NOT EXISTS card_subscriptions (
+  company_id INT NOT NULL PRIMARY KEY,
+  omise_customer_id VARCHAR(64) NOT NULL,
+  card_brand VARCHAR(30) NULL,
+  card_last4 VARCHAR(4) NULL,
+  card_expiry VARCHAR(7) NULL,
+  period_months INT NOT NULL DEFAULT 1,
+  discount_pct DECIMAL(5,2) NOT NULL DEFAULT 5,
+  active BOOLEAN NOT NULL DEFAULT FALSE,
+  failures INT NOT NULL DEFAULT 0,
+  last_error VARCHAR(255) NULL,
+  last_attempt_on DATE NULL,
+  created_by INT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;

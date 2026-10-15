@@ -1108,7 +1108,7 @@ async function renderMyDashboards(main, companyId) {
       <h2>LINE แจ้งเตือนผู้บริหาร</h2>
       <div class="line-panel"></div>
     </section>`;
-  if (main.querySelector('.plan-panel')) renderPlanPanel(main.querySelector('.plan-panel'));
+  if (main.querySelector('.plan-panel')) { renderPlanPanel(main.querySelector('.plan-panel'), adminState.planFlash || ''); adminState.planFlash = ''; }
   renderComposer(main.querySelector('.composer'), companyId);
   renderFmhFilesPanel(main.querySelector('.fmh-files-panel'), companyId);
   renderPosPanel(main.querySelector('.pos-panel'), companyId);
