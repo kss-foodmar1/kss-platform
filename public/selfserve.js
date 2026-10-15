@@ -66,11 +66,15 @@ function renderSubBanner() {
   } else if (sub.days_left !== null && sub.days_left <= 7) {
     parts.push(`แพ็กเกจจะหมดอายุใน ${sub.days_left} วัน (${esc(ssDay(sub.ends_at))})`);
     tone = 'warn';
+  } else if (admin) {
+    // Plenty of time left: a quiet line, so the plan page is always one click away.
+    parts.push(sub.ends_at ? `แพ็กเกจใช้งานได้ถึง ${esc(ssDay(sub.ends_at))}` : 'แพ็กเกจ');
+    tone = 'quiet';
   } else { b.classList.add('hidden'); return; }
   if (sub.data_source === 'demo') parts.push('กำลังดู<strong>ข้อมูลตัวอย่าง</strong>');
   const buttons = [
     admin && sub.data_source === 'demo' ? '<button type="button" class="btn small ghost sb-key">ใส่ FMH API key เพื่อดูข้อมูลจริง</button>' : '',
-    admin ? `<button type="button" class="btn small primary sb-plan">${sub.state === 'trial' ? 'ดูแพ็กเกจ' : 'ต่ออายุ'}</button>` : '',
+    admin ? `<button type="button" class="btn small ${tone === 'quiet' ? 'ghost' : 'primary'} sb-plan">${sub.state === 'trial' ? 'ดูแพ็กเกจ' : tone === 'quiet' ? 'แพ็กเกจและการชำระเงิน' : 'ต่ออายุ'}</button>` : '',
   ].join('');
   b.className = `sub-banner tone-${tone}`;
   b.innerHTML = `<span>${parts.join(' · ')}</span><span class="sb-actions">${buttons}</span>`;

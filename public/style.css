@@ -607,3 +607,4 @@ html.login-hero-on #login-screen > .login-card { flex: 0 0 400px; max-width: 400
 .card-form .check-row input { width: auto; flex: 0 0 auto; }
 .card-form .check-row { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; margin: 8px 0; }
 .error-text { color: var(--chili); }
+.sub-banner.tone-quiet { background: var(--white); padding-top: 6px; padding-bottom: 6px; font-size: 13px; color: var(--muted); }
