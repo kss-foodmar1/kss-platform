@@ -35,7 +35,7 @@ const app = express();
 // browser has never seen cannot be served from cache. The stamp is the newest
 // mtime among the shell files, so it changes exactly when they do and stays
 // stable across restarts that changed nothing.
-const SHELL_FILES = ['app.js', 'admin.js', 'style.css', 'index.html', 'i18n.js', 'i18n-en.js', 'pos-parse.js', 'fmh-file.js'];
+const SHELL_FILES = ['app.js', 'admin.js', 'selfserve.js', 'style.css', 'index.html', 'i18n.js', 'i18n-en.js', 'pos-parse.js', 'fmh-file.js'];
 const ASSET_VERSION = (() => {
   try {
     const newest = SHELL_FILES.reduce((max, f) => {
@@ -94,12 +94,15 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/dashboards', dashboardRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/admin/self-serve', require('./routes/selfServe').adminRouter);
 app.use('/api/admin/billing', billingRoutes.adminRouter);
 app.use('/api/admin', adminRoutes);
 app.use('/api/pos', require('./routes/pos'));
 app.use('/api/fmh-files', require('./routes/fmhFiles'));
 app.use('/api/announcements', require('./routes/announcements'));
 app.use('/api/pay', billingRoutes.publicRouter);
+app.use('/api/signup', require('./routes/selfServe').publicRouter);
+app.use('/api/subscription', require('./routes/selfServe').subscriptionRouter);
 app.use('/api/webhooks/line', require('./routes/line').webhookRouter);
 app.use('/api/line', require('./routes/line').router);
 app.use('/api/webhooks', billingRoutes.webhookRouter);

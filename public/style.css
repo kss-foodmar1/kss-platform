@@ -556,3 +556,40 @@ html.login-hero-on #login-screen > .login-card { flex: 0 0 400px; max-width: 400
 .line-watchers .watcher-row .check-row { margin-top: 0; }
 .line-watchers .w-num { font-size: 12px; display: inline-flex; gap: 4px; align-items: center; }
 .line-watchers .w-num input { width: 72px; }
+
+/* ---------- Self-serve: signup, trial banner, plans, lock, KSS review ---------- */
+.signup-cta { text-align: center; font-size: 13px; margin: 14px 0 0; color: var(--muted); }
+.signup-cta a { color: var(--chili); font-weight: 600; }
+#signup-box h2 { font-size: 18px; margin: 6px 0 8px; }
+#signup-box .check-row { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; margin: 6px 0 14px; color: var(--muted); }
+#signup-box textarea { width: 100%; box-sizing: border-box; font: inherit; }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.field-row .field { min-width: 0; }
+@media (max-width: 520px) { .field-row { grid-template-columns: 1fr; } }
+.hp-field { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.login-card:has(#signup-box:not(.hidden)) { max-width: 520px; }
+
+.sub-banner { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; padding: 10px 20px; font-size: 13.5px; border-bottom: 1px solid var(--line); background: var(--line-soft); }
+.sub-banner.tone-warn { background: #FBEDE8; border-bottom-color: #F1C9BD; }
+.sub-banner .sb-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.plan-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 14px 0; max-width: 640px; }
+.plan-option { position: relative; border: 1.5px solid var(--line); border-radius: 14px; padding: 18px 16px 16px; display: flex; flex-direction: column; gap: 6px; background: var(--white); }
+.plan-option.best { border-color: var(--chili); }
+.plan-flag { position: absolute; top: -10px; right: 14px; background: var(--chili); color: var(--white); font-size: 11.5px; font-weight: 600; padding: 2px 10px; border-radius: var(--pill-radius); }
+.plan-name { font-weight: 600; }
+.plan-price { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.plan-per { font-size: 12.5px; margin-bottom: 8px; }
+.plan-option .btn { margin-top: auto; }
+.plan-card { max-width: 680px; }
+.plan-card h1 { margin-bottom: 4px; }
+.plan-card .lock-logout { margin-top: 16px; }
+
+.nav-badge { display: inline-block; min-width: 18px; padding: 0 6px; margin-left: 4px; border-radius: var(--pill-radius); background: var(--chili); color: var(--white); font-size: 11px; line-height: 18px; text-align: center; }
+.ss-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.ss-row { display: flex; flex-wrap: wrap; gap: 10px 18px; justify-content: space-between; padding: 12px 0; border-top: 1px solid var(--line-soft); font-size: 13.5px; }
+.ss-row .ss-main { min-width: 0; flex: 1 1 320px; line-height: 1.55; }
+.ss-note { margin: 6px 0 0; color: var(--ink); font-style: italic; }
+.ss-actions { display: flex; flex-direction: column; gap: 6px; flex: 0 1 260px; }
+.ss-actions input { width: 100%; box-sizing: border-box; }
+.ss-prices + .helper-text, .admin-card .table-scroll + .helper-text { margin-top: 12px; }

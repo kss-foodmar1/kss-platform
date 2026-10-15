@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS companies (
   subscription_ends_at DATE NULL,
   data_source ENUM('fmh','demo') NOT NULL DEFAULT 'fmh',
   suspended_reason VARCHAR(20) NULL,
+  self_serve BOOLEAN NOT NULL DEFAULT FALSE,
+  data_purged_at TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) DEFAULT CHARSET=utf8mb4;
 
@@ -362,4 +364,37 @@ CREATE TABLE IF NOT EXISTS alert_events (
   PRIMARY KEY (company_id, watcher, finding_key),
   INDEX (company_id, last_seen),
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
+-- Self-serve signup (lib/selfServe.js). A request waits for KSS approval;
+-- approving creates a trial company (demo data) and its company_admin with
+-- the password chosen at signup. Rejected/approved rows are kept as a record.
+CREATE TABLE IF NOT EXISTS signup_requests (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  company_name VARCHAR(120) NOT NULL,
+  contact_name VARCHAR(120) NOT NULL,
+  email VARCHAR(255) NOT NULL,
+  phone VARCHAR(40) NOT NULL,
+  branches VARCHAR(40) NULL,
+  uses_fmh ENUM('yes','no','unsure') NOT NULL DEFAULT 'unsure',
+  note VARCHAR(500) NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  status ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
+  company_id INT NULL,
+  decided_by INT NULL,
+  decided_at TIMESTAMP NULL,
+  decision_note VARCHAR(255) NULL,
+  ip VARCHAR(64) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX (status, created_at),
+  INDEX (email)
+) DEFAULT CHARSET=utf8mb4;
+
+-- Self-serve plan prices, set by KSS in Admin Console (never in code).
+-- period_months 1 = monthly, 12 = yearly.
+CREATE TABLE IF NOT EXISTS billing_prices (
+  period_months INT NOT NULL PRIMARY KEY,
+  amount_satang INT NOT NULL,
+  updated_by INT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) DEFAULT CHARSET=utf8mb4;

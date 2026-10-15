@@ -288,6 +288,7 @@ async function openAdminConsole() {
     return renderAdminMain();
   }
   await renderAdminCompanyList();
+  if (typeof refreshSignupBadge === 'function') refreshSignupBadge();
   if (!adminState.selected) adminState.selected = state.viewCompanyId ? { type: 'company', id: state.viewCompanyId } : { type: 'catalog' };
   renderAdminMain();
 }
@@ -376,6 +377,7 @@ function renderAdminMain() {
   if (sel.type === 'catalog') return renderCatalog(main);
   if (sel.type === 'fmh') return renderFmhDiagnostics(main);
   if (sel.type === 'news') return renderNews(main);
+  if (sel.type === 'self-serve') return renderSelfServeAdmin(main);
   if (sel.type === 'staff') {
     main.innerHTML = `<h1 class="admin-h1">ทีม KSS</h1>
       <p class="muted">บัญชีทีม KSS เห็นทุกบริษัทและใช้ Admin Console ได้</p>
@@ -1091,6 +1093,7 @@ async function renderMyDashboards(main, companyId) {
       <p class="helper-text">รหัสบริษัท <strong class="company-code big">${esc(state.user.company_code || '')}</strong> — รหัสนี้ไม่เปลี่ยนแม้เปลี่ยนชื่อบริษัท ใช้อ้างอิงเมื่อติดต่อทีม KSS</p>
       <div class="name-msg"></div>
     </section>
+    ${state.user.subscription && state.user.subscription.self_serve ? '<section class="admin-card" id="plan"><h2>แพ็กเกจและการชำระเงิน</h2><div class="plan-panel"></div></section>' : ''}
     <section class="admin-card"><div class="composer"></div></section>
     <section class="admin-card" id="fmh-files">
       <h2>ข้อมูลย้อนหลังจากไฟล์ FMH (เกิน 90 วัน)</h2>
@@ -1105,6 +1108,7 @@ async function renderMyDashboards(main, companyId) {
       <h2>LINE แจ้งเตือนผู้บริหาร</h2>
       <div class="line-panel"></div>
     </section>`;
+  if (main.querySelector('.plan-panel')) renderPlanPanel(main.querySelector('.plan-panel'));
   renderComposer(main.querySelector('.composer'), companyId);
   renderFmhFilesPanel(main.querySelector('.fmh-files-panel'), companyId);
   renderPosPanel(main.querySelector('.pos-panel'), companyId);
@@ -1123,10 +1127,10 @@ async function renderMyDashboards(main, companyId) {
       out.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
     }
   });
-  if (adminState.focus === 'pos' || adminState.focus === 'fmh-files') {
-    const target = main.querySelector(adminState.focus === 'pos' ? '#pos-sales' : '#fmh-files');
+  if (['pos', 'fmh-files', 'plan'].includes(adminState.focus)) {
+    const target = main.querySelector({ pos: '#pos-sales', 'fmh-files': '#fmh-files', plan: '#plan' }[adminState.focus]);
     adminState.focus = null;
-    target.scrollIntoView({ block: 'start' });
+    if (target) target.scrollIntoView({ block: 'start' });
   }
 }
 

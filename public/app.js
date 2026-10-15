@@ -27,6 +27,8 @@ async function api(path, opts = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    // Trial or plan ended mid-session: only the plan page is left (selfserve.js).
+    if (data.code === 'SUBSCRIPTION_LOCKED' && typeof showLockScreen === 'function') showLockScreen();
     const err = new Error(data.error || 'Request failed');
     err.code = data.code;
     err.status = res.status;
@@ -405,6 +407,7 @@ function groupRows(rows, groupBy) {
 
 // ---------- screens / auth ----------
 function showScreen(name) {
+  el('lock-screen').classList.toggle('hidden', name !== 'lock');
   el('login-screen').classList.toggle('hidden', name !== 'login');
   el('force-change-screen').classList.toggle('hidden', name !== 'force-change');
   el('app-shell').classList.toggle('hidden', name !== 'app');
@@ -484,7 +487,9 @@ el('logout-btn').addEventListener('click', async () => {
 
 // ---------- app shell ----------
 async function enterApp() {
+  if (state.user.subscription && state.user.subscription.state === 'locked') return showLockScreen();
   el('user-display-name').textContent = state.user.display_name;
+  renderSubBanner();
   el('open-admin-btn').classList.toggle('hidden', !isSuper() && !isCompanyAdmin());
   el('open-admin-btn').textContent = adminBtnLabel();
   el('open-manage-users-btn').classList.toggle('hidden', !isCompanyAdmin());

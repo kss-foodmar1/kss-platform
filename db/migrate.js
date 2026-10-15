@@ -76,6 +76,14 @@ async function upgradeUsers() {
   }
 }
 
+async function upgradeSelfServe() {
+  // self_serve: signed up on the website (trial, self-pay, locks at the end).
+  // data_purged_at: KSS cleared the data of a self-serve company locked too long.
+  if (!(await columnInfo('companies', 'self_serve'))) {
+    await pool.query(`ALTER TABLE companies ADD COLUMN self_serve BOOLEAN NOT NULL DEFAULT FALSE, ADD COLUMN data_purged_at TIMESTAMP NULL`);
+  }
+}
+
 async function upgradeLine() {
   // last_event_*: what the LINE webhook last did, so a silent bot can be diagnosed from Admin.
   if (!(await columnInfo('company_line', 'last_event_at'))) {
@@ -289,6 +297,7 @@ async function main() {
   console.log(`Schema: ${n} statement(s) applied.`);
   await upgradeCompanies();
   await upgradeLine();
+  await upgradeSelfServe();
   await upgradeUsers();
   await upgradeDashboards();
   await upgradePos();
