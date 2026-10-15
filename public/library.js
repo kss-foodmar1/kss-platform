@@ -196,7 +196,7 @@ async function openLibrary(opts = {}) {
   el('dashboard-view').classList.add('hidden');
   el('admin-view').classList.add('hidden');
   el('library-view').classList.remove('hidden');
-  el('app-shell').classList.remove('admin-mode');
+  el('app-shell').classList.remove('admin-mode', 'with-side');
   el('open-admin-btn').textContent = adminBtnLabel();
   state.navCurrent = { kind: 'library' };
   renderSideNav();
@@ -285,6 +285,7 @@ function libRenderGrid() {
   view.innerHTML = `
     <div class="lib-wrap">
       <header class="lib-head">
+        <button type="button" class="link-btn lib-home">← กลับไปดู Dashboard</button>
         <h1 class="lib-h1">คลัง Widget</h1>
         <p class="lib-lead">เริ่มจากคำถามที่อยากรู้ ไม่ต้องจำชื่อ widget · กดดูตัวอย่างบนข้อมูลของบริษัท แล้วเพิ่มลง Dashboard ไหนก็ได้</p>
         ${target ? `<div class="lib-target"><span>กำลังเลือก widget ให้ <b>${esc(target.display_name)}</b></span><button type="button" class="link-btn lib-target-clear">เลือกให้ Dashboard อื่น</button></div>` : ''}
@@ -361,6 +362,7 @@ function libRenderGrid() {
     window.scrollTo(0, y);
   });
   view.querySelectorAll('.lib-card').forEach((b) => b.addEventListener('click', () => { lib.detail = Number(b.dataset.tid); lib.flash = ''; libRender(); }));
+  view.querySelector('.lib-home').addEventListener('click', () => goDashboard(lib.target || state.activeDashboardId || (state.dashboards[0] || {}).id));
   const clear = view.querySelector('.lib-target-clear');
   if (clear) clear.addEventListener('click', () => { lib.target = null; libRenderGrid(); });
   view.querySelectorAll('.lib-pack-use').forEach((b) =>

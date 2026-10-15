@@ -281,8 +281,10 @@ async function openAdminConsole() {
   el('admin-view').classList.remove('hidden');
   el('open-admin-btn').textContent = '← กลับไปดู Dashboard';
   el('admin-view').classList.toggle('company-mode', !isSuper());
-  // KSS staff get the Console's own sidebar; a company admin keeps the left menu.
+  // KSS staff get the Console's own sidebar; a company admin's settings get
+  // the left menu (dashboards themselves stay full width).
   el('app-shell').classList.toggle('admin-mode', isSuper());
+  el('app-shell').classList.toggle('with-side', !isSuper());
   if (!adminState.meta) adminState.meta = await api('/api/admin/meta');
   await loadTemplates();
   if (!isSuper()) {

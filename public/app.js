@@ -492,7 +492,7 @@ async function enterApp() {
   renderSubBanner();
   // KSS staff keep the Admin Console button; a company admin's settings live
   // in the left menu (renderSideNav), so the topbar shortcuts go.
-  el('open-admin-btn').classList.toggle('hidden', !isSuper());
+  el('open-admin-btn').classList.toggle('hidden', !isSuper() && !isCompanyAdmin());
   el('open-admin-btn').textContent = adminBtnLabel();
   el('open-manage-users-btn').classList.add('hidden');
   el('open-settings-btn').classList.add('hidden');
@@ -542,7 +542,7 @@ function showDashboardView() {
   el('dashboard-view').classList.remove('hidden');
   el('admin-view').classList.add('hidden');
   el('library-view').classList.add('hidden');
-  el('app-shell').classList.remove('admin-mode');
+  el('app-shell').classList.remove('admin-mode', 'with-side');
   el('open-admin-btn').textContent = adminBtnLabel();
 }
 
@@ -578,6 +578,7 @@ const NAV_ICON = {
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.8c1.6.8 2.7 2.5 3 5.2"/>',
   plan: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>',
   building: '<path d="M4 21V5l8-2v18M12 9l8 2v10M8 8v1M8 12v1M8 16v1M16 13v1M16 17v1M2 21h20"/>',
+  back: '<path d="M15 6l-6 6 6 6"/>',
 };
 const navIcon = (k) => `<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${NAV_ICON[k]}</svg>`;
 
@@ -585,13 +586,9 @@ function renderSideNav() {
   const nav = el('side-nav');
   if (!nav || !state.user) return;
   const cur = state.navCurrent || {};
-  const admin = isSuper() || isCompanyAdmin();
   const sub = state.user.subscription;
-  const co = isSuper() ? (state.companies || []).find((c) => c.id === state.viewCompanyId) : null;
-  const coName = isSuper() ? (co ? co.name : '') : state.user.company_name || '';
-  const coCode = isSuper() ? (co && co.company_code) || '' : state.user.company_code || '';
-  const link = (attrs, icon, label, on, extra = '') =>
-    `<button type="button" class="side-link${on ? ' on' : ''}" ${attrs}${on ? ' aria-current="page"' : ''}>${icon ? navIcon(icon) : ''}<span class="side-label">${esc(label)}</span>${extra}</button>`;
+  const link = (attrs, icon, label, on) =>
+    `<button type="button" class="side-link${on ? ' on' : ''}" ${attrs}${on ? ' aria-current="page"' : ''}>${icon ? navIcon(icon) : ''}<span class="side-label">${esc(label)}</span></button>`;
   const settings = [
     ['dashboards', 'layout', 'จัดการ Dashboard'],
     ['data', 'data', 'การเชื่อมข้อมูล'],
@@ -599,41 +596,119 @@ function renderSideNav() {
     ['users', 'users', 'ผู้ใช้'],
     ...(sub && sub.self_serve ? [['plan', 'plan', 'แพ็กเกจและการชำระเงิน']] : []),
   ];
+  const coName = state.user.company_name || '';
   nav.innerHTML = `
-    ${coName ? `<div class="side-company"><span class="side-co-mark" aria-hidden="true">${esc(coName.trim().charAt(0) || 'K')}</span><span class="side-co-text"><b>${esc(coName)}</b>${coCode ? `<span>${esc(coCode)}</span>` : ''}</span></div>` : ''}
-    <div class="side-group">
-      <div class="side-title">Dashboard</div>
-      ${state.dashboards.map((d) => link(`data-dash="${d.id}"`, '', d.display_name, cur.kind === 'dashboard' && cur.id === d.id)).join('') || '<p class="side-empty">ยังไม่มี dashboard</p>'}
-      ${admin ? `${link('data-new-dash', 'plus', 'Dashboard ใหม่', false, '')}
-        <form class="side-new-form" hidden><input name="name" maxlength="120" required placeholder="ชื่อ Dashboard" aria-label="ชื่อ Dashboard ใหม่"><button type="submit" class="btn small primary">สร้าง</button></form>` : ''}
-    </div>
-    ${admin ? `<div class="side-group">${link('data-go="library"', 'library', 'คลัง Widget', cur.kind === 'library')}</div>` : ''}
-    ${
-      isCompanyAdmin()
-        ? `<div class="side-group"><div class="side-title">ตั้งค่า</div>${settings.map(([k, ic, label]) => link(`data-settings="${k}"`, ic, label, cur.kind === 'settings' && cur.tab === k)).join('')}</div>`
-        : ''
-    }
-    ${isSuper() && state.viewCompanyId ? `<div class="side-group">${link('data-go="company"', 'building', 'ตั้งค่าบริษัทนี้ (Admin)', false)}</div>` : ''}`;
-
-  nav.querySelectorAll('[data-dash]').forEach((b) => b.addEventListener('click', () => goDashboard(Number(b.dataset.dash))));
-  const lb = nav.querySelector('[data-go="library"]');
-  if (lb) lb.addEventListener('click', () => openLibrary());
-  const cb = nav.querySelector('[data-go="company"]');
-  if (cb) cb.addEventListener('click', () => { closeSideNav(); adminState.selected = { type: 'company', id: state.viewCompanyId }; openAdminConsole(); });
+    ${coName ? `<div class="side-company"><span class="side-co-mark" aria-hidden="true">${esc(coName.trim().charAt(0) || 'K')}</span><span class="side-co-text"><b>${esc(coName)}</b>${state.user.company_code ? `<span>${esc(state.user.company_code)}</span>` : ''}</span></div>` : ''}
+    <div class="side-group">${link('data-go="back"', 'back', 'กลับไปดู Dashboard', false)}</div>
+    <div class="side-group"><div class="side-title">ตั้งค่า</div>${settings.map(([k, ic, label]) => link(`data-settings="${k}"`, ic, label, cur.kind === 'settings' && cur.tab === k)).join('')}</div>
+    <div class="side-group">${link('data-go="library"', 'library', 'คลัง Widget', cur.kind === 'library')}</div>`;
+  nav.querySelector('[data-go="back"]').addEventListener('click', () => goDashboard(state.activeDashboardId || (state.dashboards[0] || {}).id));
+  nav.querySelector('[data-go="library"]').addEventListener('click', () => openLibrary());
   nav.querySelectorAll('[data-settings]').forEach((b) => b.addEventListener('click', () => openCompanySettings(b.dataset.settings)));
-  const nb = nav.querySelector('[data-new-dash]');
-  const nf = nav.querySelector('.side-new-form');
-  if (nb && nf) {
-    nb.addEventListener('click', () => { nf.hidden = !nf.hidden; if (!nf.hidden) nf.name.focus(); });
-    nf.addEventListener('submit', async (e) => {
+}
+
+// ---------- dashboard switcher (title ▾), HubSpot-style ----------
+// Favorites and recently viewed are per user, per browser: conveniences, not data.
+const dashPrefs = {
+  key: (k) => `kss_${k}_${state.user ? state.user.id : 0}_${state.viewCompanyId || 0}`,
+  get(k) { try { return JSON.parse(storageGet(this.key(k)) || '[]'); } catch (e) { return []; } },
+  set(k, v) { storageSet(this.key(k), JSON.stringify(v)); },
+  touch(id) { this.set('recent', [id, ...this.get('recent').filter((x) => x !== id)].slice(0, 10)); },
+  toggleFav(id) { const f = this.get('fav'); this.set('fav', f.includes(id) ? f.filter((x) => x !== id) : [...f, id]); },
+};
+
+function bindDashSwitcher(wrap, current) {
+  const btn = wrap.querySelector('.dash-switch');
+  const pop = wrap.querySelector('.dash-pop');
+  if (!btn || !pop) return;
+  const admin = isSuper() || isCompanyAdmin();
+  let tab = 'all';
+  let q = '';
+  const star = '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z" fill="currentColor"/></svg>';
+  const list = () => {
+    const fav = dashPrefs.get('fav');
+    const recent = dashPrefs.get('recent');
+    let ds = state.dashboards.slice();
+    if (tab === 'recent') ds = recent.map((id) => ds.find((d) => d.id === id)).filter(Boolean);
+    else if (tab === 'fav') ds = ds.filter((d) => fav.includes(d.id));
+    else ds.sort((a, b) => (fav.includes(b.id) ? 1 : 0) - (fav.includes(a.id) ? 1 : 0));
+    const needle = q.trim().toLowerCase();
+    if (needle) ds = ds.filter((d) => `${d.display_name} ${d.description || ''}`.toLowerCase().includes(needle));
+    return { ds, fav };
+  };
+  const draw = () => {
+    const { ds, fav } = list();
+    pop.querySelector('.dash-pop-list').innerHTML = ds.length
+      ? ds
+          .map(
+            (d) => `<li class="dash-pop-row${d.id === current ? ' on' : ''}">
+              <button type="button" class="dash-pop-star${fav.includes(d.id) ? ' faved' : ''}" data-fav="${d.id}" aria-pressed="${fav.includes(d.id)}" aria-label="${fav.includes(d.id) ? 'เอาออกจากรายการโปรด' : 'เพิ่มในรายการโปรด'}">${star}</button>
+              <button type="button" class="dash-pop-go" data-go="${d.id}"${d.id === current ? ' aria-current="page"' : ''}><span>${esc(d.display_name)}</span>${d.description ? `<small>${esc(d.description)}</small>` : ''}</button>
+            </li>`
+          )
+          .join('')
+      : `<li class="dash-pop-empty">${tab === 'fav' ? 'ยังไม่มีรายการโปรด กดดาวหน้า dashboard เพื่อเพิ่ม' : tab === 'recent' ? 'ยังไม่ได้เปิด dashboard ไหน' : 'ไม่พบ dashboard'}</li>`;
+    pop.querySelectorAll('.dash-pop-tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === tab));
+    pop.querySelectorAll('[data-fav]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); dashPrefs.toggleFav(Number(b.dataset.fav)); draw(); }));
+    pop.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => { close(); goDashboard(Number(b.dataset.go)); }));
+  };
+  pop.innerHTML = `
+    <div class="dash-pop-tabs" role="tablist">
+      <button type="button" class="dash-pop-tab on" data-tab="all" role="tab">ทั้งหมด</button>
+      <button type="button" class="dash-pop-tab" data-tab="recent" role="tab">ดูล่าสุด</button>
+      <button type="button" class="dash-pop-tab" data-tab="fav" role="tab">รายการโปรด</button>
+    </div>
+    <label class="dash-pop-search"><span class="sr-only">ค้นหา dashboard</span><input type="search" placeholder="ค้นหา dashboard"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></label>
+    <ul class="dash-pop-list"></ul>
+    ${
+      admin
+        ? `<div class="dash-pop-foot">
+             <form class="dash-pop-new" hidden><input name="name" maxlength="120" required placeholder="ชื่อ Dashboard ใหม่" aria-label="ชื่อ Dashboard ใหม่"><button type="submit" class="btn small primary">สร้าง</button></form>
+             <div class="dash-pop-actions"><button type="button" class="link-btn dash-pop-add">+ Dashboard ใหม่</button><button type="button" class="link-btn dash-pop-manage">จัดการ Dashboard</button></div>
+           </div>`
+        : ''
+    }`;
+  const open = () => {
+    pop.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    draw();
+    pop.querySelector('input[type="search"]').focus();
+    setTimeout(() => document.addEventListener('click', outside), 0);
+  };
+  const close = () => {
+    pop.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', outside);
+  };
+  const outside = (e) => { if (!wrap.contains(e.target)) close(); };
+  btn.addEventListener('click', () => (pop.hidden ? open() : close()));
+  wrap.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !pop.hidden) { close(); btn.focus(); } });
+  pop.querySelectorAll('.dash-pop-tab').forEach((t) => t.addEventListener('click', () => { tab = t.dataset.tab; draw(); }));
+  const search = pop.querySelector('input[type="search"]');
+  search.addEventListener('input', () => { q = search.value; draw(); });
+  search.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const first = pop.querySelector('[data-go]');
+    if (first) first.click();
+  });
+  if (admin) {
+    const form = pop.querySelector('.dash-pop-new');
+    pop.querySelector('.dash-pop-add').addEventListener('click', () => { form.hidden = !form.hidden; if (!form.hidden) form.name.focus(); });
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
       try {
-        const r = await api(`/api/admin/companies/${state.viewCompanyId}/dashboards`, { method: 'POST', body: JSON.stringify({ display_name: nf.name.value }) });
+        const r = await api(`/api/admin/companies/${state.viewCompanyId}/dashboards`, { method: 'POST', body: JSON.stringify({ display_name: form.name.value }) });
+        close();
         await refreshDashboardList();
         goDashboard(r.id);
       } catch (err) {
-        nf.insertAdjacentHTML('beforeend', `<div class="error-msg">${esc(err.message)}</div>`);
+        form.insertAdjacentHTML('beforeend', `<div class="error-msg">${esc(err.message)}</div>`);
       }
+    });
+    pop.querySelector('.dash-pop-manage').addEventListener('click', () => {
+      close();
+      if (isSuper()) { adminState.selected = { type: 'company', id: state.viewCompanyId }; openAdminConsole(); }
+      else openCompanySettings('dashboards');
     });
   }
 }
@@ -656,7 +731,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSideN
 // KSS staff get the whole Admin Console; a client's company admin gets the
 // same composer and widget picker, for their own company only.
 function adminBtnLabel() {
-  return isSuper() ? '🏢 Admin Console' : '✎ จัดการ Dashboard';
+  return isSuper() ? '🏢 Admin Console' : '⚙ ตั้งค่า';
 }
 
 async function loadDashboards(preferredDashboardId) {
@@ -705,6 +780,7 @@ function destroyCharts() {
 async function selectDashboard(id) {
   state.activeDashboardId = id;
   state.navCurrent = { kind: 'dashboard', id };
+  if (id) dashPrefs.touch(id);
   renderTabs();
   const wrap = el('tab-panel-wrap');
   destroyCharts();
@@ -806,8 +882,18 @@ class DashboardView {
     const header = document.createElement('div');
     header.className = 'dash-header';
     header.innerHTML = `
-      <div>
-        <h1 class="dash-title">${esc(this.dashboard.display_name)}</h1>
+      <div class="dash-head-left">
+        ${
+          this.preview
+            ? `<h1 class="dash-title">${esc(this.dashboard.display_name)}</h1>`
+            : `<div class="dash-switch-wrap">
+                 <h1 class="dash-h1"><button type="button" class="dash-switch" aria-haspopup="dialog" aria-expanded="false" title="เปลี่ยน Dashboard">
+                   <span class="dash-title">${esc(this.dashboard.display_name)}</span>
+                   <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                 </button></h1>
+                 <div class="dash-pop" role="dialog" aria-label="เลือก Dashboard" hidden></div>
+               </div>`
+        }
         ${this.dashboard.description ? `<p class="dash-desc">${esc(this.dashboard.description)}</p>` : ''}
       </div>
       <div class="dash-controls">
@@ -834,6 +920,7 @@ class DashboardView {
         }
       </div>`;
     this.wrap.appendChild(header);
+    if (!this.preview) bindDashSwitcher(header.querySelector('.dash-switch-wrap'), this.dashboard.id);
     const editBtn = header.querySelector('.dash-edit');
     if (editBtn) {
       editBtn.addEventListener('click', () => {

@@ -610,8 +610,10 @@ html.login-hero-on #login-screen > .login-card { flex: 0 0 400px; max-width: 400
 .sub-banner.tone-quiet { background: var(--white); padding-top: 6px; padding-bottom: 6px; font-size: 13px; color: var(--muted); }
 
 /* ---------- Left menu (app.js renderSideNav) ---------- */
-.app-body { display: flex; align-items: stretch; min-height: calc(100vh - 63px); background: linear-gradient(to right, #f8f4e8 248px, var(--cream) 248px); }
-.admin-mode .app-body { background: var(--cream); }
+.app-body { display: flex; align-items: stretch; min-height: calc(100vh - 63px); }
+.with-side .app-body { background: linear-gradient(to right, #f8f4e8 248px, var(--cream) 248px); }
+/* The left menu exists only in a company admin's settings; dashboards are full width. */
+#app-shell:not(.with-side) .side-nav, #app-shell:not(.with-side) .side-scrim, #app-shell:not(.with-side) .side-toggle { display: none !important; }
 @media (max-width: 900px) { .app-body { background: var(--cream); } }
 .lib-more { align-self: center; margin-top: 8px; }
 .app-main { flex: 1 1 auto; min-width: 0; }
@@ -806,3 +808,41 @@ html.login-hero-on #login-screen > .login-card { flex: 0 0 400px; max-width: 400
 .starter-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .starter-actions .btn { min-height: 44px; }
 @media (prefers-reduced-motion: reduce) { .starter-opt { transition: none; } }
+
+/* ---------- Dashboard switcher: the title is a dropdown (HubSpot-style) ---------- */
+.dash-head-left { flex: 1 1 260px; min-width: 0; }
+.dash-switch-wrap { position: relative; }
+.dash-h1 { margin: 0; font-size: inherit; }
+.dash-switch { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 8px 4px 4px; margin-left: -4px; border: 0; border-radius: 10px; background: transparent; color: var(--ink); font: inherit; cursor: pointer; text-align: left; }
+.dash-switch .dash-title { margin: 0; font-size: 22px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-switch svg { flex: 0 0 18px; color: var(--muted); transition: transform .15s; }
+.dash-switch:hover { background: var(--cream); }
+.dash-switch[aria-expanded="true"] svg { transform: rotate(180deg); }
+.dash-switch:focus-visible { outline: 2px solid var(--chili); outline-offset: 2px; }
+.dash-pop { position: absolute; z-index: 40; top: calc(100% + 8px); left: 0; width: min(440px, calc(100vw - 32px)); background: var(--white); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 16px 40px rgba(27, 43, 34, .16); overflow: hidden; }
+.dash-pop[hidden] { display: none; }
+.dash-pop-tabs { display: flex; gap: 4px; padding: 6px 10px 0; border-bottom: 1px solid var(--line); }
+.dash-pop-tab { flex: 1; min-height: 40px; border: 0; background: none; font: inherit; font-size: 14px; color: var(--muted); border-bottom: 2.5px solid transparent; cursor: pointer; }
+.dash-pop-tab.on { color: var(--ink); font-weight: 700; border-bottom-color: var(--ink); }
+.dash-pop-search { display: flex; align-items: center; gap: 8px; margin: 10px; padding: 0 12px; min-height: 42px; border: 1.5px solid #dfd8c4; border-radius: 10px; color: var(--muted); }
+.dash-pop-search:focus-within { border-color: var(--chili); }
+.dash-pop-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 14px; color: var(--ink); }
+.dash-pop-list { list-style: none; margin: 0; padding: 0 6px 6px; max-height: min(52vh, 420px); overflow-y: auto; }
+.dash-pop-row { display: flex; align-items: center; gap: 2px; border-radius: 9px; }
+.dash-pop-row:hover { background: #faf6ea; }
+.dash-pop-row.on { background: var(--cream); }
+.dash-pop-star { flex: 0 0 36px; height: 36px; border: 0; background: none; color: #d8d0b8; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; }
+.dash-pop-star:hover { color: var(--brass); }
+.dash-pop-star.faved { color: var(--brass); }
+.dash-pop-go { flex: 1; min-width: 0; min-height: 40px; display: flex; flex-direction: column; justify-content: center; gap: 1px; padding: 6px 8px 6px 2px; border: 0; background: none; font: inherit; font-size: 14px; color: var(--ink); text-align: left; cursor: pointer; }
+.dash-pop-go span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-pop-row.on .dash-pop-go span { font-weight: 700; }
+.dash-pop-go small { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-pop-empty { padding: 16px 12px; font-size: 13px; color: var(--muted); }
+.dash-pop-foot { border-top: 1px solid var(--line); padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; background: #fdfbf5; }
+.dash-pop-actions { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 14px; }
+.dash-pop-new { display: flex; gap: 6px; flex-wrap: wrap; }
+.dash-pop-new[hidden] { display: none; }
+.dash-pop-new input { flex: 1 1 160px; min-width: 0; padding: 7px 10px; border: 1.5px solid var(--line); border-radius: 9px; }
+.lib-home { align-self: flex-start; font-size: 13px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .dash-switch svg { transition: none; } }
