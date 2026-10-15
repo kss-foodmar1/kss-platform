@@ -436,3 +436,19 @@ CREATE TABLE IF NOT EXISTS ai_usage (
   PRIMARY KEY (company_id, day),
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;
+
+-- "ถาม AI": 👍/👎 on an answer, and questions the chat could not answer
+-- (kind = miss). KSS staff read these to decide what to teach it next.
+CREATE TABLE IF NOT EXISTS ai_feedback (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  company_id INT NOT NULL,
+  user_id INT NULL,
+  dashboard_id INT NULL,
+  kind ENUM('up','down','miss') NOT NULL,
+  source VARCHAR(10) NOT NULL DEFAULT '',
+  question VARCHAR(500) NOT NULL,
+  answer VARCHAR(600) NOT NULL DEFAULT '',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_ai_feedback_kind (kind, created_at),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;

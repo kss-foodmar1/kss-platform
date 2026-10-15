@@ -82,6 +82,17 @@ const ok = async (name, fn) => { try { await fn(); pass++; console.log('PASS  ' 
   await ok('an empty question is refused before it costs anything', async () => {
     assert.strictEqual((await req('kss', 'POST', '/api/ai/chat', { dashboard_id: dDemo, question: '  ' })).status, 400);
   });
+  await ok('feedback and misses are stored; anyone with access sends, only KSS staff read', async () => {
+    assert.strictEqual((await req('kss', 'POST', '/api/ai/feedback', { dashboard_id: dReal, kind: 'miss', question: 'ราคาไข่วันนี้', source: 'none' })).status, 200);
+    assert.strictEqual((await req('kss', 'POST', '/api/ai/feedback', { dashboard_id: dReal, kind: 'down', question: 'ราคาไข่วันนี้', answer: 'x', source: 'faq' })).status, 200);
+    assert.strictEqual((await req('kss', 'POST', '/api/ai/feedback', { dashboard_id: dReal, kind: 'bogus', question: 'x' })).status, 400);
+    assert.strictEqual((await req('viewer', 'POST', '/api/ai/feedback', { dashboard_id: dDemo, kind: 'up', question: 'x' })).status, 404);
+    assert.strictEqual((await req('viewer', 'GET', '/api/ai/misses')).status, 403);
+    const r = await req('kss', 'GET', '/api/ai/misses?days=1');
+    assert.strictEqual(r.status, 200);
+    assert.ok(r.body.list.some((x) => x.question === 'ราคาไข่วันนี้' && x.kind === 'miss'));
+    assert.ok(r.body.totals.miss >= 1 && r.body.totals.down >= 1);
+  });
   console.log(`\n${pass} passed${process.exitCode ? ', some failed' : ', 0 failed'}`);
   await db.end();
   fake.close();

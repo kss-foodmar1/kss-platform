@@ -1,25 +1,41 @@
-// "ถาม AI" on a dashboard (routes/ai.js). The question goes to the server
-// together with a plain-text summary of the page: each widget's "อธิบาย" lines
-// (explain.js), the date range and the filters. Rows never leave the browser.
+// "ถาม AI" on a dashboard. Order of answering (cheapest first):
+//   1. helpfaq.js — FAQ on using the Dashboard + the numbers on this page,
+//      worked out in the browser (free, instant, nothing leaves the browser)
+//   2. Gemini (routes/ai.js), only if on for this company — it gets a plain-text
+//      summary of the page (explain.js lines, range, filters), never rows
+//   3. neither can answer: say so, log it as a "miss" for KSS staff to teach.
+// Every answer says which of these it came from and can be rated 👍/👎.
 const aiChat = { dashboardId: null, status: null, history: new Map(), busy: false };
 
-const AI_SUGGEST = ['สรุป Dashboard นี้ให้หน่อย', 'วันนี้มีอะไรต้องรีบดู', 'ตัวเลขไหนผิดปกติที่สุด'];
+const AI_SUGGEST = ['สรุปหน้านี้ให้หน่อย', 'มีอะไรผิดปกติบ้าง', 'ทำไมข้อมูลว่าง', 'เพิ่ม widget ยังไง'];
+const AI_SOURCE = { data: 'คำนวณจากตัวเลขบนหน้านี้', faq: 'คู่มือการใช้งาน', ai: 'ตอบโดย AI (Google Gemini) · อาจคลาดเคลื่อน', none: '' };
+const aiCanSettings = () => !!state.user && ['kss_superadmin', 'company_admin'].includes(state.user.role);
 
-function aiPageSummary() {
+// The page as the chat sees it: header lines + each widget's "อธิบาย" facts.
+function aiPageParts() {
   const v = state.currentView;
-  if (!v || v.preview) return '';
-  const lines = [`Dashboard: ${v.dashboard.display_name}`];
-  if (v.range && v.range.start) lines.push(`ช่วงวันที่: ${v.range.start} ถึง ${v.range.end}`);
+  if (!v || v.preview) return null;
+  const head = [`Dashboard: ${v.dashboard.display_name}`];
+  if (v.range && v.range.start) head.push(`ช่วงวันที่: ${v.range.start} ถึง ${v.range.end}`);
   const f = Object.entries(v.filters || {}).filter(([, val]) => val);
-  if (f.length) lines.push(`ตัวกรอง: ${f.map(([k, val]) => `${{ branch: 'สาขา', supplier: 'ซัพพลายเออร์', customer: 'ลูกค้า' }[k] || k} = ${val}`).join(', ')}`);
+  if (f.length) head.push(`ตัวกรอง: ${f.map(([k, val]) => `${{ branch: 'สาขา', supplier: 'ซัพพลายเออร์', customer: 'ลูกค้า' }[k] || k} = ${val}`).join(', ')}`);
   const box = document.createElement('div');
-  (v.cards || []).forEach(({ widget }) => {
+  const widgets = (v.cards || []).map(({ widget }) => {
     box.innerHTML = explainWidget(widget, v.explainData && v.explainData.get(widget.id));
     // Facts only: the "what to do next" tips and long descriptions would
     // crowd out widgets on a big dashboard.
-    const facts = [...box.querySelectorAll('.explain-list li')].map((e) => '  - ' + e.textContent.trim());
-    lines.push(`\n[${widget.title}]`, ...facts);
+    const facts = [...box.querySelectorAll('.explain-list li')].map((e) => e.textContent.trim());
+    return { id: widget.id, title: widget.title, facts };
   });
+  return { head, widgets };
+}
+
+// For Gemini: the same thing as plain text.
+function aiPageSummary() {
+  const p = aiPageParts();
+  if (!p) return '';
+  const lines = [...p.head];
+  p.widgets.forEach((w) => lines.push(`\n[${w.title}]`, ...w.facts.map((x) => '  - ' + x)));
   return lines.join('\n');
 }
 
@@ -55,7 +71,10 @@ function aiEnsureDom() {
      <section id="ai-panel" class="ai-panel" role="dialog" aria-label="ถาม AI เกี่ยวกับ Dashboard นี้" hidden>
        <header class="ai-head">
          <div><b>ถาม AI</b><span class="ai-sub">ตอบจากตัวเลขบน Dashboard นี้</span></div>
-         <button type="button" class="ai-close" aria-label="ปิด">✕</button>
+         <span class="ai-head-act">
+           <button type="button" class="ai-misses" hidden>คำถามที่ตอบไม่ได้</button>
+           <button type="button" class="ai-close" aria-label="ปิด">✕</button>
+         </span>
        </header>
        <div class="ai-log" aria-live="polite"></div>
        <div class="ai-chips"></div>
@@ -68,6 +87,10 @@ function aiEnsureDom() {
      </section>`
   );
   el('ai-fab').addEventListener('click', () => aiToggle());
+  const mi = el('ai-panel').querySelector('.ai-misses');
+  mi.hidden = !(state.user && state.user.role === 'kss_superadmin');
+  mi.addEventListener('click', aiShowMisses);
+  el('ai-panel').querySelector('.ai-log').addEventListener('click', aiLogClick);
   el('ai-panel').querySelector('.ai-close').addEventListener('click', () => aiToggle(false));
   el('ai-panel').addEventListener('keydown', (e) => { if (e.key === 'Escape') { aiToggle(false); el('ai-fab').focus(); } });
   el('ai-panel').querySelector('.ai-form').addEventListener('submit', (e) => {
@@ -89,23 +112,81 @@ function aiToggle(open) {
   if (show) { aiRender(); el('ai-input').focus(); }
 }
 
+function aiMsgHtml(m, i) {
+  if (m.role === 'user') return `<div class="ai-msg user">${esc(m.text)}</div>`;
+  if (m.error) return `<div class="ai-msg model err">${esc(m.text)}</div>`;
+  const src = AI_SOURCE[m.source] || '';
+  const go = (m.go || []).map((g) => `<button type="button" class="ai-go" data-go="${esc(g.act)}">${esc(g.label)} →</button>`).join('');
+  const rate = m.source === 'none' || m.rated
+    ? m.rated ? `<span class="ai-thanks">${m.rated === 'up' ? 'ขอบคุณครับ' : 'รับทราบ จะนำไปปรับปรุง'}</span>` : ''
+    : `<span class="ai-rate" aria-label="ให้คะแนนคำตอบ">
+         <button type="button" class="ai-thumb" data-rate="up" data-i="${i}" aria-label="ตอบตรง"><svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11v9H4v-9zM7 11l4-8c1.7 0 3 1.3 3 3v3h5.2a2 2 0 0 1 2 2.3l-1.2 7A2 2 0 0 1 18 20H7"/></svg></button>
+         <button type="button" class="ai-thumb" data-rate="down" data-i="${i}" aria-label="ตอบไม่ตรงหรือไม่ครบ"><svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(180deg)"><path d="M7 11v9H4v-9zM7 11l4-8c1.7 0 3 1.3 3 3v3h5.2a2 2 0 0 1 2 2.3l-1.2 7A2 2 0 0 1 18 20H7"/></svg></button>
+       </span>`;
+  const meta = src || go || rate ? `<div class="ai-meta">${src ? `<span class="ai-src ${m.source}">${esc(src)}</span>` : ''}${rate}</div>` : '';
+  return `<div class="ai-msg model">${aiFormat(m.text)}${go ? `<div class="ai-gos">${go}</div>` : ''}${meta}</div>`;
+}
+
 function aiRender() {
   const panel = el('ai-panel');
   const msgs = aiChat.history.get(aiChat.dashboardId) || [];
   const log = panel.querySelector('.ai-log');
   log.innerHTML = msgs.length
-    ? msgs.map((m) => `<div class="ai-msg ${m.role}${m.error ? ' err' : ''}">${m.role === 'model' && !m.error ? aiFormat(m.text) : esc(m.text)}</div>`).join('') +
+    ? msgs.map(aiMsgHtml).join('') +
       (aiChat.busy ? '<div class="ai-msg model typing" aria-label="กำลังคิด"><span></span><span></span><span></span></div>' : '')
-    : '<p class="ai-empty">ถามเรื่องตัวเลขในหน้านี้ได้เลย เช่น ทำไมกำไรลดลง หรือซัพพลายเออร์รายไหนน่าห่วง</p>';
+    : '<p class="ai-empty">ถามเรื่องตัวเลขในหน้านี้ หรือวิธีใช้ Dashboard ได้เลย เช่น “สรุปหน้านี้” หรือ “เพิ่ม widget ยังไง”</p>';
   log.scrollTop = log.scrollHeight;
   const chips = panel.querySelector('.ai-chips');
-  chips.innerHTML = msgs.length ? '' : AI_SUGGEST.map((s) => `<button type="button" class="ai-chip">${esc(s)}</button>`).join('');
+  chips.innerHTML = msgs.length ? '' : AI_SUGGEST.map((q) => `<button type="button" class="ai-chip">${esc(q)}</button>`).join('');
   chips.querySelectorAll('.ai-chip').forEach((b) => b.addEventListener('click', () => aiSend(b.textContent)));
   const st = aiChat.status || {};
   panel.querySelector('.ai-note').textContent = st.available
-    ? `เหลือ ${st.remaining} คำถามวันนี้ · AI อาจผิดพลาดได้ ตรวจกับตัวเลขบนกราฟเสมอ`
-    : '';
+    ? `เหลือ ${st.remaining} คำถาม AI วันนี้ · คำตอบจากข้อมูลบนหน้าไม่นับโควตา · ตรวจกับตัวเลขบนกราฟเสมอ`
+    : 'ตอบจากตัวเลขบนหน้านี้และคู่มือการใช้งาน · ตรวจกับตัวเลขบนกราฟเสมอ';
   panel.querySelector('.ai-send').disabled = aiChat.busy;
+}
+
+function aiGo(act) {
+  aiToggle(false);
+  if (act === 'library' && typeof openLibrary === 'function') openLibrary();
+  else if (act.startsWith('settings:') && typeof openCompanySettings === 'function') openCompanySettings(act.slice(9));
+}
+
+function aiFeedback(kind, i, question, answer, source) {
+  const body = { dashboard_id: aiChat.dashboardId, kind, question, answer: answer || '', source: source || '' };
+  api('/api/ai/feedback', { method: 'POST', body: JSON.stringify(body) }).catch(() => {});
+}
+
+function aiLogClick(e) {
+  const msgs = aiChat.history.get(aiChat.dashboardId) || [];
+  const g = e.target.closest('[data-go]');
+  if (g) return aiGo(g.dataset.go);
+  const t = e.target.closest('[data-rate]');
+  if (t) {
+    const i = Number(t.dataset.i), m = msgs[i];
+    if (!m || m.rated) return;
+    m.rated = t.dataset.rate;
+    aiFeedback(t.dataset.rate, i, m.q, m.text, m.source);
+    aiRender();
+  }
+}
+
+// KSS staff: what people asked that the chat could not answer, or rated down.
+async function aiShowMisses() {
+  const msgs = aiChat.history.get(aiChat.dashboardId) || [];
+  aiChat.history.set(aiChat.dashboardId, msgs);
+  try {
+    const r = await api('/api/ai/misses?days=14');
+    const t = r.totals;
+    const body = r.list.length
+      ? r.list.map((x) => `- ${x.kind === 'miss' ? 'ตอบไม่ได้' : '👎'} ×${x.n}: ${x.question}`).join('\n')
+      : 'ไม่มีคำถามที่ตอบไม่ได้ในช่วงนี้';
+    msgs.push({ role: 'model', source: 'none', text: `**14 วันที่ผ่านมา**: 👍 ${t.up} · 👎 ${t.down} · ตอบไม่ได้ ${t.miss}\n${body}\n\nเติมคำตอบได้ที่ HELP_FAQ ใน public/helpfaq.js`, q: '' });
+  } catch (err) {
+    msgs.push({ role: 'model', text: err.message, error: true });
+  }
+  aiToggle(true);
+  aiRender();
 }
 
 async function aiSend(question) {
@@ -113,13 +194,34 @@ async function aiSend(question) {
   const id = aiChat.dashboardId;
   const msgs = aiChat.history.get(id) || [];
   aiChat.history.set(id, msgs);
-  const history = msgs.filter((m) => !m.error).map((m) => ({ role: m.role, text: m.text }));
+  const history = msgs.filter((m) => !m.error && m.source !== 'none').map((m) => ({ role: m.role, text: m.text }));
   msgs.push({ role: 'user', text: question });
+  // 1. FAQ + the page, in the browser.
+  let local = null;
+  try { local = helpAnswer(question, aiPageParts(), aiCanSettings()); } catch (e) { local = null; }
+  if (local) {
+    msgs.push({ role: 'model', text: local.text, source: local.source, go: local.go, q: question });
+    return aiRender();
+  }
+  const st = aiChat.status || {};
+  // 3. nobody can answer.
+  if (!st.available) {
+    msgs.push({
+      role: 'model',
+      source: 'none',
+      q: question,
+      text: 'ผมยังตอบเรื่องนี้ไม่ได้ครับ ลองถามเรื่องตัวเลขที่อยู่บนหน้านี้ เช่น “สรุปหน้านี้” หรือถามวิธีใช้ เช่น “เพิ่ม widget ยังไง” ได้ หรือถ้าอยากรู้เรื่องที่หน้านี้ยังไม่มี ลองหา widget ที่ตอบเรื่องนั้นในคลัง Widget',
+      go: aiCanSettings() ? [{ label: 'เปิดคลัง Widget', act: 'library' }] : [],
+    });
+    aiFeedback('miss', 0, question, '', 'none');
+    return aiRender();
+  }
+  // 2. Gemini.
   aiChat.busy = true;
   aiRender();
   try {
     const r = await api('/api/ai/chat', { method: 'POST', body: JSON.stringify({ dashboard_id: id, question, context: aiPageSummary(), history }) });
-    msgs.push({ role: 'model', text: r.answer });
+    msgs.push({ role: 'model', text: r.answer, source: 'ai', q: question });
     if (aiChat.status) aiChat.status.remaining = r.remaining;
   } catch (err) {
     msgs.push({ role: 'model', text: err.message, error: true });
@@ -133,15 +235,15 @@ async function aiSend(question) {
 async function aiAttach(dashboard) {
   aiEnsureDom();
   aiChat.dashboardId = dashboard.id;
-  el('ai-fab').hidden = true;
+  // The chat is always there: FAQ and page answers need no AI.
+  el('ai-fab').hidden = !!dashboard.preview;
+  aiChat.status = null;
   if (!el('ai-panel').hidden) aiRender();
   try {
     const st = await api(`/api/ai/status?dashboard_id=${dashboard.id}`);
     if (aiChat.dashboardId !== dashboard.id) return;
     aiChat.status = st;
-    el('ai-fab').hidden = !st.available;
-    if (!st.available) aiToggle(false);
-    else if (!el('ai-panel').hidden) aiRender();
+    if (!el('ai-panel').hidden) aiRender();
   } catch (e) {
     /* the chat is an extra; the dashboard works without it */
   }
