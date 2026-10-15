@@ -8,6 +8,18 @@
 // each report source once from the server-side cache and every widget that
 // uses that source renders from the same rows.
 
+// ---- Theme-aware colours: read from CSS tokens at draw time (style.css :root / [data-theme="dark"]) ----
+const cssv = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888';
+// Widget configs saved before the redesign carry the old brand hexes; map them to the new series tokens.
+const LEGACY_COLOR = { '#BE4229': '--danger', '#2F6FB0': '--s1', '#A9812F': '--s2', '#2F8F4E': '--s3', '#7A6A9E': '--s4', '#C2410C': '--s7', '#1B2B22': '--ink', '#D6CFBC': '--s-other', '#B8B09A': '--s-other', '#8FB4DC': '--s6', '#C9A15A': '--s7' };
+const themed = (c) => (typeof c === 'string' && LEGACY_COLOR[c.toUpperCase()] ? cssv(LEGACY_COLOR[c.toUpperCase()]) : c);
+const themedCfg = (v) => {
+  if (Array.isArray(v)) return v.map(themedCfg);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, themedCfg(x)]));
+  return themed(v);
+};
+const tokenList = (names) => new Proxy(names, { get: (t, k) => (/^\d+$/.test(String(k)) ? cssv(t[k]) : t[k]) });
+
 const state = {
   user: null,
   viewCompanyId: null, // company whose dashboards are shown (KSS staff can switch)
@@ -412,6 +424,29 @@ function showScreen(name) {
   el('force-change-screen').classList.toggle('hidden', name !== 'force-change');
   el('app-shell').classList.toggle('hidden', name !== 'app');
 }
+
+// Light / dark: follows the system until the user picks; the pick is remembered on this device.
+(function themeToggle() {
+  const root = document.documentElement;
+  const effective = () => root.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const sync = () => {
+    const b = document.getElementById('theme-btn');
+    if (b) b.setAttribute('aria-pressed', effective() === 'dark' ? 'true' : 'false');
+  };
+  const redraw = () => {
+    sync();
+    const v = state.currentView;
+    if (v && v.wrap && v.wrap.isConnected && typeof v.renderWidgets === 'function') v.renderWidgets();
+  };
+  document.getElementById('theme-btn').addEventListener('click', () => {
+    const next = effective() === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('kss_theme', next); } catch (e) { /* private window */ }
+    redraw();
+  });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!root.getAttribute('data-theme')) redraw(); });
+  sync();
+})();
 
 // One button: shows the language you would switch TO.
 document.querySelectorAll('.lang-toggle').forEach((b) => {
@@ -1404,7 +1439,7 @@ class DashboardView {
         }
         return;
       }
-      const cfg = widget.config || {};
+      const cfg = themedCfg(widget.config || {});
       // A composite widget draws several small charts, each from its own pull.
       if (widget.pulls && cfg.panels) {
         const byAlias = {};
@@ -1548,10 +1583,10 @@ function renderKpi(body, rows, cfg) {
 // Signed values: diverging blue (+) / chili (-). Margin: status colors, always
 // shown next to the printed value, so color is never the only signal.
 function barColor(value, cfg) {
-  if (cfg.color_mode === 'signed') return value < 0 ? 'var(--chili)' : 'var(--series-blue)';
+  if (cfg.color_mode === 'signed') return value < 0 ? 'var(--danger)' : 'var(--series-blue)';
   // Money out: paying more is the bad direction, so it is the red one.
-  if (cfg.color_mode === 'signed_cost') return value > 0 ? 'var(--chili)' : 'var(--series-blue)';
-  if (cfg.color_mode === 'margin') return value < 0 ? 'var(--chili)' : value < 20 ? 'var(--brass)' : 'var(--status-good)';
+  if (cfg.color_mode === 'signed_cost') return value > 0 ? 'var(--danger)' : 'var(--series-blue)';
+  if (cfg.color_mode === 'margin') return value < 0 ? 'var(--danger)' : value < 20 ? 'var(--amber)' : 'var(--status-good)';
   // A target makes "good" directional: food cost is better low, margin better
   // high, so the widget says which way it reads rather than the renderer
   // guessing from the number's sign.
@@ -1560,7 +1595,7 @@ function barColor(value, cfg) {
     const miss = lowerIsBetter ? value > cfg.threshold : value < cfg.threshold;
     if (!miss) return 'var(--status-good)';
     const far = lowerIsBetter ? value > cfg.threshold * 1.15 : value < cfg.threshold * 0.85;
-    return far ? 'var(--chili)' : 'var(--brass)';
+    return far ? 'var(--danger)' : 'var(--amber)';
   }
   return cfg.color || 'var(--series-blue)';
 }
@@ -1704,7 +1739,7 @@ function renderLine(body, rows, cfg) {
     const inTop = new Set(top);
     const colorOf = (k, i) => {
       const at = cfg.series_order ? cfg.series_order.indexOf(k) : i;
-      return at >= 0 && at < CAT_COLORS.length ? CAT_COLORS[at] : '#B8B09A';
+      return at >= 0 && at < CAT_COLORS.length ? CAT_COLORS[at] : cssv('--s-other');
     };
     series = top.map((k, i) => ({
       label: k,
@@ -1714,7 +1749,7 @@ function renderLine(body, rows, cfg) {
     if (ranked.length > top.length) {
       series.push({
         label: `อื่น ๆ (${ranked.length - top.length})`,
-        color: '#B8B09A',
+        color: cssv('--s-other'),
         value: { op: 'sum_where', field: cfg.value.field, where: { op: 'not', rule: { op: 'in', field: cfg.series_by, values: [...inTop] } } },
       });
     }
@@ -1753,7 +1788,7 @@ function renderLine(body, rows, cfg) {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { display: cfg.legend !== false, position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: '#1B2B22' } },
+        legend: { display: cfg.legend !== false, position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: cssv('--ink') } },
         tooltip: {
           callbacks: {
             label: (ctx) => ` ${ctx.dataset.label}: ${fmtValue(ctx.parsed.y, cfg.format)}`,
@@ -1762,8 +1797,8 @@ function renderLine(body, rows, cfg) {
         },
       },
       scales: {
-        x: { stacked: !!cfg.stacked, grid: { display: false }, ticks: { color: '#6b7268' } },
-        y: { stacked: !!cfg.stacked, beginAtZero: asBar || cfg.zero === true, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
+        x: { stacked: !!cfg.stacked, grid: { display: false }, ticks: { color: cssv('--muted') } },
+        y: { stacked: !!cfg.stacked, beginAtZero: asBar || cfg.zero === true, grid: { color: cssv('--chart-grid') }, border: { display: false }, ticks: { color: cssv('--muted'), callback: (v) => fmtAxis(v, cfg.format) } },
       },
     },
   });
@@ -1876,7 +1911,7 @@ function sensitivityRows(list, x, shareKey, labelFn) {
       const y = (item[shareKey] / 100) * x;
       return `<div class="bar-row" title="${esc(labelFn(item))}: ${fmtValue(y, 'pct_signed')}">
         <span class="bar-name">${esc(labelFn(item))}</span>
-        <span class="bar-track"><span class="bar-fill" style="width:${Math.max(2, (item[shareKey] / maxShare) * 100)}%;background:var(--brass)"></span></span>
+        <span class="bar-track"><span class="bar-fill" style="width:${Math.max(2, (item[shareKey] / maxShare) * 100)}%;background:var(--amber)"></span></span>
         <span class="bar-value">${esc(fmtValue(y, 'pct_signed'))}</span>
       </div>`;
     })
@@ -1947,10 +1982,10 @@ function renderMenuBreakdown(body, rows, cfg) {
 // A single-hue sequential ramp, light to dark. Used wherever slices or tiles
 // encode magnitude rather than identity, so the reader sees "more" as "darker"
 // instead of having to decode a rainbow.
-const SEQ_RAMP = ['#184f95', '#2a78d6', '#5598e7', '#9ec5f4', '#cde2fb'];
+const SEQ_RAMP = tokenList(['--q1', '--q2', '--q3', '--q4', '--q5']);
 // Distinct in hue AND lightness, so neighbouring slices separate in greyscale too.
 // No chili: in this app red means "needs action" (overdue, awaiting invoice).
-const CAT_COLORS = ['#2F6FB0', '#A9812F', '#2F8F4E', '#1B2B22', '#8FB4DC', '#C9A15A', '#7A6A9E'];
+const CAT_COLORS = tokenList(['--s1', '--s2', '--s3', '--s4', '--s5', '--s6', '--s7']);
 const seqColor = (i, n) => SEQ_RAMP[Math.min(SEQ_RAMP.length - 1, Math.floor((i / Math.max(1, n - 1)) * (SEQ_RAMP.length - 1)))];
 
 // Shared shaping for the renderers that rank grouped rows.
@@ -1992,7 +2027,7 @@ function renderDonut(body, rows, cfg) {
   // distinct shades past five and painted neighbours the same blue. The tail
   // slice is always neutral so it never reads as a category of its own.
   const colors = items.map((it, i) =>
-    (cfg.colors && cfg.colors[it.name]) || (it.other ? '#D6CFBC' : CAT_COLORS[i % CAT_COLORS.length])
+    (cfg.colors && cfg.colors[it.name]) || (it.other ? cssv('--s-other') : CAT_COLORS[i % CAT_COLORS.length])
   );
   I18N.hookCharts();
   const chart = new Chart(wrap.querySelector('canvas'), {
@@ -2106,7 +2141,7 @@ function renderStack(body, rows, cfg) {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: '#1B2B22' } },
+        legend: { position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: cssv('--ink') } },
         tooltip: {
           callbacks: {
             label: (ctx) => ` ${ctx.dataset.label}: ${fmtValue(ctx.parsed.x, cfg.format)}`,
@@ -2115,8 +2150,8 @@ function renderStack(body, rows, cfg) {
         },
       },
       scales: {
-        x: { stacked: true, beginAtZero: true, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
-        y: { stacked: true, grid: { display: false }, ticks: { color: '#1B2B22' } },
+        x: { stacked: true, beginAtZero: true, grid: { color: cssv('--chart-grid') }, border: { display: false }, ticks: { color: cssv('--muted'), callback: (v) => fmtAxis(v, cfg.format) } },
+        y: { stacked: true, grid: { display: false }, ticks: { color: cssv('--ink') } },
       },
     },
   });
@@ -2150,7 +2185,7 @@ function renderPanels(body, byAlias, cfg) {
       const h = document.createElement('p');
       h.className = 'panel-headline';
       h.innerHTML = panel.headline
-        .map((m) => `<span><span class="dot" style="background:${m.color || '#6b7268'}"></span>${esc(m.label)}: <b style="color:${m.color || '#1B2B22'}">${esc(fmtValue(evalMetric(m.value, rows), m.format || panel.format))}</b></span>`)
+        .map((m) => `<span><span class="dot" style="background:${m.color || cssv('--muted')}"></span>${esc(m.label)}: <b style="color:${m.color || cssv('--ink')}">${esc(fmtValue(evalMetric(m.value, rows), m.format || panel.format))}</b></span>`)
         .join('');
       cell.appendChild(h);
     }
@@ -2183,8 +2218,8 @@ function renderPareto(body, rows, cfg) {
     data: {
       labels: items.map((i) => i.name),
       datasets: [
-        { type: 'bar', label: cfg.bar_label || 'มูลค่า', data: items.map((i) => i.value), backgroundColor: '#2a78d6', borderRadius: 3, order: 2 },
-        { type: 'line', label: 'สะสม %', data: cum, yAxisID: 'y2', borderColor: '#A9812F', backgroundColor: '#A9812F', borderWidth: 2, pointRadius: 3, tension: 0.2, order: 1 },
+        { type: 'bar', label: cfg.bar_label || 'มูลค่า', data: items.map((i) => i.value), backgroundColor: cssv('--s1'), borderRadius: 3, order: 2 },
+        { type: 'line', label: 'สะสม %', data: cum, yAxisID: 'y2', borderColor: cssv('--s2'), backgroundColor: cssv('--s2'), borderWidth: 2, pointRadius: 3, tension: 0.2, order: 1 },
       ],
     },
     options: {
@@ -2192,7 +2227,7 @@ function renderPareto(body, rows, cfg) {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: '#1B2B22' } },
+        legend: { position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: cssv('--ink') } },
         tooltip: {
           callbacks: {
             label: (ctx) => (ctx.dataset.yAxisID === 'y2' ? ` ${t(`สะสม ${ctx.parsed.y.toFixed(0)}%`)}` : ` ${fmtValue(ctx.parsed.y, cfg.format)}`),
@@ -2200,9 +2235,9 @@ function renderPareto(body, rows, cfg) {
         },
       },
       scales: {
-        x: { grid: { display: false }, ticks: { color: '#6b7268', maxRotation: 50, minRotation: 0, autoSkip: false } },
-        y: { beginAtZero: true, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
-        y2: { position: 'right', min: 0, max: 100, grid: { display: false }, border: { display: false }, ticks: { color: '#A9812F', callback: (v) => v + '%' } },
+        x: { grid: { display: false }, ticks: { color: cssv('--muted'), maxRotation: 50, minRotation: 0, autoSkip: false } },
+        y: { beginAtZero: true, grid: { color: cssv('--chart-grid') }, border: { display: false }, ticks: { color: cssv('--muted'), callback: (v) => fmtAxis(v, cfg.format) } },
+        y2: { position: 'right', min: 0, max: 100, grid: { display: false }, border: { display: false }, ticks: { color: cssv('--s2'), callback: (v) => v + '%' } },
       },
     },
   });
@@ -2219,7 +2254,7 @@ const quadrantLines = {
     const { ctx, chartArea, scales } = chart;
     if (!opts || opts.x == null) return;
     ctx.save();
-    ctx.strokeStyle = '#b9b6ab';
+    ctx.strokeStyle = cssv('--line-strong');
     ctx.setLineDash([4, 3]);
     ctx.lineWidth = 1;
     const px = scales.x.getPixelForValue(opts.x);
@@ -2227,7 +2262,7 @@ const quadrantLines = {
     ctx.beginPath(); ctx.moveTo(px, chartArea.top); ctx.lineTo(px, chartArea.bottom); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(chartArea.left, py); ctx.lineTo(chartArea.right, py); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = '#8a877f';
+    ctx.fillStyle = cssv('--muted');
     ctx.font = '600 10px system-ui, sans-serif';
     (opts.labels || []).forEach((t, i) => {
       const lx = [px + 5, chartArea.left + 5, px + 5, chartArea.left + 5][i];
@@ -2269,7 +2304,7 @@ function renderScatter(body, rows, cfg) {
   wrap.innerHTML = '<canvas></canvas>';
   body.appendChild(wrap);
   const colorFor = (p) =>
-    qx == null ? '#2a78d6' : p.x >= qx && p.y >= qy ? '#0ca30c' : p.x < qx && p.y < qy ? '#BE4229' : '#2a78d6';
+    qx == null ? cssv('--s1') : p.x >= qx && p.y >= qy ? cssv('--good') : p.x < qx && p.y < qy ? cssv('--danger') : cssv('--s1');
   I18N.hookCharts();
   const chart = new Chart(wrap.querySelector('canvas'), {
     type: 'scatter',
@@ -2290,8 +2325,8 @@ function renderScatter(body, rows, cfg) {
         },
       },
       scales: {
-        x: { title: { display: !!cfg.x_label, text: cfg.x_label, color: '#6b7268' }, grid: { color: '#f7f5ee' }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.x_format) } },
-        y: { title: { display: !!cfg.y_label, text: cfg.y_label, color: '#6b7268' }, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.y_format) } },
+        x: { title: { display: !!cfg.x_label, text: cfg.x_label, color: cssv('--muted') }, grid: { color: cssv('--chart-grid') }, ticks: { color: cssv('--muted'), callback: (v) => fmtAxis(v, cfg.x_format) } },
+        y: { title: { display: !!cfg.y_label, text: cfg.y_label, color: cssv('--muted') }, grid: { color: cssv('--chart-grid') }, border: { display: false }, ticks: { color: cssv('--muted'), callback: (v) => fmtAxis(v, cfg.y_format) } },
       },
     },
     plugins: [quadrantLines],
@@ -2435,7 +2470,7 @@ function renderHeatmap(body, rows, cfg) {
   const gMin = Math.min(0, ...all), gMax = Math.max(1e-9, ...all);
   const colLabel = (ck) => (cfg.col_date ? bucketLabel(ck, cfg.bucket || 'day') : ck);
   const short = (v) => fmtCompact(v, cfg.format);
-  const shade = (step, list) => `background:${list[step]};color:${step >= 4 ? '#fff' : '#1b2b22'}`;
+  const shade = (step, list) => `background:${list[step]};color:${step >= 4 ? '#fff' : cssv('--ink')}`;
   // threshold_col: each cell against its column's median (a month across
   // branches); below `threshold` × median is flagged, far below is darker.
   const thr = Number(cfg.threshold) || 0.85;
