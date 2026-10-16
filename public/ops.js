@@ -18,7 +18,7 @@ const OPS_KIND = {
 const OPS_STATUS = { open: 'รอทีมงาน', doing: 'กำลังดูแล', done: 'เรียบร้อย' };
 const OPS_STATE = { bad: 'ต้องแก้', warn: 'ควรดู', ok: 'ปกติ', off: 'ยังไม่ได้ตั้ง' };
 // What a check's "go" means to each audience.
-const OPS_TAB_KSS = { data: 'data', alerts: 'line', plan: 'billing' };
+const OPS_TAB_KSS = { data: 'data', alerts: 'line', plan: 'billing', support: 'overview' };
 
 const opsChip = (state) => `<span class="ops-chip ops-${state}">${esc(OPS_STATE[state] || state)}</span>`;
 const opsAgo = (iso) => {
@@ -50,7 +50,7 @@ function renderHealthChecks(container, checks, opts = {}) {
         ${c.fix && c.state !== 'ok' ? `<p class="ops-fix">${esc(c.fix)}</p>` : ''}
         ${opts.showRaw && c.raw ? `<p class="ops-raw"><code>${esc(c.raw)}</code></p>` : ''}
       </div>
-      ${c.go && c.state !== 'ok' && opts.onGo ? `<button type="button" class="btn small ghost" data-i="${i}">${esc(opts.fixLabel || 'ไปแก้')}</button>` : ''}
+      ${c.go && c.state !== 'ok' && opts.onGo ? `<button type="button" class="btn small ghost" data-i="${i}">${esc(c.go === 'support' && opts.supportLabel ? opts.supportLabel : opts.fixLabel || 'ไปแก้')}</button>` : ''}
     </li>`)
     .join('')}</ul>`;
   container.querySelectorAll('button[data-i]').forEach((b) => b.addEventListener('click', () => opts.onGo(checks[Number(b.dataset.i)])));
@@ -76,7 +76,7 @@ async function refreshOpsBadges() {
 }
 
 // ---------- KSS: งานวันนี้ ----------
-async function renderAdminHome(main, shown = 25) {
+async function renderAdminHome(main, shown = 25, filter = null) {
   main.innerHTML = '<p class="muted">กำลังโหลด...</p>';
   const d = await refreshOpsBadges();
   if (!d) {
@@ -84,6 +84,10 @@ async function renderAdminHome(main, shown = 25) {
     return;
   }
   const t = d.totals;
+  if (!filter) filter = d.queue.some((q) => q.level === 'bad') ? 'bad' : 'all';
+  const full = d.queue;
+  d.queue = filter === 'all' ? full : full.filter((q) => q.level === filter);
+  const nBad = full.filter((q) => q.level === 'bad').length, nWarn = full.filter((q) => q.level === 'warn').length;
   const today = new Date().toLocaleDateString(I18N.locale(), { weekday: 'long', day: 'numeric', month: 'long' });
   const inbox = [
     ['self-serve', 'คำขอสมัครที่รออนุมัติ', d.inbox.signups, ''],
@@ -97,7 +101,10 @@ async function renderAdminHome(main, shown = 25) {
     </section>
     <section class="admin-card">
       <h2>บริษัทที่ต้องดูแล</h2>
-      <p class="ops-sum"><span class="ops-chip ops-bad">ต้องแก้ ${t.bad}</span> <span class="ops-chip ops-warn">ควรดู ${t.warn}</span> <span class="ops-chip ops-ok">ปกติ ${t.ok}</span></p>
+      <div class="settings-tabs" role="group" aria-label="กรองตามความเร่งด่วน">
+        ${[['bad', `ต้องแก้ (${nBad})`], ['warn', `ควรดู (${nWarn})`], ['all', `ทั้งหมด (${full.length})`]].map(([k, l]) => `<button type="button" class="settings-tab${filter === k ? ' on' : ''}" data-f="${k}" aria-pressed="${filter === k}">${l}</button>`).join('')}
+      </div>
+      <p class="ops-sum muted">บริษัทปกติ ${t.ok} · เรียงตามความเร่งด่วน: เชื่อมข้อมูลไม่ได้ ก่อนหมดอายุ ก่อน LINE ก่อน POS</p>
       ${d.queue.length
         ? `<ul class="ops-queue">${d.queue.slice(0, shown).map((q, i) => `<li class="ops-q ops-${q.level}">
             <div class="ops-q-head">
@@ -106,15 +113,16 @@ async function renderAdminHome(main, shown = 25) {
               ${q.open_support ? `<button type="button" class="ops-q-sup" data-sup="${q.company_id}">แจ้งไว้ ${q.open_support} เรื่อง</button>` : ''}
             </div>
             <ul class="ops-q-issues">${q.issues.map((c) => `<li>${opsChip(c.state)} <b>${esc(c.label)}</b> — ${esc(c.detail)}<button type="button" class="link-btn ops-q-go" data-i="${i}" data-k="${esc(c.key)}">เปิดดู</button></li>`).join('')}</ul>
-          </li>`).join('')}</ul>${d.queue.length > shown ? `<button type="button" class="btn small ghost ops-more">แสดงอีก ${Math.min(25, d.queue.length - shown)} จาก ${d.queue.length - shown} บริษัทที่เหลือ</button>` : ''}`
+          </li>`).join('')}</ul>${d.queue.length > shown ? `<button type="button" class="btn small ghost ops-more">แสดงเพิ่ม (เหลือ ${d.queue.length - shown} บริษัท)</button>` : ''}`
         : '<p class="ops-empty">ไม่มีบริษัทที่ต้องดูแลตอนนี้ ทุกบริษัทเชื่อมข้อมูลปกติ และไม่มีเรื่องค้าง</p>'}
     </section>`;
   main.querySelectorAll('.ops-inbox-item').forEach((b) => b.addEventListener('click', () => { adminState.selected = { type: b.dataset.view }; renderAdminMain(); }));
   const open = (i, key) => openCompanyTab(d.queue[i].company_id, key ? ({ fmh: 'overview', pos: 'data', line: 'line', plan: 'billing' }[key] || 'overview') : 'overview');
   main.querySelectorAll('.ops-q-name').forEach((b) => b.addEventListener('click', () => open(Number(b.dataset.i))));
   main.querySelectorAll('.ops-q-go').forEach((b) => b.addEventListener('click', () => open(Number(b.dataset.i), b.dataset.k)));
+  main.querySelectorAll('[data-f]').forEach((b) => b.addEventListener('click', () => renderAdminHome(main, 25, b.dataset.f)));
   const more = main.querySelector('.ops-more');
-  if (more) more.addEventListener('click', () => renderAdminHome(main, shown + 25));
+  if (more) more.addEventListener('click', () => renderAdminHome(main, shown + 25, filter));
   main.querySelectorAll('.ops-q-sup').forEach((b) => b.addEventListener('click', () => openCompanyTab(Number(b.dataset.sup), 'support')));
 }
 
@@ -225,7 +233,8 @@ async function renderStatusTab(body, companyId) {
     </section>`;
   renderHealthChecks(body.querySelector('.health-list'), h.checks, {
     fixLabel: 'ไปแก้ที่นี่',
-    onGo: (c) => (c.go === 'plan' && !(state.user.subscription && state.user.subscription.self_serve) ? openSupportForm({ kind: 'billing', message: 'ขอต่ออายุ/สอบถามแพ็กเกจ' }) : openCompanySettings(c.go)),
+    supportLabel: 'แจ้งทีมงาน',
+    onGo: (c) => c.go === 'support' ? openSupportForm({ kind: c.kind || 'connect', message: c.ask || '', onSent: () => renderStatusTab(body, companyId) }) : (c.go === 'plan' && !(state.user.subscription && state.user.subscription.self_serve) ? openSupportForm({ kind: 'billing', message: 'ขอต่ออายุ/สอบถามแพ็กเกจ' }) : openCompanySettings(c.go)),
   });
   body.querySelector('#status-report').addEventListener('click', () => openSupportForm({ onSent: () => renderStatusTab(body, companyId) }));
 }
@@ -260,6 +269,7 @@ function openSupportForm(opts = {}) {
         </fieldset>
         <div class="field"><label for="sup-msg">เกิดอะไรขึ้น</label>
           <textarea id="sup-msg" name="message" rows="4" maxlength="1000" required placeholder="เช่น ยอดซื้อสัปดาห์นี้ไม่ตรงกับที่เห็นใน FMH">${esc(opts.message || '')}</textarea></div>
+        <p class="ops-attach">อย่าใส่รหัสผ่าน, API key หรือเลขบัตรในข้อความ ทีมงานไม่ต้องใช้ในการช่วยคุณ</p>
         ${opsContextChips(ctx) ? `<p class="ops-attach"><b>ระบบแนบให้อัตโนมัติ</b></p><div class="ops-ctxs">${opsContextChips(ctx)}</div>` : ''}
         <div class="sup-msg-out" role="alert"></div>
         <div class="row-actions" style="margin-top:14px"><button type="submit" class="btn primary">ส่งให้ทีมงาน</button><button type="button" class="btn ghost" data-close>ยกเลิก</button></div>

@@ -26,6 +26,7 @@ function session() {
   for (const [e, role, cid] of [['opstest-kss@test.co', 'kss_superadmin', null], ['opstest-ca@test.co', 'company_admin', A], ['opstest-cl@test.co', 'client', A], ['opstest-cb@test.co', 'company_admin', B]]) {
     await pool.query(`INSERT INTO users (email, password_hash, display_name, role, company_id, must_change_password) VALUES (?, ?, ?, ?, ?, 0)`, [e, hash, e, role, cid]);
   }
+  await pool.query(`INSERT INTO users (email, password_hash, display_name, role, company_id, must_change_password) VALUES ('opstest-cc@test.co', ?, 'cc', 'company_admin', ?, 0)`, [hash, C]);
   const login = async (email) => { const s = session(); const r = await s('POST', '/api/auth/login', { email, password: 'Ops#2026x' }); if (r.status !== 200) throw new Error('login ' + email + ' ' + r.status); return s; };
   const kss = await login('opstest-kss@test.co');
   const ca = await login('opstest-ca@test.co');
@@ -41,6 +42,52 @@ function session() {
   check('company B: plan warns with days left', plan.state === 'warn' && /5 วัน/.test(plan.detail), JSON.stringify(plan));
   check('company admin cannot read another company', (await ca('GET', `/api/health?company_id=${B}`)).json.checks.find((c) => c.key === 'plan').state === 'ok');
 
+  // item 6 + raw error hidden from customers
+  const cc = await login('opstest-cc@test.co');
+  const fc = (await cc('GET', '/api/health')).json.checks.find((c) => c.key === 'fmh');
+  check('customer sees fix pointing to แจ้งทีมงาน, no raw error text', fc.go === 'support' && fc.kind === 'connect' && !('raw' in fc), JSON.stringify(fc));
+  const fk = (await kss('GET', `/api/health?company_id=${C}`)).json.checks.find((c) => c.key === 'fmh');
+  check('KSS still sees the raw error', /401/.test(fk.raw || ''));
+  const { explainFmhError } = require('../lib/health');
+  check('PO number 5012 is not an HTTP 5xx', explainFmhError('PO 5012 rejected').go === 'support' && !/ชั่วคราว/.test(explainFmhError('PO 5012 rejected').fix));
+  check('"generate" is not a rate limit', !/โควตา/.test(explainFmhError('cannot generate report').fix));
+  check('real 503 is transient', /ชั่วคราว/.test(explainFmhError('HTTP 503 Service Unavailable').fix));
+  // latest error wins, not the alphabetically first
+  await pool.query(`INSERT INTO fmh_sync_errors (company_id, cache_key, error_text, failed_at) VALUES (?, 'k0', 'AAA timeout earliest', NOW() - INTERVAL 3 DAY), (?, 'k2', 'HTTP 503 newest', NOW())`, [C, C]);
+  const latest = (await kss('GET', `/api/health?company_id=${C}`)).json.checks.find((c) => c.key === 'fmh');
+  check('shows the most recent error', /503/.test(latest.raw), latest.raw);
+  await pool.query(`DELETE FROM fmh_sync_errors WHERE company_id = ?`, [C]);
+
+  // stale sync: oldest report decides
+  await pool.query(`INSERT INTO fmh_report_cache (company_id, cache_key, data_json, row_count, synced_at) VALUES (?, 'purchase_orders', '[]', 0, NOW()), (?, 'receiving', '[]', 0, NOW() - INTERVAL 4 DAY)`, [C, C]);
+  const st = (await kss('GET', `/api/health?company_id=${C}`)).json.checks.find((c) => c.key === 'fmh');
+  check('one fresh report does not hide a stuck one', st.state === 'warn' && /อัปเดตล่าสุดเมื่อ/.test(st.detail), JSON.stringify(st));
+
+  // POS cadence: monthly uploader is fine at 12 days, weekly uploader is late
+  const up = (cid, d) => pool.query(`INSERT INTO pos_uploads (company_id, filename, date_to, created_at) VALUES (?, 'f.csv', CURDATE() - INTERVAL ? DAY, NOW() - INTERVAL ? DAY)`, [cid, d, d]);
+  for (const d of [12, 42, 72, 102]) await up(B, d);
+  for (const d of [12, 19, 26, 33]) await up(A, d);
+  const posB = (await kss('GET', `/api/health?company_id=${B}`)).json.checks.find((c) => c.key === 'pos');
+  const posA = (await kss('GET', `/api/health?company_id=${A}`)).json.checks.find((c) => c.key === 'pos');
+  check('monthly uploader not flagged at 12 days', posB.state === 'ok', JSON.stringify(posB));
+  check('weekly uploader flagged at 12 days', posA.state === 'warn', JSON.stringify(posA));
+  await pool.query(`INSERT INTO pos_uploads (company_id, filename, date_to) VALUES (?, 'future.csv', CURDATE() + INTERVAL 5 DAY)`, [C]);
+  check('future end date never gives a negative age', !/-\d+ วัน/.test((await kss('GET', `/api/health?company_id=${C}`)).json.checks.find((c) => c.key === 'pos').detail));
+
+  // LINE: limit and month agree with lib/line.js (null monthly_quota falls back to 300)
+  await pool.query(`INSERT INTO company_line (company_id, webhook_key, access_token_enc, enabled, group_id, quota_used, quota_month, monthly_quota) VALUES (?, 'opstest-wk', 'x', 1, 'g', 290, DATE_FORMAT(NOW() + INTERVAL 7 HOUR, '%Y-%m'), 0)`, [A]);
+  const ln = (await kss('GET', `/api/health?company_id=${A}`)).json.checks.find((c) => c.key === 'line');
+  check('LINE quota 0 falls back to 300 and warns at 290', ln.state === 'warn' && /290\/300/.test(ln.detail), JSON.stringify(ln));
+  check('LINE warning says which alerts stop', /ตัวเตือน/.test(ln.fix));
+  await pool.query(`UPDATE company_line SET quota_used = 300 WHERE company_id = ?`, [A]);
+  check('LINE full says what stops', /ตัวเตือน/.test((await kss('GET', `/api/health?company_id=${A}`)).json.checks.find((c) => c.key === 'line').fix));
+
+  // reset the fixtures the queue checks rely on
+  await pool.query(`DELETE FROM company_line WHERE company_id = ?`, [A]);
+  await pool.query(`DELETE FROM pos_uploads WHERE company_id IN (?, ?, ?)`, [A, B, C]);
+  await pool.query(`DELETE FROM fmh_report_cache WHERE company_id = ?`, [C]);
+  await pool.query(`INSERT INTO fmh_sync_errors (company_id, cache_key, error_text) VALUES (?, 'k1', 'HTTP 401 Unauthorized')`, [C]);
+
   // attention (KSS only)
   check('customer cannot read attention queue', (await ca('GET', '/api/admin/ops/attention')).status === 403);
   let q = (await kss('GET', '/api/admin/ops/attention')).json;
@@ -48,6 +95,7 @@ function session() {
   check('C (sync error) is in the queue as bad with a plain-language fix', row(C) && row(C).level === 'bad' && /ไม่รับ API key/.test(row(C).issues[0].fix), JSON.stringify(row(C)));
   check('B in queue as warn', row(B) && row(B).level === 'warn');
   check('A (only "off" checks) is not in the queue', !row(A));
+  check('FMH failure ranks above a renewal in the same list', q.queue.findIndex((x) => x.company_id === C) < q.queue.findIndex((x) => x.company_id === B));
   check('bad sorts before warn', q.queue.findIndex((x) => x.company_id === C) < q.queue.findIndex((x) => x.company_id === B));
 
   // support
@@ -76,6 +124,17 @@ function session() {
   await kss('PATCH', `/api/admin/ops/support/${sid}`, { status: 'done' });
   q = (await kss('GET', '/api/admin/ops/attention')).json;
   check('done request leaves the queue', !row(A));
+  // secrets are masked before storage
+  r = await cl('POST', '/api/support', { message: 'key คือ skey_live_5abcdefghijklmnopqrstuvwxyz123 และบัตร 4242 4242 4242 4242 ครับ', context: { error: 'token abcdefghijklmnopqrstuvwxyz0123456789' } });
+  const [[mkd]] = await pool.query(`SELECT message, context_json FROM support_requests WHERE id = ?`, [r.json.id]);
+  check('keys and card numbers are masked', !/skey_live|4242|abcdefghijklmnop/.test(mkd.message + mkd.context_json) && /ซ่อน/.test(mkd.message), mkd.message);
+  // retention: finished reports older than 12 months go, open ones stay
+  const [o1] = await pool.query(`INSERT INTO support_requests (company_id, user_id, kind, message, status, handled_at, created_at) VALUES (?, NULL, 'other', 'old done', 'done', NOW() - INTERVAL 13 MONTH, NOW() - INTERVAL 14 MONTH)`, [A]);
+  const [o2] = await pool.query(`INSERT INTO support_requests (company_id, user_id, kind, message, status, created_at) VALUES (?, NULL, 'other', 'old open', 'open', NOW() - INTERVAL 14 MONTH)`, [A]);
+  await require('../routes/ops').purgeOld();
+  const [[g1]] = await pool.query(`SELECT COUNT(*) AS n FROM support_requests WHERE id = ?`, [o1.insertId]);
+  const [[g2]] = await pool.query(`SELECT COUNT(*) AS n FROM support_requests WHERE id = ?`, [o2.insertId]);
+  check('old finished reports purged, open kept', g1.n === 0 && g2.n === 1);
   for (let i = 0; i < 8; i++) await cl('POST', '/api/support', { message: 'ซ้ำ ' + i + ' ทดสอบ' });
   check('daily limit stops floods', (await cl('POST', '/api/support', { message: 'อีกอันหนึ่ง' })).status === 429);
 

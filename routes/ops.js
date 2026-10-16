@@ -10,7 +10,7 @@ const express = require('express');
 const pool = require('../db/pool');
 const { requireAuth, requireSuperadmin, requireCompanyAdmin } = require('../middleware/auth');
 const { wrap, resolveCompanyId } = require('../lib/access');
-const { healthFor, RANK } = require('../lib/health');
+const { healthFor, issueScore, RANK } = require('../lib/health');
 
 const KINDS = ['data', 'connect', 'howto', 'billing', 'other'];
 const STATUSES = ['open', 'doing', 'done'];
@@ -18,12 +18,26 @@ const DAILY_LIMIT = 8; // per user, so one stuck screen cannot flood the queue
 
 const clip = (v, n) => String(v == null ? '' : v).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').slice(0, n);
 
+// Customers sometimes paste a key or a card number into a free-text box. Anything
+// that looks like a secret is replaced before it is stored.
+function maskSecrets(text) {
+  return String(text)
+    .replace(/\b(?:\d[ -]?){13,19}\b/g, '[ซ่อน]')
+    .replace(/[A-Za-z0-9_\-+\/=]{24,}/g, '[ซ่อน]');
+}
+const clean = (v, n) => maskSecrets(clip(v, n));
+const RETENTION_MONTHS = 12;
+async function purgeOld() {
+  const [r] = await pool.query(`DELETE FROM support_requests WHERE status = 'done' AND COALESCE(handled_at, created_at) < (NOW() - INTERVAL ? MONTH)`, [RETENTION_MONTHS]);
+  return r.affectedRows;
+}
+
 // Only these keys are kept, each clipped; nothing else the browser sends is stored.
 function cleanContext(raw) {
   const c = raw && typeof raw === 'object' ? raw : {};
   const out = {};
   for (const [k, n] of [['page', 80], ['dashboard_name', 120], ['widget_title', 120], ['filters', 300], ['error', 300], ['date_range', 60]]) {
-    if (c[k]) out[k] = clip(c[k], n);
+    if (c[k]) out[k] = clean(c[k], n);
   }
   if (Number.isInteger(Number(c.dashboard_id)) && Number(c.dashboard_id) > 0) out.dashboard_id = Number(c.dashboard_id);
   return out;
@@ -38,7 +52,7 @@ customerRouter.post(
   wrap(async (req, res) => {
     if (!req.user.company_id) return res.status(400).json({ error: 'บัญชีทีม KSS แจ้งปัญหาผ่านช่องนี้ไม่ได้' });
     const b = req.body || {};
-    const message = clip(b.message, 1000).trim();
+    const message = clean(b.message, 1000).trim();
     if (message.length < 5) return res.status(400).json({ error: 'บอกหน่อยว่าเกิดอะไรขึ้น (อย่างน้อย 5 ตัวอักษร)' });
     const kind = KINDS.includes(b.kind) ? b.kind : 'other';
     const [[today]] = await pool.query(
@@ -78,7 +92,9 @@ healthRouter.get(
     if (!id) return res.status(400).json({ error: 'company_id required' });
     const h = (await healthFor([id])).get(id);
     if (!h) return res.status(404).json({ error: 'ไม่พบบริษัทนี้' });
-    res.json({ level: h.level, checks: h.checks, open_support: h.open_support });
+    // The raw FMH error text is for KSS staff; the customer gets the plain-language fix.
+    const checks = req.user.role === 'kss_superadmin' ? h.checks : h.checks.map(({ raw, ...rest }) => rest);
+    res.json({ level: h.level, checks, open_support: h.open_support });
   })
 );
 
@@ -99,10 +115,11 @@ adminRouter.get(
       if (!issues.length && !h.open_support) continue;
       queue.push({
         company_id: h.company.id, name: h.company.name, code: h.company.company_code, status: h.company.status,
-        level: h.level, issues, open_support: h.open_support,
+        level: h.level, issues: issues.sort((a, b) => issueScore(b) - issueScore(a)), open_support: h.open_support,
+        score: Math.max(0, ...issues.map(issueScore)) + h.open_support * 5,
       });
     }
-    queue.sort((a, b) => RANK[b.level] - RANK[a.level] || b.open_support - a.open_support || a.name.localeCompare(b.name, 'th'));
+    queue.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, 'th'));
     const [[sg]] = await pool.query(`SELECT COUNT(*) AS n FROM signup_requests WHERE status = 'pending'`);
     const [[ms]] = await pool.query(`SELECT COUNT(DISTINCT question) AS n FROM ai_feedback WHERE kind IN ('miss','down') AND status = 'open' AND created_at >= (NOW() - INTERVAL 30 DAY)`);
     const [[sp]] = await pool.query(`SELECT COUNT(*) AS n, SUM(status = 'open') AS fresh FROM support_requests WHERE status <> 'done'`);
@@ -142,11 +159,11 @@ adminRouter.patch(
     if (!status) return res.status(400).json({ error: 'status ไม่ถูกต้อง' });
     const [r] = await pool.query(
       `UPDATE support_requests SET status = ?, note = ?, handled_by = ?, handled_at = NOW() WHERE id = ?`,
-      [status, b.note == null ? null : clip(b.note, 500), req.user.id, req.params.id]
+      [status, b.note == null ? null : clean(b.note, 500), req.user.id, req.params.id]
     );
     if (!r.affectedRows) return res.status(404).json({ error: 'ไม่พบรายการ' });
     res.json({ ok: true });
   })
 );
 
-module.exports = { customerRouter, healthRouter, adminRouter };
+module.exports = { customerRouter, healthRouter, adminRouter, purgeOld };

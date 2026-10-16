@@ -190,6 +190,9 @@ cron.schedule(
   { timezone: 'Asia/Bangkok' }
 );
 
+// Support reports: finished ones are deleted after a year (they can hold free text).
+cron.schedule('20 3 * * *', () => require('./routes/ops').purgeOld().catch((e) => console.error('Support purge failed:', e.message)), { timezone: 'Asia/Bangkok' });
+
 // Card auto-renew: 06:15 every day, charge plans ending tomorrow (or unpaid since).
 cron.schedule(
   '15 6 * * *',
