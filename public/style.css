@@ -1348,3 +1348,11 @@ body.arranging-on .ai-fab { display: none; }
 .firstrun-noaccess { text-align: left; padding: 28px; max-width: 640px; margin-inline: auto; }
 .fr-actions { position: sticky; bottom: 0; z-index: 2; margin: 18px -28px -28px; padding: 14px 28px; background: var(--surface-2); border-top: 1px solid var(--line); border-radius: 0 0 14px 14px; }
 @media (max-width: 700px) { .fr-actions { margin: 18px -16px -16px; padding: 12px 16px; } }
+
+/* Sample-data -> real-data confirm (inside the sync bar) */
+.real-confirm { margin-top: 10px; padding: 14px 16px; border-radius: 12px; background: var(--white); border: 1.5px solid var(--primary); display: flex; flex-direction: column; gap: 8px; }
+.real-confirm ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+.real-confirm p { margin: 0; font-size: 13px; line-height: 1.55; }
+.real-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.real-actions .btn { min-height: 40px; }
+.real-msg:empty { display: none; }

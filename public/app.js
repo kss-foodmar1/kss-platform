@@ -832,6 +832,62 @@ function renderNoAccess(wrap) {
     openSupportForm({ kind: 'other', message: 'ล็อกอินแล้วยังไม่เห็น dashboard — ขอให้เปิดสิทธิ์ให้' }));
 }
 
+// "Ready for real data?" — asks first, says what stays and what is cleared,
+// and when nothing real is connected yet explains how to connect it.
+function showRealConfirm(bar, dashboardId, force = false) {
+  bar.querySelector('.real-confirm')?.remove();
+  const box = document.createElement('div');
+  box.className = 'real-confirm';
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', 'สลับเป็นข้อมูลจริง');
+  bar.appendChild(box);
+  const close = () => { box.remove(); bar.querySelector('.use-real-btn')?.focus(); };
+  const show = (html, wire) => { box.innerHTML = html; (wire || (() => {}))(); const f = box.querySelector('button'); if (f) f.focus(); };
+  const ask = () => show(`
+    <b>สลับเป็นข้อมูลจริง?</b>
+    <ul>
+      <li>dashboard, widget และการจัดวางที่คุณทำไว้ <b>อยู่ครบ</b></li>
+      <li>ตัวเลขตัวอย่างและงานที่รับทราบ/มอบหมายตอนลอง จะถูกล้าง</li>
+      <li>ตัวเลขจริงใช้เวลาดึงสักครู่ (ปกติไม่กี่นาที)</li>
+    </ul>
+    <div class="real-actions"><button type="button" class="btn small primary real-yes">ยืนยันสลับ</button><button type="button" class="btn small ghost real-no">ยังก่อน</button></div>
+    <div class="real-msg" role="status"></div>`, () => {
+      box.querySelector('.real-no').addEventListener('click', close);
+      box.querySelector('.real-yes').addEventListener('click', go);
+    });
+  const noData = () => show(`
+    <b>ยังไม่ได้เชื่อมข้อมูลจริง</b>
+    <p class="muted">ต้องมีอย่างใดอย่างหนึ่งก่อน: <b>FMH API Key</b> (ขอได้จากทีม KSS หรือผู้ที่ดูแล FMH ของร้านคุณ) หรือ <b>ไฟล์ยอดขาย POS</b> ไม่มี key ก็ให้ทีม KSS ช่วยตั้งให้ได้ ระหว่างนี้จัดเรียง dashboard ต่อได้เลย</p>
+    <div class="real-actions"><button type="button" class="btn small primary real-connect">ใส่ key / อัปโหลดไฟล์</button><button type="button" class="btn small ghost real-help">ให้ทีม KSS ช่วยตั้งให้</button><button type="button" class="btn small ghost real-no">ปิด</button></div>`, () => {
+      box.querySelector('.real-connect').addEventListener('click', () => openCompanySettings('data'));
+      box.querySelector('.real-help').addEventListener('click', () => openSupportForm({ kind: 'connect', message: 'อยากเริ่มใช้ข้อมูลจริง ขอให้ช่วยเชื่อม FMH key หรือไฟล์ POS' }));
+      box.querySelector('.real-no').addEventListener('click', close);
+    });
+  const posOnly = (msg) => show(`
+    <b>มีเฉพาะไฟล์ POS</b>
+    <p class="muted">${esc(msg)}</p>
+    <div class="real-actions"><button type="button" class="btn small primary real-connect">ใส่ FMH key ก่อน</button><button type="button" class="btn small ghost real-force">สลับเลย (ส่วน FMH ว่างก่อน)</button><button type="button" class="btn small ghost real-no">ยังก่อน</button></div>`, () => {
+      box.querySelector('.real-connect').addEventListener('click', () => openCompanySettings('data'));
+      box.querySelector('.real-force').addEventListener('click', () => go(true));
+      box.querySelector('.real-no').addEventListener('click', close);
+    });
+  async function go(forceNow) {
+    const yes = box.querySelector('.real-yes') || box.querySelector('.real-force');
+    box.querySelectorAll('button').forEach((b) => (b.disabled = true));
+    if (yes) yes.textContent = 'กำลังสลับ...';
+    try {
+      await api('/api/settings/use-real-data', { method: 'POST', body: JSON.stringify({ force: forceNow === true }) });
+      await loadDashboards(dashboardId);
+    } catch (err) {
+      if (err.code === 'NO_DATA') return noData();
+      if (err.code === 'POS_ONLY') return posOnly(err.message);
+      ask();
+      box.querySelector('.real-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    }
+  }
+  ask();
+}
+
 // First login of a company admin with no dashboard: a guided start in place of
 // a blank page. Pick a starter, one click makes the dashboard and fills it;
 // if no data is connected yet, the first step is connecting it.
@@ -861,7 +917,7 @@ async function renderFirstRun(wrap, cid) {
         : `${step(1, 'เชื่อมข้อมูล (FMH / ไฟล์ POS)', anyReady ? 'done' : 'now')}${step(2, 'เลือกชุด dashboard', anyReady ? 'now' : 'todo')}${step(3, 'ปรับแต่งและเชิญทีม', 'todo')}`}
     </ol>
     ${anyReady
-      ? `<p class="muted starter-lead">${sample ? 'ระบบจะเริ่มด้วย<b>ข้อมูลตัวอย่าง</b>ให้ลองใช้ก่อน ยังไม่ต้องเชื่อมอะไร ' : ''}เลือกชุดที่ตรงกับบทบาทของคุณ แล้วกด “สร้างให้เลย” ระบบสร้าง dashboard และใส่ widget ให้ทันที เมื่อพร้อมใช้ข้อมูลจริง ระบบจะถามอีกครั้ง</p>`
+      ? `<p class="muted starter-lead">${sample ? 'ช่วงแรกคุณจะได้ลองกับ<b>ข้อมูลตัวอย่าง</b> ยังไม่ต้องเชื่อมอะไร ลองดู widget ต่างๆ และจัด dashboard ให้ถูกใจ ' : ''}เลือกชุดที่ตรงกับบทบาทของคุณ แล้วกด “สร้างให้เลย” ระบบสร้าง dashboard และใส่ widget ให้ทันที พอพร้อมใช้ข้อมูลจริง กดปุ่ม “พร้อมใช้ข้อมูลจริงแล้ว” ที่แถบด้านบน dashboard widget และการจัดวางที่ทำไว้จะอยู่ครบ</p>`
       : '<div class="fr-connect"><b>ยังไม่มีข้อมูลให้แสดง</b><span class="muted">ใส่ FMH API Key หรืออัปโหลดไฟล์ POS ก่อน แล้ว dashboard จะมีตัวเลขจริงตั้งแต่เปิดครั้งแรก</span><button type="button" class="btn primary fr-data">เชื่อมข้อมูลตอนนี้</button></div>'}
     ${!anyReady ? '' : `<div class="starter-grid" role="radiogroup" aria-label="ชุดเริ่มต้น">
       ${options.map((o) => `<label class="starter-opt${o.ready.length ? '' : ' off'}${o.key === pick ? ' on' : ''}">
@@ -1497,10 +1553,14 @@ class DashboardView {
       : `<div class="fmh-sync-line">
            <span>${
              this.dashboard.data_source === 'demo'
-               ? `<span class="demo-pill">ข้อมูลตัวอย่าง</span> <span class="muted">ไม่ใช่ข้อมูลจริงของร้านคุณและไม่ใช้โควตา FMH${isCompanyAdmin() ? ' — พร้อมใช้ข้อมูลจริงหรือยัง?' : ''}</span>`
+               ? `<span class="demo-pill">ข้อมูลตัวอย่าง</span> <span class="muted">${
+                   isCompanyAdmin() && !this.preview
+                     ? 'ลองเพิ่ม ลบ และจัดเรียง widget ได้เต็มที่ ตัวเลขนี้ไม่ใช่ข้อมูลจริงของร้านคุณ เมื่อสลับเป็นข้อมูลจริง widget และการจัดวางที่ทำไว้จะอยู่ครบ'
+                     : 'ตัวเลขนี้เป็นข้อมูลตัวอย่าง ไม่ใช่ข้อมูลจริงของร้าน'
+                 }</span>`
                : oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
            }</span>
-           <span class="sync-actions">${toggle}${this.dashboard.data_source === 'demo' && isCompanyAdmin() && !this.preview ? '<button type="button" class="btn small primary use-real-btn">สลับเป็นข้อมูลจริง</button>' : ''}${keyMissing ? '' : '<button type="button" class="btn small ghost fmh-refresh-btn">ดึงข้อมูลใหม่</button>'}</span>
+           <span class="sync-actions">${this.dashboard.data_source === 'demo' ? '' : toggle}${this.dashboard.data_source === 'demo' && isCompanyAdmin() && !this.preview ? '<button type="button" class="btn small primary use-real-btn">พร้อมใช้ข้อมูลจริงแล้ว</button>' : ''}${keyMissing || this.dashboard.data_source === 'demo' ? '' : '<button type="button" class="btn small ghost fmh-refresh-btn">ดึงข้อมูลใหม่</button>'}</span>
          </div>
          ${
            failed.length
@@ -1575,20 +1635,7 @@ class DashboardView {
     this.statusEl.appendChild(bar);
 
     const real = bar.querySelector('.use-real-btn');
-    if (real) {
-      real.addEventListener('click', async () => {
-        real.disabled = true;
-        try {
-          await api('/api/settings/use-real-data', { method: 'POST', body: JSON.stringify({}) });
-          await loadDashboards(this.dashboard.id);
-        } catch (err) {
-          real.disabled = false;
-          // Nothing real connected yet: the next step is connecting it.
-          if (err.code === 'NO_DATA') openCompanySettings('data');
-          else bar.insertAdjacentHTML('beforeend', `<div class="error-msg" style="margin:4px 0 0;">${esc(err.message)}</div>`);
-        }
-      });
-    }
+    if (real) real.addEventListener('click', () => showRealConfirm(bar, this.dashboard.id));
     const btn = bar.querySelector('.fmh-refresh-btn');
     if (btn) {
       btn.addEventListener('click', async () => {

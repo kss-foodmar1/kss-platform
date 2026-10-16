@@ -108,6 +108,11 @@ router.post(
     if (!c.has_key && !Number(c.pos)) {
       return res.status(400).json({ code: 'NO_DATA', error: 'ยังไม่ได้เชื่อมข้อมูลจริง — ใส่ FMH API Key หรืออัปโหลดไฟล์ POS ก่อน' });
     }
+    // POS file only: sales will be real but everything that comes from FMH
+    // (purchasing, cost, stock) stays empty — say so and let the admin decide.
+    if (!c.has_key && !(req.body && req.body.force)) {
+      return res.status(409).json({ code: 'POS_ONLY', error: 'มีเฉพาะไฟล์ POS — widget จัดซื้อ ต้นทุน และสต็อกที่มาจาก FMH จะว่างจนกว่าจะใส่ FMH API Key' });
+    }
     await toRealData(companyId);
     withTrigger('use_real', () => syncCompany(companyId)).catch((e) => console.error('Sync after switch failed:', e.message));
     res.json({ ok: true, switched: true });
