@@ -1334,3 +1334,17 @@ body.arranging-on .ai-fab { display: none; }
   .company-picker-wrap { min-width: 0; max-width: 100%; }
   .company-picker-wrap select { max-width: 100%; width: 100%; }
 }
+
+/* First-run guide (company admin with no dashboard yet) */
+.firstrun { max-width: 1040px; margin-inline: auto; }
+.fr-steps { list-style: none; margin: 14px 0 18px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.fr-step { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+.fr-step.now { color: var(--ink, inherit); font-weight: 700; }
+.fr-n { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--line-strong, var(--line)); font-size: 12px; font-weight: 700; }
+.fr-step.now .fr-n { background: var(--primary); border-color: var(--primary); color: #fff; }
+.fr-step.done .fr-n { background: var(--status-good); border-color: var(--status-good); color: #fff; }
+.fr-connect { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 14px 16px; margin-bottom: 16px; border-radius: 12px; background: var(--white); border: 1.5px solid var(--primary); }
+.fr-connect .muted { flex: 1 1 260px; font-size: 13px; }
+.firstrun-noaccess { text-align: left; padding: 28px; max-width: 640px; margin-inline: auto; }
+.fr-actions { position: sticky; bottom: 0; z-index: 2; margin: 18px -28px -28px; padding: 14px 28px; background: var(--surface-2); border-top: 1px solid var(--line); border-radius: 0 0 14px 14px; }
+@media (max-width: 700px) { .fr-actions { margin: 18px -16px -16px; padding: 12px 16px; } }

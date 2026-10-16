@@ -814,10 +814,89 @@ async function loadDashboards(preferredDashboardId) {
   if (target) selectDashboard(target.id);
   else {
     destroyCharts();
-    wrap.innerHTML = `<p class="muted">${
-      isSuper() ? 'บริษัทนี้ยังไม่มี dashboard — สร้างได้ใน Admin Console' : 'ยังไม่มี dashboard ที่คุณเข้าถึงได้ กรุณาติดต่อผู้ดูแลระบบ'
-    }</p>`;
+    if (isCompanyAdmin()) renderFirstRun(wrap, state.viewCompanyId);
+    else if (isSuper()) wrap.innerHTML = '<p class="muted">บริษัทนี้ยังไม่มี dashboard — สร้างได้ใน Admin Console</p>';
+    else renderNoAccess(wrap);
   }
+}
+
+// A member whose company admin has not shared a dashboard yet: say what
+// happened and who can fix it, instead of a blank page.
+function renderNoAccess(wrap) {
+  wrap.innerHTML = `<div class="dash-empty firstrun-noaccess">
+    <h2 class="starter-h">ยังไม่มี dashboard ให้คุณดู</h2>
+    <p class="muted starter-lead">บัญชีของคุณเข้าระบบได้แล้ว แต่ผู้ดูแลบริษัทยังไม่ได้เปิดสิทธิ์ dashboard ให้ ขอให้ผู้ดูแลบริษัทเปิดให้ หรือกดแจ้งทีมงานด้านล่าง ระบบจะแนบข้อมูลบัญชีให้เอง</p>
+    <div class="starter-actions"><button type="button" class="btn primary" id="noaccess-report">แจ้งทีมงาน</button></div>
+  </div>`;
+  wrap.querySelector('#noaccess-report').addEventListener('click', () =>
+    openSupportForm({ kind: 'other', message: 'ล็อกอินแล้วยังไม่เห็น dashboard — ขอให้เปิดสิทธิ์ให้' }));
+}
+
+// First login of a company admin with no dashboard: a guided start in place of
+// a blank page. Pick a starter, one click makes the dashboard and fills it;
+// if no data is connected yet, the first step is connecting it.
+async function renderFirstRun(wrap, cid) {
+  wrap.innerHTML = '<div class="dash-empty starter firstrun"><p class="muted">กำลังเตรียมหน้าเริ่มต้น...</p></div>';
+  const box = wrap.firstElementChild;
+  let options;
+  try {
+    ({ options } = await api(`/api/admin/companies/${cid}/starter-options`));
+  } catch (err) {
+    box.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    return;
+  }
+  const anyReady = options.some((o) => o.ready.length);
+  let pick = (options.find((o) => o.key === 'basic' && o.ready.length) || options.find((o) => o.ready.length) || {}).key || null;
+  const name = (state.user && state.user.company_name) || '';
+  const step = (n, label, state_) => `<li class="fr-step ${state_}"><span class="fr-n">${state_ === 'done' ? '✓' : n}</span>${esc(label)}</li>`;
+  box.innerHTML = `
+    <p class="starter-role">เริ่มต้นใช้งาน</p>
+    <h2 class="starter-h">ยินดีต้อนรับ${name ? ` ${esc(name)}` : ''} — มาตั้ง dashboard แรกกัน</h2>
+    <ol class="fr-steps" aria-label="ขั้นตอนเริ่มต้น">
+      ${step(1, 'เชื่อมข้อมูล (FMH / ไฟล์ POS)', anyReady ? 'done' : 'now')}
+      ${step(2, 'เลือกชุด dashboard', anyReady ? 'now' : 'todo')}
+      ${step(3, 'ปรับแต่งและเชิญทีม', 'todo')}
+    </ol>
+    ${anyReady
+      ? '<p class="muted starter-lead">เลือกชุดที่ตรงกับบทบาทของคุณ แล้วกด “สร้างให้เลย” ระบบสร้าง dashboard และใส่ widget ที่มีข้อมูลแล้วให้ทันที แก้ไขทีหลังได้เสมอ</p>'
+      : '<div class="fr-connect"><b>ยังไม่มีข้อมูลให้แสดง</b><span class="muted">ใส่ FMH API Key หรืออัปโหลดไฟล์ POS ก่อน แล้ว dashboard จะมีตัวเลขจริงตั้งแต่เปิดครั้งแรก</span><button type="button" class="btn primary fr-data">เชื่อมข้อมูลตอนนี้</button></div>'}
+    ${!anyReady ? '' : `<div class="starter-grid" role="radiogroup" aria-label="ชุดเริ่มต้น">
+      ${options.map((o) => `<label class="starter-opt${o.ready.length ? '' : ' off'}${o.key === pick ? ' on' : ''}">
+        <input type="radio" name="fr-pick" value="${esc(o.key)}"${o.key === pick ? ' checked' : ''}${o.ready.length ? '' : ' disabled'}>
+        <span class="starter-role">${esc(o.role || 'แนะนำ')}</span>
+        <b class="starter-title">${esc(o.title)}</b>
+        <span class="starter-desc">${esc(o.description)}</span>
+        <span class="starter-count">${o.ready.length ? `พร้อมแสดง ${o.ready.length} widget` : 'ยังไม่มีข้อมูลสำหรับชุดนี้'}</span>
+      </label>`).join('')}
+    </div>`}
+    <div class="starter-actions fr-actions">
+      ${anyReady ? `<button type="button" class="btn primary fr-go"${pick ? '' : ' disabled'}>สร้างให้เลย</button>` : ''}
+      <button type="button" class="btn ghost fr-empty">เริ่มจาก dashboard ว่าง</button>
+    </div>
+    <div class="starter-msg" role="status"></div>`;
+  box.querySelectorAll('input[name="fr-pick"]').forEach((r) =>
+    r.addEventListener('change', () => {
+      pick = r.value;
+      box.querySelectorAll('.starter-opt').forEach((l) => l.classList.toggle('on', l.querySelector('input').value === pick));
+    }));
+  const dataBtn = box.querySelector('.fr-data');
+  if (dataBtn) dataBtn.addEventListener('click', () => openCompanySettings('data'));
+  const run = async (btn, body, busy, idle) => {
+    box.querySelectorAll('button').forEach((b) => (b.disabled = true));
+    btn.textContent = busy;
+    try {
+      const r = await api(`/api/admin/companies/${cid}/first-dashboard`, { method: 'POST', body: JSON.stringify(body) });
+      await loadDashboards(r.id);
+    } catch (err) {
+      box.querySelectorAll('button').forEach((b) => (b.disabled = false));
+      btn.textContent = idle;
+      box.querySelector('.starter-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    }
+  };
+  const go = box.querySelector('.fr-go');
+  if (go) go.addEventListener('click', () => run(go, { key: pick }, 'กำลังสร้าง...', 'สร้างให้เลย'));
+  const emp = box.querySelector('.fr-empty');
+  emp.addEventListener('click', () => run(emp, { empty: true }, 'กำลังสร้าง...', 'เริ่มจาก dashboard ว่าง'));
 }
 
 function renderTabs() {
