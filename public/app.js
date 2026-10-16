@@ -93,8 +93,11 @@ const compactFmt = new Intl.NumberFormat('en', { notation: 'compact', maximumFra
 function fmtValue(v, format) {
   const n = Number(v) || 0;
   switch (format) {
-    case 'currency':
-      return '฿' + Math.round(n).toLocaleString('th-TH');
+    case 'currency': {
+      // "−฿11,485", never "฿-11,485" or "฿-0"
+      const r = Math.round(n);
+      return (r < 0 ? '−฿' : '฿') + Math.abs(r).toLocaleString('th-TH');
+    }
     case 'pct':
       return n.toFixed(1) + '%';
     case 'pct_signed':
@@ -106,7 +109,7 @@ function fmtValue(v, format) {
   }
 }
 function fmtAxis(v, format) {
-  if (format === 'currency') return '฿' + compactFmt.format(v);
+  if (format === 'currency') return (v < 0 ? '−฿' : '฿') + compactFmt.format(Math.abs(v));
   if (format === 'pct' || format === 'pct_signed') return v + '%';
   return compactFmt.format(v);
 }
@@ -952,9 +955,15 @@ async function renderFirstRun(wrap, cid) {
 
   async function create(btn, body, idle) {
     box.querySelectorAll('button').forEach((b) => (b.disabled = true));
-    btn.textContent = 'กำลังสร้าง...';
+    btn.textContent = body.empty ? 'กำลังสร้าง...' : 'กำลังเตรียมตัวเลขของร้านคุณ...';
     try {
       const r = await api(`/api/admin/companies/${cid}/first-dashboard`, { method: 'POST', body: JSON.stringify({ ...body, profile: ans }) });
+      // The dashboard opens with a "ready" strip naming what it was built from (DashboardView.renderInsights).
+      if (!body.empty) {
+        const chosen = (window.__frList || []).find((o) => o.key === body.key);
+        const said = [ans.setup && choices.setups[ans.setup], ans.role && choices.roles[ans.role], ...ans.goals.map((g) => choices.goals[g])].filter(Boolean);
+        try { sessionStorage.setItem(`kss_welcome_${r.id}`, JSON.stringify({ title: chosen ? chosen.title : '', said })); } catch (e) { /* private window */ }
+      }
       await loadDashboards(r.id);
     } catch (err) {
       box.querySelectorAll('button').forEach((b) => (b.disabled = false));
@@ -1068,6 +1077,7 @@ async function renderFirstRun(wrap, cid) {
     try {
       const qs = new URLSearchParams({ setup: ans.setup || '', role: ans.role || '', goals: ans.goals.join(',') });
       ({ options: list } = await api(`/api/admin/companies/${cid}/starter-options?${qs}`));
+      window.__frList = list;
     } catch (err) {
       box.innerHTML = `<div class="error-msg">${esc(err.message)}<div><button type="button" class="btn ghost fr-retry">ลองอีกครั้ง</button></div></div>`;
       box.querySelector('.fr-retry').addEventListener('click', renderResult);
@@ -1079,23 +1089,31 @@ async function renderFirstRun(wrap, cid) {
     const shown = usable.slice(0, 3);
     const more = usable.slice(3);
     let pick = shown.length ? shown[0].key : null;
-    // Widget names with terms an owner may not use (GRN, COGS, PO...) stay off the card.
-    const plain = (o) => o.ready.map((w) => w.name).filter((n) => !/[A-Za-z]{2,}/.test(n)).slice(0, 3);
-    const card = (o, i) => `<label class="starter-opt${o.key === pick ? ' on' : ''}${answered && i === 0 ? ' top' : ''}">
+    // A card says what the customer will find out, not which widgets it holds.
+    // The first (recommended) one is large: why it was chosen, three things you will see.
+    // The others are short, so the choice is obvious.
+    const said = [ans.setup && choices.setups[ans.setup], ans.role && choices.roles[ans.role], ...ans.goals.map((g) => choices.goals[g])].filter(Boolean);
+    const sees = (o) => (o.highlights && o.highlights.length ? o.highlights : [o.description]);
+    const card = (o, i) => {
+      const hero = answered && i === 0;
+      return `<label class="starter-opt${o.key === pick ? ' on' : ''}${hero ? ' top fr-hero' : ''}">
         <input type="radio" name="fr-pick" value="${esc(o.key)}"${o.key === pick ? ' checked' : ''}>
-        <span class="starter-role">${answered && i === 0 ? 'แนะนำสำหรับคุณ' : esc(o.role || 'ทั่วไป')}</span>
+        <span class="starter-role">${hero ? 'แนะนำสำหรับคุณ' : esc(o.role || 'ทั่วไป')}</span>
         <b class="starter-title">${esc(o.title)}</b>
-        <span class="starter-desc">${esc(o.description)}</span>
-        ${o.why ? `<span class="fr-why">${esc(o.why)}</span>` : ''}
-        <span class="starter-count">ได้ ${o.ready.length} widget${plain(o).length ? `: ${esc(plain(o).join(' · '))}` : ''}</span>
+        ${hero && said.length ? `<span class="fr-why">เพราะคุณบอกว่า: ${esc(said.join(' · '))}</span>` : ''}
+        ${hero
+          ? `<span class="fr-sees-h">คุณจะเห็น</span><ul class="fr-sees">${sees(o).slice(0, 3).map((h) => `<li>${esc(h)}</li>`).join('')}</ul>`
+          : `<span class="starter-desc">${esc(sees(o)[0])}</span>`}
+        <span class="starter-count">${o.ready.length} widget พร้อมตัวเลข</span>
       </label>`;
+    };
     box.innerHTML = `
       ${head(answered ? 'เลือกให้ตามคำตอบของคุณ' : 'เริ่มต้นใช้งาน', answered ? 'ชุดที่น่าจะตอบโจทย์คุณ' : `ยินดีต้อนรับ${name ? ` ${esc(name)}` : ''} — เลือกชุดเริ่มต้น`)}
       ${answered ? '' : `<p class="muted starter-lead">ยังไม่ได้ตอบคำถาม จึงแสดงชุดทั่วไปโดยไม่จัดอันดับ กด “ตอบคำถาม” ให้ระบบเลือกชุดที่ตรงกับคุณ</p>${sampleNote}`}
       <div class="starter-grid" role="radiogroup" aria-label="ชุดเริ่มต้น">${shown.map(card).join('')}</div>
       ${more.length ? `<button type="button" class="btn link fr-more">ดูชุดอื่นอีก ${more.length} ชุด</button><div class="starter-grid fr-morebox" hidden>${more.map((o, i) => card(o, i + 3)).join('')}</div>` : ''}
       <div class="starter-actions fr-actions">
-        <button type="button" class="btn primary fr-go"${pick ? '' : ' disabled'}>สร้างให้เลย</button>
+        <button type="button" class="btn primary fr-go"${pick ? '' : ' disabled'}>สร้าง dashboard ของฉัน</button>
         <button type="button" class="btn ghost fr-redo">${answered ? 'แก้คำตอบ' : 'ตอบคำถาม'}</button>
       </div>
       <div class="fr-emptyrow"><button type="button" class="btn link fr-empty">เริ่มจาก dashboard ว่าง</button></div>
@@ -1107,7 +1125,7 @@ async function renderFirstRun(wrap, cid) {
     box.querySelector('.fr-redo').addEventListener('click', () => renderQuestion(0, true));
     box.querySelector('.starter-h').focus({ preventScroll: true });
     const go = box.querySelector('.fr-go');
-    go.addEventListener('click', () => create(go, { key: pick }, 'สร้างให้เลย'));
+    go.addEventListener('click', () => create(go, { key: pick }, 'สร้าง dashboard ของฉัน'));
     const emp = box.querySelector('.fr-empty');
     emp.addEventListener('click', () => create(emp, { empty: true }, 'เริ่มจาก dashboard ว่าง'));
   }
@@ -1311,6 +1329,11 @@ class DashboardView {
       this.wrap.appendChild(this.statusEl);
     }
     if (!this.preview) {
+      this.insightEl = document.createElement('section');
+      this.insightEl.className = 'insight-card';
+      this.insightEl.setAttribute('aria-label', 'เราเจอให้คุณ');
+      this.insightEl.hidden = true;
+      this.wrap.appendChild(this.insightEl);
       this.todayEl = document.createElement('section');
       this.todayEl.className = 'today-card';
       this.todayEl.hidden = true;
@@ -1836,10 +1859,12 @@ class DashboardView {
     const taken = data.items.filter((i) => i.ack_status);
     if (!data.items.length) { box.hidden = true; return; }
     box.hidden = false;
-    const fold = `kss_today_fold_${this.dashboard.id}_${data.day}`;
+    // A slim warning line by default: the page leads with what the numbers found, and the
+    // to-do list opens when someone wants it (remembered for the day).
+    const fold = `kss_today_open_${this.dashboard.id}_${data.day}`;
     const phone = matchMedia('(max-width: 700px)').matches;
-    let folded = false;
-    try { const v = localStorage.getItem(fold); folded = v === '1'; } catch (e) { /* private window */ }
+    let folded = true;
+    try { folded = localStorage.getItem(fold) !== '1'; } catch (e) { /* private window */ }
     // Deep link from the LINE digest button (/?alerts=1): open the card and bring it into view once.
     let deepLink = false;
     try { deepLink = !this.deepLinked && new URLSearchParams(location.search).get('alerts') === '1'; } catch (e) { /* no URL */ }
@@ -1865,20 +1890,26 @@ class DashboardView {
         <form class="today-assign" hidden><label class="sr-only" for="ta-${i}">มอบหมายให้</label><input id="ta-${i}" list="today-people-${this.dashboard.id}" placeholder="ชื่อผู้รับผิดชอบ" maxlength="80" required><button type="submit" class="btn small primary">มอบหมาย</button></form>
       </li>`;
     const all = [...open, ...taken];
-    box.innerHTML = `<div class="today-head">
-        <div><h2>เช้านี้ต้องทำ${sampleMode ? ' <span class="demo-pill">ตัวอย่าง</span>' : ''}</h2>${sampleMode ? '<p class="muted">รายการนี้สร้างจากข้อมูลตัวอย่าง ไม่ใช่งานค้างจริงของร้านคุณ ปุ่มรับทราบ/มอบหมายจะใช้ได้เมื่อเป็นข้อมูลจริง</p>' : ''}<p>${open.length ? `${open.length} เรื่องยังไม่มีคนรับ${crit ? ` · วิกฤต ${crit}` : ''}${sumOpen ? ` · ยอดค้าง ฿${Math.round(sumOpen).toLocaleString('th-TH')}` : ''}` : 'ทุกเรื่องมีคนรับแล้ว'}${taken.length ? ` · รับแล้ว ${taken.length}` : ''}</p></div>
-        <button type="button" class="btn small ghost today-fold" aria-expanded="${!folded}" aria-label="${folded ? 'แสดงรายการเช้านี้ต้องทำ' : 'ย่อรายการเช้านี้ต้องทำ'}">${folded ? 'แสดง' : 'ย่อ'}</button>
-      </div>
-      <div class="today-body"${folded ? ' hidden' : ''}>
+    box.classList.toggle('folded', folded);
+    box.classList.toggle('has-crit', crit > 0);
+    const summary = open.length ? `${open.length} เรื่องยังไม่มีคนรับ${crit ? ` · วิกฤต ${crit}` : ''}${sumOpen ? ` · ยอดค้าง ฿${Math.round(sumOpen).toLocaleString('th-TH')}` : ''}` : 'ทุกเรื่องมีคนรับแล้ว';
+    box.innerHTML = `<button type="button" class="today-bar today-fold" aria-expanded="${!folded}" aria-controls="today-body-${this.dashboard.id}">
+        <span class="today-ico" aria-hidden="true">!</span>
+        <b>เช้านี้ต้องทำ</b>${sampleMode ? ' <span class="demo-pill">ตัวอย่าง</span>' : ''}
+        <span class="today-sum">${summary}${taken.length ? ` · รับแล้ว ${taken.length}` : ''}</span>
+        <span class="today-toggle">${folded ? 'ดูรายการ' : 'ย่อ'}</span>
+      </button>
+      <div class="today-body" id="today-body-${this.dashboard.id}"${folded ? ' hidden' : ''}>
+        ${sampleMode ? '<p class="muted today-note">รายการนี้สร้างจากข้อมูลตัวอย่าง ไม่ใช่งานค้างจริงของร้านคุณ ปุ่มรับทราบ/มอบหมายจะใช้ได้เมื่อเป็นข้อมูลจริง</p>' : ''}
         <ul class="today-list">${open.slice(0, SHOW).map((it) => item(it, all.indexOf(it))).join('') || '<li class="today-empty">ไม่มีเรื่องค้างที่ยังไม่มีคนรับ</li>'}</ul>
-        ${open.length > SHOW ? `<p class="today-more">และอีก ${open.length - SHOW} เรื่องในตารางตัวเตือนด้านล่าง</p>` : ''}
+        ${open.length > SHOW ? `<p class="today-more">และอีก ${open.length - SHOW} เรื่อง${this.widgets.some((w) => /^watch_/.test(w.template_key || '')) ? 'ในตารางตัวเตือนด้านล่าง' : ''}</p>` : ''}
         ${taken.length ? `<details class="today-taken"><summary>รับแล้ว ${taken.length} เรื่อง</summary><ul class="today-list">${taken.map((it) => item(it, all.indexOf(it))).join('')}</ul></details>` : ''}
         <datalist id="today-people-${this.dashboard.id}">${people.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
         <p class="today-msg" role="status"></p>
       </div>`;
     box.querySelector('.today-fold').addEventListener('click', () => {
-      try { localStorage.setItem(fold, folded ? '0' : '1'); } catch (e) { /* private window */ }
-      this.renderToday();
+      try { localStorage.setItem(fold, folded ? '1' : '0'); } catch (e) { /* private window */ }
+      this.renderToday().then(() => { const b = box.querySelector('.today-fold'); if (b) b.focus({ preventScroll: true }); });
     });
     const send = async (it, body) => {
       try {
@@ -2219,7 +2250,183 @@ class DashboardView {
     (this.cards || []).forEach(({ widget, box }) => {
       if (box && !box.hidden) box.innerHTML = explainWidget(widget, this.explainData.get(widget.id));
     });
+    this.renderInsights();
   }
+
+  // ---- "เราเจอให้คุณ": the page opens with what the numbers found, in baht ----
+  // Built from the pulls the page already loaded (no extra FMH rows), for the
+  // range on screen. The first-run goals decide which findings lead.
+  renderInsights() {
+    const el = this.insightEl;
+    if (!el) return;
+    const get = (key, dateField) => {
+      const r = this.results[key];
+      return r && !r.error ? this.rowsFor(key, null, dateField) || [] : null;
+    };
+    const onPage = (keys) => {
+      for (const k of keys) { const w = this.widgets.find((x) => x.template_key === k); if (w) return w; }
+      return null;
+    };
+    const profile = this.dashboard.profile || {};
+    const found = findInsights(get, onPage, profile.goals || []);
+    // the finding behind a widget also heads that widget, so % tables say what they mean in baht
+    this.wrap.querySelectorAll('.widget-headline').forEach((x) => x.remove());
+    found.all.forEach((f) => {
+      if (!f.widget || !f.headline) return;
+      const card = this.wrap.querySelector(`.widget-card[data-wid="${f.widget.id}"] .widget-body`);
+      if (card) card.insertAdjacentHTML('afterbegin', `<p class="widget-headline">${esc(f.headline)}</p>`);
+    });
+    let welcome = null;
+    try { welcome = JSON.parse(sessionStorage.getItem(`kss_welcome_${this.dashboard.id}`) || 'null'); } catch (e) { /* none */ }
+    const top = found.top;
+    if (!top.length && !welcome) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    const sample = this.dashboard.data_source === 'demo';
+    const money = (v) => fmtValue(v, 'currency');
+    el.innerHTML = `
+      ${welcome ? `<div class="ins-welcome" role="status">
+        <div><b>Dashboard ของคุณพร้อมแล้ว</b>${welcome.said && welcome.said.length ? `<span>จัดให้ตามที่คุณบอก: ${esc(welcome.said.join(' · '))}</span>` : ''}</div>
+        <button type="button" class="btn small ghost ins-close" aria-label="ปิดข้อความต้อนรับ">ปิด</button>
+      </div>` : ''}
+      ${top.length ? `<div class="ins-head"><h2>เราเจอให้คุณ${sample ? ' <span class="demo-pill">ตัวอย่าง</span>' : ''}</h2><span class="muted">${esc(dayLabel(this.range.start))} – ${esc(dayLabel(this.range.end))}</span></div>
+      <div class="ins-grid">${top.map((f, i) => `<article class="ins-card tone-${f.tone || 'warn'}">
+          <span class="ins-baht">${money(f.baht)}</span>
+          <b class="ins-text">${esc(f.text)}</b>
+          ${f.sub ? `<span class="ins-sub">${esc(f.sub)}</span>` : ''}
+          ${f.widget ? `<button type="button" class="btn small ghost ins-go" data-i="${i}">ดูรายละเอียด</button>` : ''}
+        </article>`).join('')}</div>` : ''}`;
+    const close = el.querySelector('.ins-close');
+    if (close) close.addEventListener('click', () => {
+      try { sessionStorage.removeItem(`kss_welcome_${this.dashboard.id}`); } catch (e) { /* none */ }
+      this.renderInsights();
+    });
+    el.querySelectorAll('.ins-go').forEach((b) => b.addEventListener('click', () => {
+      const f = top[Number(b.dataset.i)];
+      const card = this.wrap.querySelector(`.widget-card[data-wid="${f.widget.id}"]`);
+      if (card) { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 1600); }
+    }));
+  }
+}
+
+// ---------- findings ----------
+// Each finder reads rows the page already has and returns a money finding or
+// null. get(key, dateField) -> rows on the page's range (null = not loaded);
+// onPage(templateKeys) -> the first of those widgets on the page.
+// Every number here is also in the widget the finding points to.
+const CK_NAME = /ครัวกลาง|central\s*kitchen|commissary|\bck\b/i;
+function findInsights(get, onPage, goals) {
+  const out = [];
+  const add = (f) => { if (f && f.baht >= 100) out.push(f); };
+  const baht = (v) => fmtValue(v, 'currency');
+  const pa = get('purchase-analysis');
+  const keyOfLine = (r) => `${r.product_code || r.product_name}|${r.uom || ''}`;
+
+  if (pa && pa.length) {
+    // 1. price rises: paid above the window's first price (the pc_movers definition)
+    const byP = new Map();
+    pa.forEach((r) => { if (!isBlank(r.price) && num(r.qty)) { const k = keyOfLine(r); if (!byP.has(k)) byP.set(k, []); byP.get(k).push(r); } });
+    let total = 0; let worst = null;
+    byP.forEach((rs) => {
+      if (rs.length < 2) return;
+      rs.sort((a, b) => String(a.order_date).localeCompare(String(b.order_date)));
+      const first = num(rs[0].price);
+      const extra = rs.reduce((s, r) => s + (num(r.price) - first) * num(r.qty), 0);
+      if (extra <= 0) return;
+      total += extra;
+      if (!worst || extra > worst.extra) worst = { extra, name: rs[0].product_name, pct: first ? ((num(rs[rs.length - 1].price) - first) / first) * 100 : 0 };
+    });
+    const wPrice = onPage(['pc_movers', 'pc_extra_by_product', 'pc_extra_by_category', 'watch_price']);
+    if (worst) add({ id: 'price_up', goals: ['price', 'profit'], baht: total, text: 'จ่ายเพิ่มเพราะราคาวัตถุดิบขึ้น', sub: `${worst.name} ตัวเดียว ${baht(worst.extra)} (ราคาขึ้น ${worst.pct.toFixed(1)}%)`, widget: wPrice, headline: `รวมจ่ายเพิ่มจากราคาที่ขึ้น ${baht(total)} · มากสุด ${worst.name} ${baht(worst.extra)}` });
+
+    // 2. the same item cheaper from another supplier: paid above the cheapest supplier's average
+    let save = 0; let best = null;
+    byP.forEach((rs) => {
+      const bySup = new Map();
+      rs.forEach((r) => { const s = r.supplier || ''; const o = bySup.get(s) || { v: 0, q: 0 }; o.v += num(r.price) * num(r.qty); o.q += num(r.qty); bySup.set(s, o); });
+      if (bySup.size < 2) return;
+      const avgs = [...bySup.entries()].filter(([, o]) => o.q > 0).map(([s, o]) => ({ s, avg: o.v / o.q }));
+      if (avgs.length < 2) return;
+      const min = avgs.reduce((a, b) => (b.avg < a.avg ? b : a));
+      const over = rs.reduce((s, r) => s + Math.max(0, num(r.price) - min.avg) * num(r.qty), 0);
+      if (over <= 0) return;
+      save += over;
+      const dear = avgs.reduce((a, b) => (b.avg > a.avg ? b : a));
+      if (!best || over > best.over) best = { over, name: rs[0].product_name, cheap: min.s, dear: dear.s, pct: ((dear.avg - min.avg) / min.avg) * 100 };
+    });
+    const wCheap = onPage(['price_variance_top', 'price_compare_suppliers']);
+    if (best) add({ id: 'cheaper', goals: ['price', 'supplier', 'profit'], baht: save, text: 'ประหยัดได้ ถ้าซื้อจากเจ้าที่ถูกกว่า', sub: `${best.name}: ${partyShort(best.cheap)} ถูกกว่า ${partyShort(best.dear)} ${best.pct.toFixed(0)}% · ดูเรื่องส่งตรงเวลาและส่งครบประกอบด้วย`, widget: wCheap, headline: `ถ้าซื้อทุกครั้งจากเจ้าที่ถูกที่สุด จะประหยัดได้ ${baht(save)} · มากสุด ${best.name} ${baht(best.over)}` });
+
+    // 3. billed above what was received (the ita_overbilled definition)
+    const over = pa.filter((r) => num(r.invoice_total) > num(r.grn_total) && !isBlank(r.grn_number));
+    if (over.length) {
+      const bySup = new Map();
+      over.forEach((r) => bySup.set(r.supplier, (bySup.get(r.supplier) || 0) + num(r.invoice_total) - num(r.grn_total)));
+      const sumOver = [...bySup.values()].reduce((a, b) => a + b, 0);
+      const topS = [...bySup.entries()].sort((a, b) => b[1] - a[1])[0];
+      add({ id: 'overbilled', goals: ['bills', 'supplier'], baht: sumOver, text: `ซัพพลายเออร์ ${bySup.size} เจ้าวางบิลเกินของที่รับจริง`, sub: `มากสุด ${partyShort(topS[0])} ${baht(topS[1])} ควรทวงใบลดหนี้`, widget: onPage(['ita_overbilled', 'sq_overbill_credit']) });
+    }
+
+    // 4. received, no invoice yet (the ita_grn_not_invoiced definition) — not a loss, a bill to come
+    const wait = pa.filter((r) => !isBlank(r.grn_number) && isBlank(r.invoice_number));
+    if (wait.length) {
+      const v = wait.reduce((s, r) => s + num(r.grn_total), 0);
+      add({ id: 'waiting', goals: ['bills', 'supplier'], tone: 'info', baht: v, text: 'รับของแล้ว ยังรอใบแจ้งหนี้', sub: `${new Set(wait.map((r) => r.supplier)).size} ซัพพลายเออร์ ค่าใช้จ่ายที่ยังไม่เข้าบัญชี`, widget: onPage(['ita_grn_not_invoiced']) });
+    }
+  }
+
+  // 5. counted short (stock counts, the whole synced window: FMH groups it by product)
+  const sc = get('stock-count|product');
+  if (sc && sc.length) {
+    const neg = sc.filter((r) => num(r.variance_value) < 0);
+    if (neg.length) {
+      const v = -neg.reduce((s, r) => s + num(r.variance_value), 0);
+      const w = neg.reduce((a, b) => (num(b.variance_value) < num(a.variance_value) ? b : a));
+      add({ id: 'count_short', goals: ['waste', 'branch', 'profit'], baht: v, text: 'นับสต็อกขาด', sub: `${w.product} ตัวเดียว ${baht(-num(w.variance_value))} · ช่วงที่ดึงข้อมูลล่าสุด`, widget: onPage(['stock_count_variance']) });
+    }
+  }
+
+  // 6. waste, against what each outlet bought when both are on the page
+  const wl = get('wastage-lines', 'wastage_date');
+  const wb = wl || get('wastage-top-branches');
+  if (wb && wb.length) {
+    const val = (r) => num(r.wastage_value !== undefined ? r.wastage_value : r.total_wastage_value);
+    const v = wb.reduce((s, r) => s + val(r), 0);
+    let sub = '';
+    if (wl && pa && pa.length) {
+      const by = new Map();
+      const k = (n) => partyShort(n || '').toLowerCase();
+      pa.forEach((r) => { if (CK_NAME.test(r.branch || '')) return; const o = by.get(k(r.branch)) || { n: partyShort(r.branch), p: 0, w: 0 }; o.p += num(r.total); by.set(k(r.branch), o); });
+      wl.forEach((r) => { const o = by.get(k(r.branch)); if (o) o.w += val(r); });
+      const rates = [...by.values()].filter((o) => o.p > 0 && o.w > 0).map((o) => ({ ...o, pct: (o.w / o.p) * 100 })).sort((a, b) => b.pct - a.pct);
+      if (rates.length >= 2) sub = `${rates[0].n} ทิ้ง ${rates[0].pct.toFixed(1)}% ของยอดซื้อ · ${rates[rates.length - 1].n} ${rates[rates.length - 1].pct.toFixed(1)}%`;
+    }
+    if (!sub) {
+      const byB = new Map();
+      wb.forEach((r) => byB.set(r.branch || r.product || '', (byB.get(r.branch || r.product || '') || 0) + val(r)));
+      const t = [...byB.entries()].sort((a, b) => b[1] - a[1])[0];
+      if (t && t[0]) sub = `มากสุด ${partyShort(t[0])} ${baht(t[1])}`;
+    }
+    add({ id: 'waste', goals: ['waste', 'branch'], baht: v, text: 'ของเสียที่บันทึกไว้', sub, widget: onPage(['wastage_pct_by_branch', 'wastage_top_branches', 'wastage_top_products', 'wastage_by_category', 'wastage_trend']) });
+  }
+
+  // 7. the central kitchen paid more than its recipes say it used (the ck_margin_kpi gap)
+  const ck = get('cogs-trend');
+  const wCk = onPage(['ck_margin_kpi', 'ck_margin_table', 'ck_margin_trend']);
+  if (ck && ck.length && pa && pa.length && wCk) {
+    const sales = ck.reduce((s, r) => s + num(r.sales), 0);
+    const recipe = ck.reduce((s, r) => s + num(r.cogs), 0);
+    const bought = pa.reduce((s, r) => s + num(r.total), 0);
+    if (sales > 0 && bought > recipe) {
+      add({ id: 'ck_gap', goals: ['profit'], baht: bought - recipe, text: 'ครัวกลางจ่ายซื้อเกินต้นทุนตามสูตร', sub: `กำไรจริง ${(((sales - bought) / sales) * 100).toFixed(1)}% เทียบตามสูตร ${(((sales - recipe) / sales) * 100).toFixed(1)}% · เดือนที่ยังไม่จบอาจแกว่ง`, widget: wCk });
+    }
+  }
+
+  // Order: what the customer said they care about, then the rest; within each, money to act
+  // on (a loss, a refund) before money that is only waiting (a bill to come), then by size.
+  const wanted = new Set(goals || []);
+  const rank = (f) => (wanted.size && f.goals.some((g) => wanted.has(g)) ? 0 : 2) + (f.tone === 'info' ? 1 : 0);
+  const top = [...out].sort((a, b) => rank(a) - rank(b) || b.baht - a.baht).slice(0, 3);
+  return { top, all: out };
 }
 
 // ---------- widget renderers ----------

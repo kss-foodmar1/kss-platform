@@ -177,8 +177,11 @@ router.get(
     if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
     const widgets = await listWidgets(dashboard.id);
     const sources = describeWidgets(widgets);
-    const [[co]] = await pool.query(`SELECT data_source FROM companies WHERE id = ?`, [dashboard.company_id]);
-    res.json({ dashboard: { ...dashboard, data_source: co ? co.data_source : 'fmh' }, widgets, sources });
+    const [[co]] = await pool.query(`SELECT data_source, onboarding_json FROM companies WHERE id = ?`, [dashboard.company_id]);
+    // the first-run answers pick which findings lead the page (public/app.js renderInsights)
+    let profile = null;
+    try { profile = co && co.onboarding_json ? JSON.parse(co.onboarding_json) : null; } catch (e) { /* none */ }
+    res.json({ dashboard: { ...dashboard, data_source: co ? co.data_source : 'fmh', profile }, widgets, sources });
   })
 );
 
