@@ -1373,7 +1373,6 @@ body.arranging-on .ai-fab { display: none; }
 .fr-morebox { margin-top: 10px; }
 .btn.link { background: none; border: 0; color: var(--primary); text-decoration: underline; padding: 10px 8px; min-height: 44px; cursor: pointer; }
 .widget-sample { margin-left: 8px; flex: none; align-self: center; }
-.starter-opt.off { cursor: not-allowed; }
 .firstrun h2:focus { outline: none; }
 
 .fr-emptyrow { padding: 8px 0 0; }

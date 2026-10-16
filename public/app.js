@@ -305,6 +305,7 @@ function evalRow(expr, row) {
   if (typeof expr === 'number') return expr;
   if (typeof expr === 'string') return num(row[expr]);
   if (expr.const !== undefined) return expr.const;
+  if (expr.text !== undefined && expr.op === undefined) return expr.text;
   if (expr.field !== undefined) return num(pick(row, expr.field));
   const a = () => evalRow(expr.a, row);
   const b = () => evalRow(expr.b, row);
@@ -318,6 +319,11 @@ function evalRow(expr, row) {
     // read as 0%. `a` is the number shown otherwise.
     // `then` (a number) instead of `text` keeps such rows sortable.
     case 'if0': return evalRow(expr.gate, row) === 0 ? (expr.then !== undefined ? evalRow(expr.then, row) : expr.text) : a();
+    // gate not zero -> then, else -> else (each a number or { text })
+    case 'if': return evalRow(expr.gate, row) !== 0 ? evalRow(expr.then, row) : evalRow(expr.else, row);
+    case 'gte': return a() >= b() ? 1 : 0;
+    // 1 when the field matches a pattern (case-insensitive): "ครัวกลาง", "Central Kitchen"
+    case 'match': return new RegExp(expr.re, 'i').test(String(pick(row, expr.from) ?? '')) ? 1 : 0;
     case 'abs': return Math.abs(a());
     case 'max0': return Math.max(0, a());
     // Wilson score lower bound of a rate k/n, as a percent. Ranks suppliers by
@@ -416,7 +422,8 @@ function applyRowLayer(rows, cfg) {
   let out = derived.length
     ? rows.map((r) => {
         const copy = { ...r };
-        derived.forEach((d) => { copy[d.field] = evalRow(d.expr, r); });
+        // in order, so a derived field can use the ones before it
+        derived.forEach((d) => { copy[d.field] = evalRow(d.expr, copy); });
         return copy;
       })
     : rows;
@@ -1650,7 +1657,7 @@ class DashboardView {
 
   // dateOverride: a widget that lines two reports up by date filters a pull on a
   // field the page does not use for that report (its other widgets want it whole).
-  rowsFor(key, widget, dateOverride) {
+  rowsFor(key, widget, dateOverride, minStart) {
     const r0 = this.results[key];
     if (!r0 || r0.error) return null;
     // Exception lists (unreceived lines, over-billing…) are about now: archived history keeps the last
@@ -1660,7 +1667,9 @@ class DashboardView {
     const active = Object.entries(this.filters).filter(([, v]) => v !== null && v !== undefined);
     const byFilter = (rows) => (active.length ? rows.filter((row) => active.every(([f, v]) => !(f in row) || String(row[f]) === v)) : rows);
     if (!dateField || !this.hasDateSource) return byFilter(r.data);
-    const { start, end } = this.range;
+    const { end } = this.range;
+    // minStart: a widget whose pulls reach back different lengths cuts them all to the shorter one
+    const start = minStart && (!this.range.start || this.range.start < minStart) ? minStart : this.range.start;
     if (!dateOverride && this.sources[key].date_is_bucket) return byFilter(keepOverlappingBuckets(r.data, dateField, start, end));
     return byFilter(r.data).filter((row) => {
       const d = row[dateField] ? String(row[dateField]).slice(0, 10) : null;
@@ -2114,7 +2123,8 @@ class DashboardView {
           return;
         }
         const byAlias = {};
-        widget.pulls.forEach((p) => { byAlias[p.as] = this.rowsFor(p.key, widget, p.date_field) || []; });
+        const minStart = cfg.max_range_days ? daysAgoIso(cfg.max_range_days - 1) : null;
+        widget.pulls.forEach((p) => { byAlias[p.as] = this.rowsFor(p.key, widget, p.date_field, minStart) || []; });
         raw = pivotRows(byAlias, cfg) || [];
       } else {
         raw = this.rowsFor(key, widget, cfg.row_date_field);
@@ -2195,7 +2205,9 @@ class DashboardView {
         // (range) are left alone.
         // A widget that needs a long span to mean anything says so when the range is shorter.
         const span = this.range.start && this.range.end ? (Date.parse(this.range.end) - Date.parse(this.range.start)) / 86400000 + 1 : null;
-        if (cfg.min_range_days && span && span < cfg.min_range_days) body.insertAdjacentHTML('beforeend', `<p class="widget-foot warn-msg">ช่วงที่เลือกสั้นกว่า ${cfg.min_range_days} วัน ตัวเลขอาจแกว่งมาก ลองเลือก 30 วันขึ้นไป</p>`);
+        const cut = cfg.max_range_days ? daysAgoIso(cfg.max_range_days - 1) : null;
+        if (cut && this.range.start && this.range.start < cut) body.insertAdjacentHTML('beforeend', `<p class="widget-foot warn-msg">ข้อมูลของเสียจาก FMH ย้อนหลังได้ ${cfg.max_range_days} วัน widget นี้จึงนับทั้งสองฝั่งตั้งแต่ ${esc(dayLabel(cut))}</p>`);
+        if (cfg.min_range_days && span && span < cfg.min_range_days) body.insertAdjacentHTML('beforeend', `<p class="widget-foot warn-msg">ช่วงที่เลือกสั้นกว่า ${cfg.min_range_days} วัน ตัวเลขอาจแกว่งมาก ลองเลือก ${cfg.min_range_days} วันขึ้นไป</p>`);
         if (cfg.foot && widget.chart_type !== 'range') body.insertAdjacentHTML('beforeend', `<p class="widget-foot widget-note">${esc(cfg.foot).replace(/\n/g, '<br>')}</p>`);
         body.insertAdjacentHTML('beforeend', this.coverageNote(widget));
       } catch (err) {
