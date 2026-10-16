@@ -981,6 +981,7 @@ async function renderFirstRun(wrap, cid) {
         ${items.map((v) => `<label class="starter-opt${sel(v) ? ' on' : ''}${multi && !sel(v) && ans.goals.length >= 2 ? ' off' : ''}">
           <input type="${multi ? 'checkbox' : 'radio'}" name="fr-q" value="${esc(v)}"${sel(v) ? ' checked' : ''}${multi && !sel(v) && ans.goals.length >= 2 ? ' disabled' : ''}>
           <b class="starter-title">${esc(labels[v])}</b>
+          <span class="fr-offnote">เลือกครบ 2 ข้อแล้ว ยกเลิกข้อที่เลือกไว้ก่อน</span>
           ${key === 'setup' ? `<span class="starter-desc">${esc(hints[v])}</span>` : ''}
         </label>`).join('')}
       </div>
@@ -1671,7 +1672,7 @@ class DashboardView {
              this.dashboard.data_source === 'demo'
                ? `<span class="demo-pill">ข้อมูลตัวอย่าง</span> <span class="muted">${
                    isCompanyAdmin() && !this.preview
-                     ? 'ลองจัด dashboard ให้ถูกใจได้เต็มที่ — widget และการจัดวางจะอยู่ครบเมื่อสลับเป็นข้อมูลจริง'
+                     ? 'ตัวเลขเป็นข้อมูลตัวอย่าง ไม่ใช่ของร้านคุณ ลองจัด dashboard ให้ถูกใจได้เต็มที่ widget และการจัดวางจะอยู่ครบเมื่อสลับเป็นข้อมูลจริง'
                      : 'ตัวเลขนี้เป็นข้อมูลตัวอย่าง ไม่ใช่ข้อมูลจริงของร้าน'
                  }</span>`
                : oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
