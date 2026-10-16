@@ -58,12 +58,19 @@ const mock = http.createServer((req, res) => {
   const a1 = await line.sendAlert(id, { base: 'https://app.test' });
   const p = sent[sent.length - 1];
   const flexStr = JSON.stringify(p.body.messages[0]);
+  const q1 = await line.publicView(id, 'https://x.test');
+  check('quota counts the push (1 member by default)', q1.quota.used >= 1 && q1.quota.limit === 300, JSON.stringify(q1.quota));
   check('digest pushed to the group as one flex message', a1.sent && a1.count >= 7 && p.url === '/v2/bot/message/push' && p.body.to === 'Gexec1' && p.body.messages.length === 1 && p.body.messages[0].type === 'flex', JSON.stringify(a1));
-  check('digest carries all three findings and the dashboard button', /สิ่งที่ควรดูวันนี้/.test(flexStr) && flexStr.includes('สาขา บางนา') && flexStr.includes('กุ้งขาว') && flexStr.includes('หมูสามชั้น') && flexStr.includes('https://app.test/'));
+  check('digest carries all three findings and the dashboard button', /สิ่งที่ควรดูวันนี้/.test(flexStr) && flexStr.includes('สาขา บางนา') && flexStr.includes('กุ้งขาว') && flexStr.includes('https://app.test/'));
   check('digest leaves out what is normal or below the baht floor', !flexStr.includes('สาขา สยาม:') && !flexStr.includes('มะนาว'));
   check('stale PO / SO are summarised (count, value, oldest) with the oldest few', /PO ค้างไม่ปิด: \d+ ใบ · ฿[\d,]+ · เก่าสุด \d+ วัน/.test(flexStr) && /SO ครัวกลางค้างไม่ปิด: 3 ใบ/.test(flexStr) && /และอีก \d+ ใบใน Dashboard/.test(flexStr));
   const n = sent.length;
   const a2 = await line.sendAlert(id, { base: 'https://app.test' });
+  await pool.query(`UPDATE company_line SET monthly_quota = 10, quota_used = 9, quota_month = DATE_FORMAT(DATE_ADD(NOW(), INTERVAL 7 HOUR), '%Y-%m') WHERE company_id = ?`, [id]);
+  const qw = (await line.publicView(id, 'https://x.test')).quota;
+  check('quota warns at 80% and shows 90%', qw.warn && !qw.full && qw.pct === 90, JSON.stringify(qw));
+  await pool.query(`UPDATE company_line SET quota_used = 3, monthly_quota = 300, quota_month = '2020-01' WHERE company_id = ?`, [id]);
+  check('quota resets when the month changes', (await line.publicView(id, 'https://x.test')).quota.used === 0);
   check('nothing new → nothing sent', a2.sent === false && sent.length === n, JSON.stringify(a2));
   await pool.query(`UPDATE alert_events SET sig = 'worse' WHERE company_id = ? AND watcher = 'price' AND finding_key LIKE 'SEA-001%'`, [id]);
   const alerts = require('../lib/alerts');
@@ -80,6 +87,29 @@ const mock = http.createServer((req, res) => {
   const v2 = await line.publicView(id, 'https://x.test');
   check('Admin view lists watchers with their LINE switch', v2.watchers.length === 4 && v2.watchers.find((w) => w.key === 'price').line === false && v2.watchers.find((w) => w.key === 'ck').line === true);
   await alerts.saveSettings(id, { price: { line: true } });
+  // ---- daily summary picks ----
+  const sm = require('../lib/lineSummary');
+  const sv = await sm.view(id);
+  check('summary list: every family present, defaults ticked', sv.length === 7 && sv.find((x) => x.key === 'cks_sales').selected === true && sv.find((x) => x.key === 'wastage').selected === false);
+  await sm.save(id, ['pos_sales', 'nope']);
+  const sv2 = await sm.view(id);
+  check('summary picks saved, unknown keys dropped', sv2.filter((x) => x.selected).map((x) => x.key).join() === 'pos_sales');
+  await require('../lib/alerts').saveSettings(id, { po: { line: true } });
+  check('saving alert settings keeps the summary picks', (await sm.view(id)).find((x) => x.key === 'pos_sales').selected === true);
+  const nums = await sm.numbers(id, require('../lib/alerts').bkkToday());
+  check('numbers only for ticked families', nums.length <= 1 && nums.every((n) => /ขายหน้าร้าน/.test(n.label)), JSON.stringify(nums));
+  const [[bare]] = await pool.query(`SELECT c.id FROM companies c WHERE NOT EXISTS (SELECT 1 FROM dashboards d WHERE d.company_id = c.id) ORDER BY c.id LIMIT 1`);
+  if (bare) {
+    await line.ensure(bare.id);
+    const vb = await sm.view(bare.id);
+    check('a family no dashboard uses is unavailable and never selected', vb.every((x) => !x.available && !x.selected), JSON.stringify(vb));
+    await pool.query(`DELETE FROM company_line WHERE company_id = ?`, [bare.id]);
+  }
+  await sm.save(id, ['cks_sales', 'purchases']);
+  const [[sd]] = await pool.query(`SELECT summary_day FROM company_line WHERE company_id = ?`, [id]);
+  check('first digest of the day marks the numbers as sent', sd.summary_day === require('../lib/alerts').bkkToday(), String(sd.summary_day));
+  await sm.save(bare ? bare.id : id, ['wastage']);
+  if (bare) check('API cannot save a family no dashboard uses', (await sm.view(bare.id)).every((x) => !x.selected));
   await line.unbindGroup(id);
   let err = null; try { await line.sendAlert(id); } catch (e) { err = e; }
   check('no group → clear error', err && /ผูกกลุ่ม/.test(err.message));

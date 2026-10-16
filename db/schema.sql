@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(255) UNIQUE NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   display_name VARCHAR(255) NOT NULL,
+  home_branch TEXT NULL,
   role ENUM('kss_superadmin','company_admin','client') NOT NULL DEFAULT 'client',
   company_id INT NULL,
   must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
@@ -350,6 +351,11 @@ CREATE TABLE IF NOT EXISTS company_line (
   last_event_at TIMESTAMP NULL,
   last_event_note VARCHAR(255) NULL,
   watch_json TEXT NULL,
+  quota_month CHAR(7) NULL,
+  quota_used INT NOT NULL DEFAULT 0,
+  monthly_quota INT NOT NULL DEFAULT 300,
+  members INT NULL,
+  summary_day CHAR(10) NULL,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;
@@ -369,6 +375,10 @@ CREATE TABLE IF NOT EXISTS alert_events (
   sig VARCHAR(64) NOT NULL DEFAULT '',
   sent_sig VARCHAR(64) NULL,
   sent_at TIMESTAMP NULL,
+  ack_status VARCHAR(12) NULL,
+  ack_to VARCHAR(80) NULL,
+  ack_name VARCHAR(120) NULL,
+  ack_at TIMESTAMP NULL,
   PRIMARY KEY (company_id, watcher, finding_key),
   INDEX (company_id, last_seen),
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
@@ -465,4 +475,18 @@ CREATE TABLE IF NOT EXISTS ai_taught (
   created_by INT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) DEFAULT CHARSET=utf8mb4;
+
+-- Rolling history beyond FMH's ~90-day API window (lib/fmhArchive.js): the API
+-- rows of each report, filed one calendar day at a time, kept two years.
+CREATE TABLE IF NOT EXISTS fmh_archive (
+  company_id INT NOT NULL,
+  source VARCHAR(50) NOT NULL,
+  day DATE NOT NULL,
+  data_gz MEDIUMBLOB NOT NULL,
+  row_count INT NOT NULL DEFAULT 0,
+  row_hash CHAR(40) NOT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (company_id, source, day),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;

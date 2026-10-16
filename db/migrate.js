@@ -308,6 +308,44 @@ async function upgradeAiFeedback() {
   }
 }
 
+async function upgradeLineQuota() {
+  // LINE counts a group push once per member, against the OA's monthly quota: track what we used.
+  if (!(await columnInfo('company_line', 'quota_used'))) {
+    await pool.query(`ALTER TABLE company_line ADD COLUMN quota_month CHAR(7) NULL, ADD COLUMN quota_used INT NOT NULL DEFAULT 0, ADD COLUMN monthly_quota INT NOT NULL DEFAULT 300, ADD COLUMN members INT NULL`);
+    console.log('  company_line: added quota columns');
+  }
+}
+
+async function upgradeLineSummary() {
+  // Once-a-day numbers: remember the last day they went out.
+  if (!(await columnInfo('company_line', 'summary_day'))) {
+    await pool.query(`ALTER TABLE company_line ADD COLUMN summary_day CHAR(10) NULL`);
+    console.log('  company_line: added summary_day');
+  }
+}
+
+async function upgradeHomeBranch() {
+  // A branch manager's own branch: their dashboards open filtered to it.
+  if (!(await columnInfo('users', 'home_branch'))) {
+    await pool.query(`ALTER TABLE users ADD COLUMN home_branch VARCHAR(120) NULL`);
+    console.log('  users: added home_branch');
+  }
+  // Several branches per user are stored as a JSON array, so the column must hold more than 120 chars.
+  const ci = await columnInfo('users', 'home_branch');
+  if (ci && /varchar/i.test(String(ci.DATA_TYPE || ci.Type || ci.COLUMN_TYPE || ''))) {
+    await pool.query(`ALTER TABLE users MODIFY COLUMN home_branch TEXT NULL`);
+    console.log('  users: home_branch widened to TEXT');
+  }
+}
+
+async function upgradeAlertAck() {
+  // "รับทราบ / มอบหมาย" on an alert: who took it, so it stops looking new every morning.
+  if (!(await columnInfo('alert_events', 'ack_status'))) {
+    await pool.query(`ALTER TABLE alert_events ADD COLUMN ack_status VARCHAR(12) NULL, ADD COLUMN ack_to VARCHAR(80) NULL, ADD COLUMN ack_name VARCHAR(120) NULL, ADD COLUMN ack_at TIMESTAMP NULL`);
+    console.log('  alert_events: added ack columns');
+  }
+}
+
 async function upgradeCacheGzip() {
   // The report caches held their rows as plain JSON text, twice (live + saved),
   // and filled the small MySQL volume. Move every row into gzip (lib/cacheBlob.js),
@@ -350,6 +388,10 @@ async function main() {
   await upgradeCache();
   await upgradeCacheGzip();
   await upgradeAiFeedback();
+  await upgradeAlertAck();
+  await upgradeHomeBranch();
+  await upgradeLineQuota();
+  await upgradeLineSummary();
   // First run with the saved-data fallback: every cache that has rows today
   // becomes the "last good" copy, so the fallback works before the next sync.
   const [bf] = await pool.query(

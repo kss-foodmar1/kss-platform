@@ -38,6 +38,7 @@ const COMPANY_ADMIN_ROUTES = [
   ['DELETE', /^\/dashboards\/(\d+)$/, 'dashboard'],
   ['GET', /^\/dashboards\/(\d+)\/widgets$/, 'dashboard'],
   ['PUT', /^\/dashboards\/(\d+)\/layout$/, 'dashboard'],
+  ['PUT', /^\/dashboards\/(\d+)\/arrange$/, 'dashboard'],
   // Widget library (public/library.js)
   ['GET', /^\/widget-packs$/],
   ['GET', /^\/companies\/(\d+)\/widget-usage$/, 'company'],
@@ -369,6 +370,48 @@ router.post(
     }
     pullsForWidget(tpl.report_source, cfg).forEach((p) => warmSource(dash.company_id, p.source, p.grouping));
     res.status(201).json({ id: r.insertId });
+  })
+);
+
+// Drag-and-drop arrange on the dashboard itself: order, width and height only.
+//   items: [{ id, size: 'third'|'half'|'full', rows: 1|2|3 }] in display order.
+// Other per-widget settings (title, filters) are kept as they are.
+router.put(
+  '/dashboards/:id/arrange',
+  wrap(async (req, res) => {
+    const items = (req.body && req.body.items) || [];
+    if (!Array.isArray(items) || !items.length) return bad(res, 'items must be a non-empty array');
+    const [rows] = await pool.query(`SELECT id, config_json FROM dashboard_widgets WHERE dashboard_id = ?`, [req.params.id]);
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    for (const it of items) {
+      if (!byId.has(Number(it.id))) return bad(res, `widget ${it.id} is not on this dashboard`);
+      if (!['third', 'half', 'full'].includes(it.size)) return bad(res, 'size must be third, half or full');
+      if (![1, 2, 3].includes(Number(it.rows))) return bad(res, 'rows must be 1, 2 or 3');
+    }
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+        let cfg = {};
+        const raw = byId.get(Number(it.id)).config_json;
+        try { cfg = raw && typeof raw === 'object' ? { ...raw } : JSON.parse(raw || '{}') || {}; } catch (e) { cfg = {}; }
+        cfg.size = it.size;
+        if (Number(it.rows) === 1) delete cfg.rows; else cfg.rows = Number(it.rows);
+        await conn.query(`UPDATE dashboard_widgets SET config_json = ?, position = ? WHERE id = ?`, [JSON.stringify(cfg), i + 1, Number(it.id)]);
+      }
+      // Widgets not listed keep their place after the listed ones.
+      const listed = new Set(items.map((it) => Number(it.id)));
+      let pos = items.length;
+      for (const r of rows) if (!listed.has(r.id)) await conn.query(`UPDATE dashboard_widgets SET position = ? WHERE id = ?`, [++pos, r.id]);
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
+    res.json({ ok: true });
   })
 );
 

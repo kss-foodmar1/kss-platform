@@ -36,9 +36,10 @@ const send = (fn) => wrap(async (req, res) => {
 router.use(requireAuth);
 router.get('/companies/:id', companyAccess, send(async (req, res) => res.json(await line.publicView(req.companyId, baseUrl(req)))));
 router.put('/companies/:id', companyAccess, send(async (req, res) => {
-  const { channel_secret, access_token, enabled, watch } = req.body || {};
+  const { channel_secret, access_token, enabled, watch, summary } = req.body || {};
   await line.save(req.companyId, { channel_secret, access_token, enabled: typeof enabled === 'boolean' ? enabled : undefined });
   if (watch && typeof watch === 'object') await require('../lib/alerts').saveSettings(req.companyId, watch);
+  if (Array.isArray(summary)) await require('../lib/lineSummary').save(req.companyId, summary);
   res.json(await line.publicView(req.companyId, baseUrl(req)));
 }));
 router.post('/companies/:id/test', companyAccess, send(async (req, res) => { await line.sendTest(req.companyId); res.json({ ok: true }); }));

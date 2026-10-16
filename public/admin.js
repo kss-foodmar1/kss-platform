@@ -60,6 +60,21 @@ async function renderUserManager(container, scope) {
         ? api(`/api/admin/companies/${scope.companyId}/dashboards`).then((r) => r.dashboards)
         : api('/api/dashboards').then((r) => r.dashboards),
   ]);
+  let branches = [];
+  if (!scope.kss) {
+    try { branches = (await api(`/api/users/branches${qs}`)).branches || []; } catch (_) {}
+  }
+  const homeList = (raw) => {
+    if (!raw) return [];
+    const t = String(raw).trim();
+    if (t.startsWith('[')) { try { return JSON.parse(t).map(String).filter(Boolean); } catch (e) { return []; } }
+    return t ? [t] : [];
+  };
+  const branchSummary = (cur) => (cur.length ? (cur.length > 1 ? `${cur.length} สาขา` : cur.join(', ')) : 'ทุกสาขา');
+  const branchChecks = (cur) => {
+    const list = [...cur.filter((c) => !branches.includes(c)), ...branches];
+    return list.map((b) => `<label class="hb-opt"><input type="checkbox" value="${esc(b)}" ${cur.includes(b) ? 'checked' : ''}><span>${esc(b)}${branches.includes(b) ? '' : ' (ไม่พบในข้อมูลล่าสุด)'}</span></label>`).join('');
+  };
   const roleLabel = { kss_superadmin: 'KSS', company_admin: 'Admin บริษัท', client: 'ผู้ใช้งาน' };
 
   container.innerHTML = `
@@ -103,7 +118,11 @@ async function renderUserManager(container, scope) {
                    <option value="client" ${u.role === 'client' ? 'selected' : ''}>ผู้ใช้งาน</option>
                    <option value="company_admin" ${u.role === 'company_admin' ? 'selected' : ''}>Admin บริษัท</option>
                  </select>
-                 <button type="button" class="btn small ghost toggle-access">Dashboard ▾</button>`
+                 <button type="button" class="btn small ghost toggle-access">Dashboard ▾</button>
+                 <details class="home-branch" ${branches.length || u.home_branch ? '' : 'data-empty'}>
+                   <summary title="${esc(homeList(u.home_branch).join(', ') || 'ทุกสาขา')}" aria-label="สาขาประจำของ ${esc(u.display_name)}"><span class="hb-label">สาขาประจำ</span> <b class="hb-val">${esc(branchSummary(homeList(u.home_branch)))}</b></summary>
+                   <div class="hb-menu">${branches.length || u.home_branch ? `<p class="hb-hint">เลือกได้หลายสาขา · ไม่เลือก = ทุกสาขา</p>${branchChecks(homeList(u.home_branch))}` : '<p class="hb-hint">ยังไม่มีข้อมูลสาขา — ซิงก์ FMH ก่อน</p>'}</div>
+                 </details>`
           }
           <button type="button" class="btn small ghost toggle-reset">รีเซ็ตรหัส</button>
           <button type="button" class="btn small danger delete-user" ${self ? 'disabled' : ''}>ลบ</button>
@@ -116,6 +135,30 @@ async function renderUserManager(container, scope) {
       </form>
       <div class="user-subpanel access-panel hidden"></div>`;
     list.appendChild(wrap);
+
+    const hb = wrap.querySelector('.home-branch');
+    if (hb) {
+      hb.addEventListener('change', async (ev) => {
+        if (!ev.target.matches('input[type=checkbox]')) return;
+        const boxes = [...hb.querySelectorAll('input[type=checkbox]')];
+        boxes.forEach((x) => (x.disabled = true));
+        const val = hb.querySelector('.hb-val');
+        try {
+          const chosen = boxes.filter((x) => x.checked).map((x) => x.value);
+          const r = await api(`/api/users/${u.id}/home-branch${qs}`, { method: 'PATCH', body: JSON.stringify({ home_branches: chosen }) });
+          u.home_branch = r.home_branch;
+          val.textContent = branchSummary(chosen);
+          hb.querySelector('summary').title = chosen.join(', ') || 'ทุกสาขา';
+          hb.classList.add('saved');
+          setTimeout(() => hb.classList.remove('saved'), 1200);
+        } catch (err) {
+          const cur = homeList(u.home_branch);
+          boxes.forEach((x) => (x.checked = cur.includes(x.value)));
+          hb.classList.add('err'); setTimeout(() => hb.classList.remove('err'), 3000);
+          alert(`บันทึกสาขาไม่สำเร็จ: ${err.message} — ลองรีเฟรชหน้าหรือซิงก์ข้อมูลก่อน`);
+        } finally { boxes.forEach((x) => (x.disabled = false)); }
+      });
+    }
 
     const roleSelect = wrap.querySelector('.user-role-select');
     if (roleSelect) {
@@ -1235,6 +1278,12 @@ async function renderFmhFilesPanel(container, companyId, flash = '') {
           <td class="muted">${esc(x.fmh_menu)}</td></tr>`
       )
       .join('')}</tbody></table>
+    ${o.archive && o.archive.length ? `
+    <h3 class="sub-h">ประวัติที่ระบบเก็บไว้ให้อัตโนมัติ</h3>
+    <p class="helper-text">ทุกครั้งที่ดึงข้อมูลจาก FMH ระบบเก็บข้อมูลแต่ละวันไว้ในคลังของบริษัทนี้ เมื่อวันไหนเลยช่วง 90 วันที่ FMH ส่งให้ได้ ข้อมูลของวันนั้นยังอยู่ (เก็บ 2 ปี) จึงดูย้อนหลังได้ยาวขึ้นเรื่อย ๆ โดยไม่ต้องอัปโหลดไฟล์ และไม่ใช้โควตา FMH เพิ่ม · รายงานที่เป็นยอดรวมทั้งช่วง (เช่น COGS ตามเมนู, สต็อกคงเหลือ) เก็บแบบนี้ไม่ได้</p>
+    <table class="mini-table fmh-archive"><thead><tr><th>รายงาน</th><th>มีข้อมูลตั้งแต่</th><th>จำนวนวัน</th><th>ขนาด</th></tr></thead><tbody>
+      ${o.archive.map((a) => `<tr><td>${esc(a.name)}</td><td>${esc(thDate(a.first_day))}</td><td>${a.days.toLocaleString('th-TH')}</td><td class="muted">${a.bytes > 1048576 ? (a.bytes / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(a.bytes / 1024)) + ' KB'}</td></tr>`).join('')}
+    </tbody></table>` : ''}
     <form class="inline-form fmh-file-form">
       <label class="pos-source">รายงาน
         <select name="source" aria-label="รายงาน">
@@ -1356,6 +1405,7 @@ async function renderLinePanel(container, companyId, flash = '') {
     <p class="helper-text" style="margin-top:0;">ส่งสรุป "สิ่งที่ควรดูวันนี้" จาก widget ตัวเตือน เข้ากลุ่ม LINE ของผู้บริหาร ใช้ LINE Official Account ของบริษัทเอง ข้อความที่ตอบเมื่อมีคนพิมพ์ "สถานะ" ในกลุ่มไม่นับโควต้า ส่วนข้อความแจ้งเตือนอัตโนมัติจะนับตามแพ็กเกจของ OA</p>
     <p class="status-line"><span class="dot ${v.ready && v.group_bound && v.enabled ? 'dot-good' : 'dot-off'}" aria-hidden="true"></span> ${esc(state)}${v.last_sent_at ? ` · ส่งล่าสุด ${esc(fmtDateTime(v.last_sent_at))}` : ''}</p>
     <p class="helper-text line-event">${v.last_event_at ? `Webhook ล่าสุด ${esc(fmtDateTime(v.last_event_at))}: ${esc(v.last_event_note)}` : 'ยังไม่เคยมี LINE เรียก webhook นี้ (ถ้าตั้งค่าแล้ว ให้กด Verify ใน LINE Developers และตรวจว่า Use webhook เปิดอยู่)'}</p>
+    ${v.quota ? `<p class="helper-text line-quota${v.quota.warn ? ' warn' : ''}" role="status">โควตาข้อความเดือนนี้: ใช้ ${v.quota.used.toLocaleString('th-TH')} / ${v.quota.limit.toLocaleString('th-TH')} (${v.quota.pct}%)${v.quota.members ? ` · กลุ่ม ${v.quota.members} คน ส่ง 1 ครั้ง = ${v.quota.members} ข้อความ` : ''}${v.quota.full ? ' — เต็มแล้ว ระบบส่งเฉพาะเรื่องวิกฤต' : v.quota.warn ? ' — ใกล้เต็ม ควรอัปเกรดแพ็กเกจ LINE OA' : ''}</p>` : ''}
     <div class="line-msg">${flash}</div>
     <form class="line-form">
       <label class="field-label">Webhook URL (ใส่ใน LINE Developers → Messaging API)</label>
@@ -1364,7 +1414,7 @@ async function renderLinePanel(container, companyId, flash = '') {
       <input type="password" class="line-secret" autocomplete="off" placeholder="${v.has_secret ? 'ใส่ใหม่เพื่อเปลี่ยน' : 'Channel secret'}" aria-label="Channel secret">
       <label class="field-label">Channel access token (long-lived) ${v.has_token ? `<span class="muted">(บันทึกแล้ว ${esc(v.token_hint)})</span>` : ''}</label>
       <input type="password" class="line-token" autocomplete="off" placeholder="${v.has_token ? 'ใส่ใหม่เพื่อเปลี่ยน' : 'Channel access token'}" aria-label="Channel access token">
-      <label class="check-row"><input type="checkbox" class="line-enabled" ${v.enabled ? 'checked' : ''}> ส่งสรุป "สิ่งที่ควรดูวันนี้" อัตโนมัติทุกวัน 08:30 (เฉพาะเรื่องใหม่หรือแย่ลง)</label>
+      <label class="check-row"><input type="checkbox" class="line-enabled" ${v.enabled ? 'checked' : ''}> ส่งสรุปอัตโนมัติทุกวัน 08:30 (เรื่องใหม่หรือแย่ลง + ตัวเลขรายวันที่เลือกด้านล่าง)</label>
       <fieldset class="line-watchers">
         <legend>ตัวเตือนที่ส่งเข้า LINE</legend>
         ${(v.watchers || []).map((w) => `
@@ -1375,6 +1425,15 @@ async function renderLinePanel(container, companyId, flash = '') {
             ${'days' in w.defaults ? `<label class="w-num">ค้างเกิน <input type="number" min="1" step="1" class="w-days" value="${esc(w.days)}"> วัน</label>` : ''}
           </div>`).join('')}
         <p class="helper-text">เกณฑ์ชุดเดียวกันใช้กับ widget ตัวเตือนบน Dashboard ตัวเลขในการ์ด LINE จึงตรงกับหน้าจอ</p>
+      </fieldset>
+      <fieldset class="line-watchers line-summaries">
+        <legend>สรุปตัวเลขรายวัน (ส่งพร้อมสรุปตอน 08:30)</legend>
+        ${(v.summaries || []).map((s) => `
+          <label class="check-row sum-row${s.available ? '' : ' is-off'}" ${s.available ? '' : 'title="ยังไม่มี widget ในแดชบอร์ดไหนใช้ข้อมูลนี้ — เพิ่ม widget ที่เกี่ยวข้องก่อนจึงจะเลือกได้"'}>
+            <input type="checkbox" class="s-pick" value="${esc(s.key)}" ${s.selected ? 'checked' : ''} ${s.available ? '' : 'disabled'}>
+            <span>${esc(s.name)} <span class="muted">· ${esc(s.desc)}</span>${s.available ? '' : ' <br><span class="sum-off-note">ยังไม่มี widget นี้ในแดชบอร์ด — เพิ่ม widget ก่อนจึงจะเลือกได้</span>'}</span>
+          </label>`).join('')}
+        <p class="helper-text">ตัวเลขคำนวณจากข้อมูลเดียวกับ widget บนแดชบอร์ด ถ้าไม่มีแดชบอร์ดไหนใช้ widget ของหัวข้อนั้น หัวข้อจะเป็นสีเทาและไม่ถูกส่ง ส่งวันละครั้ง · <b>ทุกคนในกลุ่ม LINE เห็นตัวเลขรวมทุกสาขา</b> จึงไม่ควรเลือกหัวข้อที่ไม่อยากให้ทั้งกลุ่มเห็น</p>
       </fieldset>
       <div class="btn-row">
         <button type="submit" class="btn small primary">บันทึก</button>
@@ -1393,6 +1452,7 @@ async function renderLinePanel(container, companyId, flash = '') {
           channel_secret: container.querySelector('.line-secret').value,
           access_token: container.querySelector('.line-token').value,
           enabled: container.querySelector('.line-enabled').checked,
+          summary: [...container.querySelectorAll('.s-pick:checked')].map((x) => x.value),
           watch: Object.fromEntries([...container.querySelectorAll('.watcher-row')].map((row) => {
             const o = { line: row.querySelector('.w-line').checked };
             const t = row.querySelector('.w-threshold'), m = row.querySelector('.w-min');

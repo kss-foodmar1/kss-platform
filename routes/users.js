@@ -52,11 +52,11 @@ router.get(
     if (!scope) return res.status(400).json({ error: 'company_id required' });
     const [rows] = scope.kss
       ? await pool.query(
-          `SELECT id, email, display_name, role, must_change_password, created_at
+          `SELECT id, email, display_name, home_branch, role, must_change_password, created_at
            FROM users WHERE role = 'kss_superadmin' ORDER BY created_at DESC`
         )
       : await pool.query(
-          `SELECT id, email, display_name, role, must_change_password, created_at
+          `SELECT id, email, display_name, home_branch, role, must_change_password, created_at
            FROM users WHERE company_id = ? AND role <> 'kss_superadmin' ORDER BY created_at DESC`,
           [scope.companyId]
         );
@@ -108,6 +108,42 @@ router.post(
       loaded.target.id,
     ]);
     res.json({ ok: true });
+  })
+);
+
+// Branch choices for the home-branch selector: the company's real branches.
+router.get(
+  '/branches',
+  requireAuth,
+  requireCompanyAdmin,
+  wrap(async (req, res) => {
+    const scope = resolveScope(req);
+    if (!scope || scope.kss) return res.json({ branches: [] });
+    res.json({ branches: await require('../lib/alerts').branchesOf(scope.companyId) });
+  })
+);
+
+// A user's own branch (branch manager): dashboards open filtered to it. Empty = all branches.
+router.patch(
+  '/:id/home-branch',
+  requireAuth,
+  requireCompanyAdmin,
+  wrap(async (req, res) => {
+    const loaded = await loadTargetUser(req, res);
+    if (!loaded) return;
+    const hb = require('../lib/homeBranch');
+    const b = req.body || {};
+    const list = hb.parse(JSON.stringify(Array.isArray(b.home_branches) ? b.home_branches : [String(b.home_branch || '')])).slice(0, 30);
+    if (list.some((x) => x.length > 120)) return res.status(400).json({ error: 'ชื่อสาขายาวเกินไป' });
+    if (list.length && loaded.scope.companyId) {
+      const [[cur]] = await pool.query(`SELECT home_branch FROM users WHERE id = ?`, [loaded.target.id]);
+      const known = new Set([...(await require('../lib/alerts').branchesOf(loaded.scope.companyId)), ...hb.parse(cur && cur.home_branch)]);
+      const bad = list.find((x) => !known.has(x));
+      if (bad) return res.status(400).json({ error: `ไม่พบสาขา "${bad}" ในข้อมูลของบริษัท` });
+    }
+    const v = hb.serialize(list);
+    await pool.query(`UPDATE users SET home_branch = ? WHERE id = ?`, [v, loaded.target.id]);
+    res.json({ ok: true, home_branch: v, home_branches: list });
   })
 );
 

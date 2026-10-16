@@ -169,7 +169,7 @@ function explainTable(rows, cfg, out, widget) {
   out.push(`มี ${xb(rows.length.toLocaleString('th-TH'))} รายการในช่วงที่เลือก`);
   const cols = cfg.columns || [];
   if (String(widget.template_key || '').startsWith('watch_')) {
-    const high = rows.filter((r) => String(r.severity || '').includes('สูง')).length;
+    const high = rows.filter((r) => /สูง|วิกฤต/.test(String(r.severity || ''))).length;
     const impact = rows.reduce((a, r) => a + xNum(r.impact), 0);
     if (high) out.push(`ระดับ “สูง” ${xb(high)} เรื่อง — เริ่มจากกลุ่มนี้`);
     if (impact) out.push(`ผลกระทบรวมประมาณ ${xb(xFmt(impact, 'currency'))}`);

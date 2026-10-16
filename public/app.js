@@ -8,6 +8,35 @@
 // each report source once from the server-side cache and every widget that
 // uses that source renders from the same rows.
 
+// ---- Theme-aware colours: read from CSS tokens at draw time (style.css :root / [data-theme="dark"]) ----
+const cssv = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#888';
+// Widget configs saved before the redesign carry the old brand hexes; map them to the new series tokens.
+const LEGACY_COLOR = { '#BE4229': '--danger', '#2F6FB0': '--s1', '#A9812F': '--s2', '#2F8F4E': '--s3', '#7A6A9E': '--s4', '#C2410C': '--s7', '#1B2B22': '--ink', '#D6CFBC': '--s-other', '#B8B09A': '--s-other', '#8FB4DC': '--s6', '#C9A15A': '--s7' };
+const themed = (c) => (typeof c === 'string' && LEGACY_COLOR[c.toUpperCase()] ? cssv(LEGACY_COLOR[c.toUpperCase()]) : c);
+const themedCfg = (v) => {
+  if (Array.isArray(v)) return v.map(themedCfg);
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, themedCfg(x)]));
+  return themed(v);
+};
+// Readable text colour for any background: dark ink on light fills, white on dark fills.
+function onColor(bg) {
+  let c = String(bg).trim(), r, g, b;
+  const hx = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c);
+  if (hx) { let h = hx[1]; if (h.length === 3) h = h.replace(/./g, (x) => x + x); [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)); }
+  else { const m = /rgba?\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/.exec(c); if (!m) return '#fff'; [r, g, b] = [m[1], m[2], m[3]].map(Number); }
+  const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const L = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return L > 0.32 ? '#101828' : '#fff';
+}
+const withAlpha = (c, a) => {
+  const h = /^#([0-9a-f]{6})$/i.exec(String(c).trim());
+  if (h) return `rgba(${parseInt(h[1].slice(0, 2), 16)}, ${parseInt(h[1].slice(2, 4), 16)}, ${parseInt(h[1].slice(4, 6), 16)}, ${a})`;
+  const m = /rgba?\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/.exec(String(c));
+  return m ? `rgba(${m[1]}, ${m[2]}, ${m[3]}, ${a})` : c;
+};
+const SKELETON = '<div class="skel" role="status" aria-label="กำลังโหลด"><span></span><span></span><span></span></div>';
+const tokenList = (names) => new Proxy(names, { get: (t, k) => (/^\d+$/.test(String(k)) ? cssv(t[k]) : t[k]) });
+
 const state = {
   user: null,
   viewCompanyId: null, // company whose dashboards are shown (KSS staff can switch)
@@ -413,6 +442,29 @@ function showScreen(name) {
   el('app-shell').classList.toggle('hidden', name !== 'app');
 }
 
+// Light / dark: follows the system until the user picks; the pick is remembered on this device.
+(function themeToggle() {
+  const root = document.documentElement;
+  const effective = () => root.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const sync = () => {
+    const b = document.getElementById('theme-btn');
+    if (b) b.setAttribute('aria-pressed', effective() === 'dark' ? 'true' : 'false');
+  };
+  const redraw = () => {
+    sync();
+    const v = state.currentView;
+    if (v && v.wrap && v.wrap.isConnected && typeof v.renderWidgets === 'function') v.renderWidgets();
+  };
+  document.getElementById('theme-btn').addEventListener('click', () => {
+    const next = effective() === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('kss_theme', next); } catch (e) { /* private window */ }
+    redraw();
+  });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!root.getAttribute('data-theme')) redraw(); });
+  sync();
+})();
+
 // One button: shows the language you would switch TO.
 document.querySelectorAll('.lang-toggle').forEach((b) => {
   b.textContent = I18N.lang === 'en' ? 'ไทย' : 'EN';
@@ -493,7 +545,7 @@ async function enterApp() {
   // KSS staff keep the Admin Console button; a company admin's settings live
   // in the left menu (renderSideNav), so the topbar shortcuts go.
   el('open-admin-btn').classList.toggle('hidden', !isSuper() && !isCompanyAdmin());
-  el('open-admin-btn').textContent = adminBtnLabel();
+  el('open-admin-btn').innerHTML = adminBtnLabel();
   el('open-manage-users-btn').classList.add('hidden');
   el('open-settings-btn').classList.add('hidden');
   el('company-picker-wrap').classList.toggle('hidden', !isSuper());
@@ -543,7 +595,7 @@ function showDashboardView() {
   el('admin-view').classList.add('hidden');
   el('library-view').classList.add('hidden');
   el('app-shell').classList.remove('admin-mode', 'with-side');
-  el('open-admin-btn').textContent = adminBtnLabel();
+  el('open-admin-btn').innerHTML = adminBtnLabel();
 }
 
 // From anywhere (library, settings, picker) to one dashboard.
@@ -730,8 +782,12 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSideN
 
 // KSS staff get the whole Admin Console; a client's company admin gets the
 // same composer and widget picker, for their own company only.
+const ICON = {
+  gear: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
+  building: '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M9 7h1M14 7h1M9 11h1M14 11h1M9 15h1M14 15h1M10 21v-3h4v3"/></svg>',
+};
 function adminBtnLabel() {
-  return isSuper() ? '🏢 Admin Console' : '⚙ ตั้งค่า';
+  return isSuper() ? `${ICON.building}<span>Admin Console</span>` : `${ICON.gear}<span>ตั้งค่า</span>`;
 }
 
 async function loadDashboards(preferredDashboardId) {
@@ -799,7 +855,7 @@ async function selectDashboard(id) {
 
 function keyMissingMessage() {
   if (isSuper()) return 'ยังไม่ได้ตั้งค่า FMH API Key ของบริษัทนี้ — ตั้งค่าได้ใน Admin Console';
-  if (isCompanyAdmin()) return 'ยังไม่ได้ตั้งค่า FMH API Key — กดปุ่ม ⚙️ มุมขวาบนเพื่อใส่ Key';
+  if (isCompanyAdmin()) return 'ยังไม่ได้ตั้งค่า FMH API Key — กดปุ่ม ตั้งค่า มุมขวาบนเพื่อใส่ Key';
   return 'ระบบยังไม่ได้เชื่อมข้อมูล FMH — กรุณาติดต่อผู้ดูแลระบบของบริษัท';
 }
 
@@ -855,6 +911,16 @@ const savedMode = {
   },
 };
 
+const RECENT_ONLY = new Set(['Line Checks', 'Supplier Quality', 'Alerts']);
+
+// users.home_branch: one name, or a JSON array of names (district manager).
+function homeBranchList(raw) {
+  if (!raw) return [];
+  const s = String(raw).trim();
+  if (s.startsWith('[')) { try { return JSON.parse(s).map(String).filter(Boolean); } catch (e) { return []; } }
+  return s ? [s] : [];
+}
+
 class DashboardView {
   constructor(wrap, { dashboard, widgets, sources }) {
     this.wrap = wrap;
@@ -902,7 +968,7 @@ class DashboardView {
         ${
           !this.preview && (isSuper() || isCompanyAdmin())
             ? `<div class="dash-actions">
-                 <button type="button" class="btn small ghost dash-edit">จัดเรียง / แก้ไข</button>
+                 <button type="button" class="btn small ghost dash-edit"><svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="18" height="7" rx="1.5"/></svg>จัดเรียง</button>
                  <button type="button" class="btn small primary dash-add">+ เพิ่ม Widget</button>
                </div>`
             : ''
@@ -925,14 +991,22 @@ class DashboardView {
     if (!this.preview) bindDashSwitcher(header.querySelector('.dash-switch-wrap'), this.dashboard.id);
     const editBtn = header.querySelector('.dash-edit');
     if (editBtn) {
-      editBtn.addEventListener('click', () => {
+      editBtn.addEventListener('click', () => this.arrange());
+      this.openPicker = () => {
         adminState.selected = { type: 'picker', id: this.dashboard.company_id, dashboardId: this.dashboard.id };
         if (!isSuper()) state.navCurrent = { kind: 'dashboard', id: this.dashboard.id };
         openAdminConsole();
-      });
+      };
       header.querySelector('.dash-add').addEventListener('click', () => openLibrary({ dashboardId: this.dashboard.id }));
     }
 
+    if (!this.preview) {
+      this.todayEl = document.createElement('section');
+      this.todayEl.className = 'today-card';
+      this.todayEl.hidden = true;
+      this.wrap.appendChild(this.todayEl);
+      this.renderToday();
+    }
     this.statusEl = document.createElement('div');
     this.wrap.appendChild(this.statusEl);
     // A page-wide filter (customer, for the CK sales widgets): any widget can
@@ -941,11 +1015,24 @@ class DashboardView {
     // page_filter is one field or a list; the page offers every field any of
     // its widgets asks for, in first-seen order.
     this.filterFields = [];
+    this.filterUse = {}; // field -> titles of the widgets it narrows
     this.widgets.forEach((w) => {
       const pf = w.config && w.config.page_filter;
-      (Array.isArray(pf) ? pf : pf ? [pf] : []).forEach((f) => { if (!this.filterFields.includes(f)) this.filterFields.push(f); });
+      (Array.isArray(pf) ? pf : pf ? [pf] : []).forEach((f) => {
+        if (!this.filterFields.includes(f)) this.filterFields.push(f);
+        (this.filterUse[f] = this.filterUse[f] || []).push(w.title);
+      });
     });
+    // A filter that narrows a single widget, on a page whose main filter narrows most of them, only adds
+    // noise (a CK sales page showing "สาขา" and "ซัพพลายเออร์" for one widget each). Offer it only when
+    // nothing else on the page is a real page-wide filter.
+    if (this.filterFields.some((f) => (this.filterUse[f] || []).length >= 3)) {
+      this.filterFields = this.filterFields.filter((f) => (this.filterUse[f] || []).length >= 2);
+    }
     this.filters = {}; // field -> chosen value
+    // A branch manager opens on their own branch (users.home_branch); they can still pick "ทุกสาขา".
+    this.homeBranches = homeBranchList(state.user && state.user.home_branch);
+    if (this.homeBranches.length && this.filterFields.includes('branch')) this.filters.branch = this.homeBranches[0];
     this.bucketPick = new Map();
     this.filterEl = document.createElement('div');
     this.filterEl.className = 'page-filter';
@@ -967,9 +1054,10 @@ class DashboardView {
     this.cards = this.widgets.map((w) => {
       const card = document.createElement('section');
       card.className = `widget-card size-${w.config.size || 'half'} widget-${w.chart_type}${[2, 3].includes(Number(w.config.rows)) ? ` rows-${w.config.rows}` : ''}`;
+      card.dataset.wid = w.id;
       card.innerHTML = `<div class="widget-head"><h3 class="widget-title">${esc(w.title)}</h3>${
         this.preview ? '' : '<button type="button" class="widget-explain" aria-expanded="false" title="กราฟนี้บอกอะไร"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>อธิบาย</button>'
-      }</div><div class="explain-box" hidden></div><div class="widget-body"><p class="muted">กำลังโหลด...</p></div>`;
+      }</div><div class="explain-box" hidden></div><div class="widget-body">${SKELETON}</div>`;
       grid.appendChild(card);
       const box = card.querySelector('.explain-box');
       const eb = card.querySelector('.widget-explain');
@@ -1115,7 +1203,20 @@ class DashboardView {
 
   renderPageFilter() {
     if (!this.filterFields.length) return;
-    const LABEL = { customer: ['ลูกค้า', 'ทุกราย'], branch: ['สาขา', 'ทุกสาขา'], supplier: ['ซัพพลายเออร์', 'ทุกเจ้า'] };
+    // When a page mixes CK sales (customer) with purchasing (branch/supplier), say which side each row is,
+    // so "ลูกค้า" and "สาขา" are not read as the same thing.
+    const mixed = this.filterFields.includes('customer') && this.filterFields.some((f) => f !== 'customer');
+    const LABEL = {
+      customer: [mixed ? 'ลูกค้าครัวกลาง' : 'ลูกค้า', 'ทุกราย'],
+      branch: [mixed ? 'สาขาที่สั่งซื้อ' : 'สาขา', 'ทุกสาขา'],
+      supplier: [mixed ? 'ซัพพลายเออร์ที่ซื้อ' : 'ซัพพลายเออร์', 'ทุกเจ้า'],
+    };
+    const useNote = (f) => {
+      const names = [...new Set(this.filterUse[f] || [])];
+      if (!names.length) return '';
+      const total = this.widgets.length;
+      return `<details class="pf-use"><summary>กรองได้ ${(this.filterUse[f] || []).length}${(this.filterUse[f] || []).length === total ? ' (ทั้งหมด)' : ` จาก ${total}`} รายการ</summary><span>${names.map(esc).join(' · ')}</span></details>`;
+    };
     const show = (f, v) => (f === 'customer' ? partyShort(v) : String(v));
     const groups = this.filterFields.map((f) => {
       const totals = new Map();
@@ -1126,7 +1227,10 @@ class DashboardView {
           totals.set(String(row[f]), (totals.get(String(row[f])) || 0) + num(row.total ?? 1));
         });
       });
-      return { f, values: [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([v]) => v) };
+      let values = [...totals.entries()].sort((a, b) => b[1] - a[1]).map(([v]) => v);
+      // A manager with several branches picks among theirs (one branch alone needs no picker).
+      if (f === 'branch' && this.homeBranches && this.homeBranches.length > 1) values = values.filter((v) => this.homeBranches.includes(v));
+      return { f, values };
     }).filter((g) => g.values.length > 1);
     if (!groups.length) { this.filterEl.innerHTML = ''; return; }
     // A few values read best as chips; a long list (fifty suppliers) as a menu.
@@ -1135,9 +1239,9 @@ class DashboardView {
       const cur = this.filters[f] ?? null;
       if (values.length <= 10) {
         const chip = (v, text) => `<button type="button" class="range-chip${cur === v ? ' active' : ''}" data-f="${esc(f)}" data-v="${v === null ? '' : esc(v)}" title="${esc(v ?? '')}">${esc(text)}</button>`;
-        return `<div class="page-filter-group"><span class="page-filter-label">${esc(label)}</span>${chip(null, all)}${values.map((v) => chip(v, show(f, v))).join('')}</div>`;
+        return `<div class="page-filter-group"><span class="page-filter-label">${esc(label)}</span>${useNote(f)}<div class="chip-row">${chip(null, all)}${values.map((v) => chip(v, show(f, v))).join('')}</div></div>`;
       }
-      return `<div class="page-filter-group"><label class="page-filter-label" for="pf-${esc(f)}">${esc(label)}</label><select id="pf-${esc(f)}" data-f="${esc(f)}"><option value="">${esc(all)}</option>${values
+      return `<div class="page-filter-group"><label class="page-filter-label" for="pf-${esc(f)}">${esc(label)}</label>${useNote(f)}<select id="pf-${esc(f)}" data-f="${esc(f)}"><option value="">${esc(all)}</option>${values
         .map((v) => `<option value="${esc(v)}"${cur === v ? ' selected' : ''}>${esc(show(f, v))}</option>`).join('')}</select></div>`;
     }).join('');
     const set = (f, v) => {
@@ -1174,7 +1278,7 @@ class DashboardView {
   async switchSaved(on) {
     savedMode.set(on);
     this.useSaved = on;
-    (this.cards || []).forEach(({ body }) => (body.innerHTML = '<p class="muted">กำลังโหลด...</p>'));
+    (this.cards || []).forEach(({ body }) => (body.innerHTML = SKELETON));
     await this.load();
   }
 
@@ -1190,7 +1294,7 @@ class DashboardView {
     const info = this.sources[key];
     if (!r || r.error || !info || !info.date_field) return null;
     const h = r.meta && r.meta.history;
-    if (h && (h.file_from || h.api_from)) return h.file_from || h.api_from;
+    if (h && (h.archive_from || h.file_from || h.api_from)) return [h.archive_from, h.file_from, h.api_from].filter(Boolean).sort()[0];
     let min = null;
     (r.data || []).forEach((row) => {
       const d = row[info.date_field] ? String(row[info.date_field]).slice(0, 10) : null;
@@ -1239,9 +1343,12 @@ class DashboardView {
     return notes.length ? `<p class="widget-foot coverage-note">${notes.map(esc).join('<br>')}</p>` : '';
   }
 
-  rowsFor(key) {
-    const r = this.results[key];
-    if (!r || r.error) return null;
+  rowsFor(key, widget) {
+    const r0 = this.results[key];
+    if (!r0 || r0.error) return null;
+    // Exception lists (unreceived lines, over-billing…) are about now: archived history keeps the last
+    // status a line had in FMH's window, so it would list lines that were settled later.
+    const r = widget && RECENT_ONLY.has(widget.category) && r0.data.some((x) => x._arch) ? { ...r0, data: r0.data.filter((x) => !x._arch) } : r0;
     const dateField = this.sources[key] && this.sources[key].date_field;
     const active = Object.entries(this.filters).filter(([, v]) => v !== null && v !== undefined);
     const byFilter = (rows) => (active.length ? rows.filter((row) => active.every(([f, v]) => !(f in row) || String(row[f]) === v)) : rows);
@@ -1294,7 +1401,7 @@ class DashboardView {
                ? '<span class="demo-pill">ข้อมูลตัวอย่าง</span> <span class="muted">ข้อมูลตัวอย่างสำหรับเดโม — ไม่ใช่ข้อมูลจริงและไม่ใช้โควตา FMH</span>'
                : oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
            }</span>
-           <span class="sync-actions">${toggle}${keyMissing ? '' : '<button type="button" class="btn small ghost fmh-refresh-btn">Refresh ด่วน</button>'}</span>
+           <span class="sync-actions">${toggle}${keyMissing ? '' : '<button type="button" class="btn small ghost fmh-refresh-btn">ดึงข้อมูลใหม่</button>'}</span>
          </div>
          ${
            failed.length
@@ -1330,6 +1437,13 @@ class DashboardView {
         `<div class="fmh-sync-line history-line"><span>ข้อมูลย้อนหลังจากไฟล์ FMH: ${hist.map((h) => `${esc(h.label)} ตั้งแต่ ${esc(dayLabel(h.file_from))}`).join(' · ')}</span></div>` +
           gaps.map((h) => `<div class="warn-msg">${esc(h.label)}: ยังไม่มีข้อมูลช่วง ${esc(dayLabel(nextDay(h.file_to)))} – ${esc(dayLabel(prevDay(h.api_from)))} — อัปโหลดไฟล์ของช่วงนี้เพิ่ม</div>`).join('')
       );
+    }
+    // Days kept automatically after they leave the API window (lib/fmhArchive.js).
+    const arch = Object.entries(this.results)
+      .filter(([, r]) => r && !r.error && r.meta && r.meta.history && r.meta.history.archive_from)
+      .map(([k, r]) => ({ label: (this.sources[k] || {}).label || k, from: r.meta.history.archive_from }));
+    if (arch.length && !this.useSaved) {
+      bar.insertAdjacentHTML('beforeend', `<div class="fmh-sync-line archive-line"><span>ข้อมูลย้อนหลังที่ระบบเก็บไว้ให้ ถึง ${esc(dayLabel(arch.map((h) => h.from).sort()[0]))} (เกินช่วงที่ FMH ส่งให้)</span></div>`);
     }
     if (this.fileCapable && (isCompanyAdmin() || isSuper()) && !this.useSaved && this.dashboard.data_source !== 'demo') {
       const line = bar.querySelector('.history-line') || bar.querySelector('.fmh-sync-line');
@@ -1371,7 +1485,7 @@ class DashboardView {
           await this.load();
         } catch (err) {
           btn.disabled = false;
-          btn.textContent = 'Refresh ด่วน';
+          btn.textContent = 'ดึงข้อมูลใหม่';
           const note = document.createElement('div');
           note.className = 'inline-note';
           note.textContent = err.message;
@@ -1380,6 +1494,245 @@ class DashboardView {
         }
       });
     }
+  }
+
+  // ---- "เช้านี้ต้องทำ": the most urgent open alerts across the company, with รับทราบ / มอบหมาย ----
+  async renderToday() {
+    const box = this.todayEl;
+    let data;
+    try { data = await api(`/api/dashboards/${this.dashboard.id}/today`); } catch (e) { box.hidden = true; return; }
+    // A branch manager sees their branch's items plus company-wide ones.
+    const open = data.items.filter((i) => !i.ack_status);
+    const taken = data.items.filter((i) => i.ack_status);
+    if (!data.items.length) { box.hidden = true; return; }
+    box.hidden = false;
+    const fold = `kss_today_fold_${this.dashboard.id}_${data.day}`;
+    const phone = matchMedia('(max-width: 700px)').matches;
+    let folded = false;
+    try { const v = localStorage.getItem(fold); folded = v === '1'; } catch (e) { /* private window */ }
+    // Deep link from the LINE digest button (/?alerts=1): open the card and bring it into view once.
+    let deepLink = false;
+    try { deepLink = !this.deepLinked && new URLSearchParams(location.search).get('alerts') === '1'; } catch (e) { /* no URL */ }
+    if (deepLink) { folded = false; this.deepLinked = true; setTimeout(() => box.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300); }
+    const SHOW = phone ? 3 : 5;
+    const crit = data.items.filter((i) => !i.ack_status && i.severity === 'วิกฤต').length;
+    const sumOpen = data.items.filter((i) => !i.ack_status).reduce((a, i) => a + (Number(i.impact) || 0), 0);
+    const sevCls = { 'วิกฤต': 'crit', 'สูง': 'high', 'กลาง': 'mid' };
+    const money = (v) => (v ? '฿' + Math.round(v).toLocaleString('th-TH') : '');
+    const people = data.people || [];
+    const item = (it, i) => `<li class="today-item" data-i="${i}">
+        <span class="sev-pill sev-${sevCls[it.severity] || 'mid'}">${esc(it.severity)}</span>
+        <div class="today-main"><b>${esc(it.subject || it.detail)}</b>${it.owner ? `<span class="today-owner">งาน${esc(it.owner)}</span>` : ''}<span>${esc(it.subject ? it.detail : '')}</span>
+          <span class="today-meta">${[it.branch, it.age_days != null ? `ค้าง ${it.age_days} วัน` : '', money(it.impact)].filter(Boolean).map(esc).join(' · ')}${it.handled ? ` · <em>${esc(it.handled)}</em>` : ''}</span></div>
+        <div class="today-acts">${
+          it.ack_status
+            ? '<button type="button" class="btn small ghost t-clear">ยกเลิก</button>'
+            : '<button type="button" class="btn small ghost t-ack">รับทราบ</button><button type="button" class="btn small ghost t-assign">มอบหมาย</button>'
+        }${it.source && this.widgets.some((w) => w.report_source === it.source) ? '<button type="button" class="btn small ghost t-go">ดูในรายการ</button>' : ''}</div>
+        <form class="today-assign" hidden><label class="sr-only" for="ta-${i}">มอบหมายให้</label><input id="ta-${i}" list="today-people-${this.dashboard.id}" placeholder="ชื่อผู้รับผิดชอบ" maxlength="80" required><button type="submit" class="btn small primary">มอบหมาย</button></form>
+      </li>`;
+    const all = [...open, ...taken];
+    box.innerHTML = `<div class="today-head">
+        <div><h2>เช้านี้ต้องทำ</h2><p>${open.length ? `${open.length} เรื่องยังไม่มีคนรับ${crit ? ` · วิกฤต ${crit}` : ''}${sumOpen ? ` · ยอดค้าง ฿${Math.round(sumOpen).toLocaleString('th-TH')}` : ''}` : 'ทุกเรื่องมีคนรับแล้ว'}${taken.length ? ` · รับแล้ว ${taken.length}` : ''}</p></div>
+        <button type="button" class="btn small ghost today-fold" aria-expanded="${!folded}" aria-label="${folded ? 'แสดงรายการเช้านี้ต้องทำ' : 'ย่อรายการเช้านี้ต้องทำ'}">${folded ? 'แสดง' : 'ย่อ'}</button>
+      </div>
+      <div class="today-body"${folded ? ' hidden' : ''}>
+        <ul class="today-list">${open.slice(0, SHOW).map((it) => item(it, all.indexOf(it))).join('') || '<li class="today-empty">ไม่มีเรื่องค้างที่ยังไม่มีคนรับ</li>'}</ul>
+        ${open.length > SHOW ? `<p class="today-more">และอีก ${open.length - SHOW} เรื่องในตารางตัวเตือนด้านล่าง</p>` : ''}
+        ${taken.length ? `<details class="today-taken"><summary>รับแล้ว ${taken.length} เรื่อง</summary><ul class="today-list">${taken.map((it) => item(it, all.indexOf(it))).join('')}</ul></details>` : ''}
+        <datalist id="today-people-${this.dashboard.id}">${people.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+        <p class="today-msg" role="status"></p>
+      </div>`;
+    box.querySelector('.today-fold').addEventListener('click', () => {
+      try { localStorage.setItem(fold, folded ? '0' : '1'); } catch (e) { /* private window */ }
+      this.renderToday();
+    });
+    const send = async (it, body) => {
+      try {
+        await api(`/api/dashboards/${this.dashboard.id}/today/ack`, { method: 'POST', body: JSON.stringify({ watcher: it.watcher, finding_key: it.finding_key, ...body }) });
+        await this.renderToday();
+        const m = box.querySelector('.today-msg');
+        if (m && body.action !== 'clear') {
+          m.className = 'today-msg ok';
+          m.innerHTML = `${body.action === 'assign' ? 'มอบหมายแล้ว' : 'รับทราบแล้ว'}: ${esc(it.subject || '')} <button type="button" class="link-btn t-undo">เลิกทำ</button>`;
+          m.querySelector('.t-undo').addEventListener('click', () => send(it, { action: 'clear' }));
+        }
+      } catch (err) { const m = box.querySelector('.today-msg'); if (m) m.textContent = err.message; }
+    };
+    box.querySelectorAll('.today-item').forEach((li) => {
+      const it = all[Number(li.dataset.i)];
+      const q = (sel) => li.querySelector(sel);
+      if (q('.t-ack')) q('.t-ack').addEventListener('click', () => send(it, { action: 'ack' }));
+      if (q('.t-clear')) q('.t-clear').addEventListener('click', () => send(it, { action: 'clear' }));
+      if (q('.t-assign')) q('.t-assign').addEventListener('click', () => { const f = q('.today-assign'); f.hidden = !f.hidden; if (!f.hidden) f.querySelector('input').focus(); });
+      q('.today-assign').addEventListener('submit', (e) => { e.preventDefault(); send(it, { action: 'assign', to: q('.today-assign input').value.trim() }); });
+      if (q('.t-go')) q('.t-go').addEventListener('click', () => {
+        const w = this.widgets.find((x) => x.report_source === it.source);
+        const el = w && this.wrap.querySelector(`.widget-card[data-wid="${w.id}"]`);
+        if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1600); }
+      });
+    });
+  }
+
+  // ---- Arrange mode: drag cards on a 6-column grid, snap width to ⅓ / ½ / full and height to 1-3 rows ----
+  arrange() {
+    const grid = this.wrap.querySelector('.widget-grid');
+    if (!grid || this.arranging) return;
+    this.arranging = true;
+    const SIZES = [['third', 2, '⅓'], ['half', 3, '½'], ['full', 6, 'เต็มแถว']];
+    const sizeOf = (c) => (c.classList.contains('size-full') ? 'full' : c.classList.contains('size-third') ? 'third' : 'half');
+    const rowsOf = (c) => (c.classList.contains('rows-3') ? 3 : c.classList.contains('rows-2') ? 2 : 1);
+    const cards = () => [...grid.querySelectorAll('.widget-card')];
+    const before = cards().map((c) => ({ el: c, size: sizeOf(c), rows: rowsOf(c) }));
+    let dirty = false;
+
+    const bar = document.createElement('div');
+    bar.className = 'arrange-bar';
+    bar.setAttribute('role', 'region');
+    bar.setAttribute('aria-label', 'โหมดจัดเรียง');
+    bar.innerHTML = `<div class="arrange-text"><b>โหมดจัดเรียง</b><span>ลากที่ <span class="arr-grip-ico" aria-hidden="true">⠿</span> เพื่อย้าย · เลือกความกว้าง ⅓ / ½ / เต็มแถว · ลากมุมขวาล่างเพื่อปรับขนาด</span></div>
+      <div class="arrange-actions"><button type="button" class="btn small ghost arr-picker">เพิ่ม / เอาออก Widget</button><button type="button" class="btn small ghost arr-cancel">ยกเลิก</button><button type="button" class="btn small primary arr-save" disabled>บันทึกการจัดเรียง</button></div>
+      <p class="arrange-msg" role="status"></p>`;
+    grid.before(bar);
+    grid.classList.add('arranging');
+    document.body.classList.add('arranging-on');
+    const hidden = [this.todayEl, this.filterEl, this.statusEl].filter(Boolean);
+    hidden.forEach((n) => n.classList.add('arr-hide'));
+    const markDirty = () => { dirty = true; bar.querySelector('.arr-save').disabled = false; };
+
+    const setSize = (c, size) => {
+      c.classList.remove('size-third', 'size-half', 'size-full');
+      c.classList.add(`size-${size}`);
+      c.querySelectorAll('.arr-size button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.size === size ? 'true' : 'false'));
+      // A table squeezed into ⅓ cuts its text: say so rather than refuse.
+      const tools = c.querySelector('.arr-tools');
+      const old = c.querySelector('.arr-warn');
+      if (old) old.remove();
+      if (size === 'third' && c.classList.contains('widget-table') && tools) tools.insertAdjacentHTML('afterend', '<p class="arr-warn">ตารางแคบเกินไปที่ ⅓ แถว แนะนำ ½ หรือเต็มแถว</p>');
+    };
+    const setRows = (c, n) => { c.classList.remove('rows-2', 'rows-3'); if (n > 1) c.classList.add(`rows-${n}`); };
+
+    cards().forEach((c) => {
+      const t = (c.querySelector('.widget-title') || {}).textContent || 'widget';
+      const tools = document.createElement('div');
+      tools.className = 'arr-tools';
+      tools.innerHTML = `<button type="button" class="arr-grip" aria-label="ย้าย ${esc(t)} (ใช้ลูกศรซ้าย/ขวาก็ได้)" title="ลากเพื่อย้าย"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg><span>ลากเพื่อย้าย</span></button>
+        <span class="arr-size" role="group" aria-label="ความกว้าง">${SIZES.map(([k, , l]) => `<button type="button" data-size="${k}" aria-pressed="${sizeOf(c) === k}">${l}</button>`).join('')}</span>`;
+      c.prepend(tools);
+      const rz = document.createElement('button');
+      rz.type = 'button';
+      rz.className = 'arr-resize';
+      rz.setAttribute('aria-label', `ปรับขนาด ${t}`);
+      rz.title = 'ลากเพื่อปรับขนาด';
+      c.appendChild(rz);
+      tools.querySelectorAll('.arr-size button').forEach((b) => b.addEventListener('click', () => { setSize(c, b.dataset.size); markDirty(); }));
+      setSize(c, sizeOf(c));
+      const grip = tools.querySelector('.arr-grip');
+
+      // Move: the card follows the pointer through the grid; others reflow around it.
+      grip.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        grip.setPointerCapture(e.pointerId);
+        c.classList.add('arr-dragging');
+        const move = (ev) => {
+          const under = document.elementsFromPoint(ev.clientX, ev.clientY).find((n) => n.classList && n.classList.contains('widget-card') && n !== c);
+          if (!under) return;
+          const r = under.getBoundingClientRect();
+          const after = ev.clientY > r.bottom - r.height / 3 || (ev.clientX > r.left + r.width / 2 && ev.clientY > r.top + r.height / 3);
+          const ref = after ? under.nextSibling : under;
+          if (ref !== c && ref !== c.nextSibling) { grid.insertBefore(c, ref); markDirty(); }
+          if (ev.clientY < 80) window.scrollBy(0, -18); else if (ev.clientY > innerHeight - 80) window.scrollBy(0, 18);
+        };
+        const up = () => {
+          c.classList.remove('arr-dragging');
+          grip.removeEventListener('pointermove', move);
+          grip.removeEventListener('pointerup', up);
+          grip.removeEventListener('pointercancel', up);
+        };
+        grip.addEventListener('pointermove', move);
+        grip.addEventListener('pointerup', up);
+        grip.addEventListener('pointercancel', up);
+      });
+      grip.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); if (c.previousElementSibling) { grid.insertBefore(c, c.previousElementSibling); markDirty(); grip.focus(); } }
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); if (c.nextElementSibling) { grid.insertBefore(c.nextElementSibling, c); markDirty(); grip.focus(); } }
+      });
+
+      // Resize: drag the corner; width snaps to 2 / 3 / 6 of 6 columns, height to 1-3 rows.
+      rz.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        rz.setPointerCapture(e.pointerId);
+        c.classList.add('arr-resizing');
+        const g = grid.getBoundingClientRect();
+        const col = (g.width - 5 * 16) / 6 + 16;
+        const top = c.getBoundingClientRect().top;
+        const move = (ev) => {
+          const span = (ev.clientX - c.getBoundingClientRect().left) / col;
+          const size = span < 2.5 ? 'third' : span < 4.5 ? 'half' : 'full';
+          const h = ev.clientY - top;
+          const rows = h < 450 ? 1 : h < 660 ? 2 : 3;
+          if (size !== sizeOf(c)) { setSize(c, size); markDirty(); }
+          if (rows !== rowsOf(c)) { setRows(c, rows); markDirty(); }
+        };
+        const up = () => { c.classList.remove('arr-resizing'); rz.removeEventListener('pointermove', move); rz.removeEventListener('pointerup', up); rz.removeEventListener('pointercancel', up); };
+        rz.addEventListener('pointermove', move);
+        rz.addEventListener('pointerup', up);
+        rz.addEventListener('pointercancel', up);
+      });
+      rz.addEventListener('keydown', (e) => {
+        const order = ['third', 'half', 'full'];
+        const i = order.indexOf(sizeOf(c));
+        if (e.key === 'ArrowRight' && i < 2) { setSize(c, order[i + 1]); markDirty(); }
+        else if (e.key === 'ArrowLeft' && i > 0) { setSize(c, order[i - 1]); markDirty(); }
+        else if (e.key === 'ArrowDown' && rowsOf(c) < 3) { setRows(c, rowsOf(c) + 1); markDirty(); }
+        else if (e.key === 'ArrowUp' && rowsOf(c) > 1) { setRows(c, rowsOf(c) - 1); markDirty(); }
+        else return;
+        e.preventDefault();
+      });
+    });
+
+    const exit = () => {
+      this.arranging = false;
+      bar.remove();
+      grid.classList.remove('arranging');
+      grid.querySelectorAll('.arr-tools, .arr-resize, .arr-warn').forEach((n) => n.remove());
+      document.body.classList.remove('arranging-on');
+      hidden.forEach((n) => n.classList.remove('arr-hide'));
+    };
+    bar.querySelector('.arr-cancel').addEventListener('click', () => {
+      before.forEach(({ el, size, rows }) => { grid.appendChild(el); setSize(el, size); setRows(el, rows); });
+      exit();
+    });
+    bar.querySelector('.arr-picker').addEventListener('click', () => {
+      if (dirty) { bar.querySelector('.arrange-msg').textContent = 'บันทึกหรือยกเลิกการจัดเรียงก่อน แล้วค่อยเพิ่ม / เอาออก widget'; return; }
+      exit();
+      this.openPicker();
+    });
+    bar.querySelector('.arr-save').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.textContent = 'กำลังบันทึก...';
+      const items = cards().map((c) => ({ id: Number(c.dataset.wid), size: sizeOf(c), rows: rowsOf(c) }));
+      try {
+        await api(`/api/admin/dashboards/${this.dashboard.id}/arrange`, { method: 'PUT', body: JSON.stringify({ items }) });
+        const byId = new Map(this.widgets.map((w) => [w.id, w]));
+        this.widgets = items.map((it) => {
+          const w = byId.get(it.id);
+          w.config = { ...w.config, size: it.size };
+          if (it.rows > 1) w.config.rows = it.rows; else delete w.config.rows;
+          return w;
+        });
+        exit();
+        this.renderWidgets();
+      } catch (err) {
+        bar.querySelector('.arrange-msg').textContent = err.message;
+        btn.disabled = false;
+        btn.textContent = 'บันทึกการจัดเรียง';
+      }
+    });
+    const first = grid.querySelector('.arr-grip');
+    if (first) first.focus({ preventScroll: true });
+    bar.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }
 
   renderWidgets() {
@@ -1404,13 +1757,13 @@ class DashboardView {
         }
         return;
       }
-      const cfg = widget.config || {};
+      const cfg = themedCfg(widget.config || {});
       // A composite widget draws several small charts, each from its own pull.
       if (widget.pulls && cfg.panels) {
         const byAlias = {};
         widget.pulls.forEach((p) => {
           const r = this.results[p.key];
-          byAlias[p.as] = r && !r.error ? this.rowsFor(p.key) || [] : null;
+          byAlias[p.as] = r && !r.error ? this.rowsFor(p.key, widget) || [] : null;
         });
         this.explainData.set(widget.id, { panels: true });
         try {
@@ -1437,10 +1790,10 @@ class DashboardView {
           return;
         }
         const byAlias = {};
-        widget.pulls.forEach((p) => { byAlias[p.as] = this.rowsFor(p.key) || []; });
+        widget.pulls.forEach((p) => { byAlias[p.as] = this.rowsFor(p.key, widget) || []; });
         raw = pivotRows(byAlias, cfg) || [];
       } else {
-        raw = this.rowsFor(key);
+        raw = this.rowsFor(key, widget);
       }
       const rows = applyRowLayer(raw, cfg);
       if (!rows.length) {
@@ -1548,10 +1901,10 @@ function renderKpi(body, rows, cfg) {
 // Signed values: diverging blue (+) / chili (-). Margin: status colors, always
 // shown next to the printed value, so color is never the only signal.
 function barColor(value, cfg) {
-  if (cfg.color_mode === 'signed') return value < 0 ? 'var(--chili)' : 'var(--series-blue)';
+  if (cfg.color_mode === 'signed') return value < 0 ? 'var(--danger)' : 'var(--series-blue)';
   // Money out: paying more is the bad direction, so it is the red one.
-  if (cfg.color_mode === 'signed_cost') return value > 0 ? 'var(--chili)' : 'var(--series-blue)';
-  if (cfg.color_mode === 'margin') return value < 0 ? 'var(--chili)' : value < 20 ? 'var(--brass)' : 'var(--status-good)';
+  if (cfg.color_mode === 'signed_cost') return value > 0 ? 'var(--danger)' : 'var(--series-blue)';
+  if (cfg.color_mode === 'margin') return value < 0 ? 'var(--danger)' : value < 20 ? 'var(--amber)' : 'var(--status-good)';
   // A target makes "good" directional: food cost is better low, margin better
   // high, so the widget says which way it reads rather than the renderer
   // guessing from the number's sign.
@@ -1560,7 +1913,7 @@ function barColor(value, cfg) {
     const miss = lowerIsBetter ? value > cfg.threshold : value < cfg.threshold;
     if (!miss) return 'var(--status-good)';
     const far = lowerIsBetter ? value > cfg.threshold * 1.15 : value < cfg.threshold * 0.85;
-    return far ? 'var(--chili)' : 'var(--brass)';
+    return far ? 'var(--danger)' : 'var(--amber)';
   }
   return cfg.color || 'var(--series-blue)';
 }
@@ -1686,13 +2039,19 @@ function renderLine(body, rows, cfg) {
   // Periods with no rows stay on the axis as gaps. Skipping them drew June
   // straight into September when a month of history was missing.
   keys = continuousBuckets(keys, cfg.bucket || 'week');
+  // The current week / month is still filling up: its point would read as a drop.
+  const bk = cfg.bucket || 'week';
+  const partialLast = (bk === 'week' || bk === 'month') && keys.length > 1 && keys[keys.length - 1] === bucketKey(localIso(new Date()), bk);
   const wrap = document.createElement('div');
   wrap.className = 'chart-wrap';
   wrap.innerHTML = '<canvas></canvas>';
   body.appendChild(wrap);
+  if (partialLast) body.insertAdjacentHTML('beforeend', `<p class="chart-note">ช่วงสุดท้าย (เส้นประ) ยังไม่ครบ${bk === 'week' ? 'สัปดาห์' : 'เดือน'} ตัวเลขยังขึ้นได้อีก</p>`);
   // `series_by` makes one series per value of a field (a line per category),
   // the largest first; the rest fold into one, so the legend stays readable.
   let series = cfg.series || [];
+  // A line is a series, not an alarm: keep red for abnormal values and give red-coloured lines a distinct hue.
+  series = series.map((x) => (x.color && x.color === cssv('--danger') ? { ...x, color: cssv('--s4') } : x));
   if (cfg.series_by) {
     const totals = new Map();
     rows.forEach((r) => {
@@ -1704,7 +2063,7 @@ function renderLine(body, rows, cfg) {
     const inTop = new Set(top);
     const colorOf = (k, i) => {
       const at = cfg.series_order ? cfg.series_order.indexOf(k) : i;
-      return at >= 0 && at < CAT_COLORS.length ? CAT_COLORS[at] : '#B8B09A';
+      return at >= 0 && at < CAT_COLORS.length ? CAT_COLORS[at] : cssv('--s-other');
     };
     series = top.map((k, i) => ({
       label: k,
@@ -1714,7 +2073,7 @@ function renderLine(body, rows, cfg) {
     if (ranked.length > top.length) {
       series.push({
         label: `อื่น ๆ (${ranked.length - top.length})`,
-        color: '#B8B09A',
+        color: cssv('--s-other'),
         value: { op: 'sum_where', field: cfg.value.field, where: { op: 'not', rule: { op: 'in', field: cfg.series_by, values: [...inTop] } } },
       });
     }
@@ -1728,7 +2087,7 @@ function renderLine(body, rows, cfg) {
     type: asBar ? 'bar' : 'line',
     data: {
       labels: keys.map((k) => bucketLabel(k, cfg.bucket)),
-      datasets: series.map((s) => {
+      datasets: series.map((s, si) => {
         const data = keys.map((k) => (buckets.has(k) ? evalMetric(s.value, buckets.get(k)) : null));
         if ((s.mark || cfg.mark) === 'bar') {
           return { type: 'bar', label: s.label, data, backgroundColor: s.color, borderRadius: 4, maxBarThickness: 36, categoryPercentage: 0.7, barPercentage: 0.9 };
@@ -1740,9 +2099,16 @@ function renderLine(body, rows, cfg) {
           borderColor: s.color,
           backgroundColor: s.color,
           borderWidth: 2,
-          pointRadius: 3,
+          // Shape + dash as well as colour, so lines stay apart for colour-blind readers.
+          pointStyle: ['circle', 'rect', 'triangle', 'rectRot', 'crossRot', 'star'][si % 6],
+          borderDash: si >= 2 ? [6, 4] : undefined,
+          pointRadius: si ? 4 : 3,
+          segment: partialLast ? {
+            borderDash: (c) => (c.p1DataIndex === keys.length - 1 ? [2, 4] : si >= 2 ? [6, 4] : undefined),
+            borderColor: (c) => (c.p1DataIndex === keys.length - 1 ? withAlpha(s.color, 0.45) : undefined),
+          } : undefined,
           pointHoverRadius: 6,
-          pointBorderColor: '#fff',
+          pointBorderColor: cssv('--surface'),
           pointBorderWidth: 1.5,
           tension: 0.25,
         };
@@ -1753,7 +2119,7 @@ function renderLine(body, rows, cfg) {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { display: cfg.legend !== false, position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: '#1B2B22' } },
+        legend: { display: cfg.legend !== false, position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: cssv('--ink') } },
         tooltip: {
           callbacks: {
             label: (ctx) => ` ${ctx.dataset.label}: ${fmtValue(ctx.parsed.y, cfg.format)}`,
@@ -1762,8 +2128,8 @@ function renderLine(body, rows, cfg) {
         },
       },
       scales: {
-        x: { stacked: !!cfg.stacked, grid: { display: false }, ticks: { color: '#6b7268' } },
-        y: { stacked: !!cfg.stacked, beginAtZero: asBar || cfg.zero === true, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
+        x: { stacked: !!cfg.stacked, grid: { display: false }, ticks: { color: cssv('--muted') } },
+        y: { stacked: !!cfg.stacked, beginAtZero: asBar || cfg.zero === true, grid: { color: cssv('--chart-grid') }, border: { display: false }, ticks: { color: cssv('--muted'), callback: (v) => fmtAxis(v, cfg.format) } },
       },
     },
   });
@@ -1771,7 +2137,9 @@ function renderLine(body, rows, cfg) {
 }
 
 function renderTable(body, rows, cfg) {
-  const columns = cfg.columns && cfg.columns.length ? cfg.columns : Object.keys(rows[0]).map((field) => ({ field }));
+  // A column empty on every row (e.g. LINE before anyone is notified) is noise: leave it out.
+  const columns = (cfg.columns && cfg.columns.length ? cfg.columns : Object.keys(rows[0]).map((field) => ({ field })))
+    .filter((c) => c.share_of || rows.some((r) => r[c.field] != null && r[c.field] !== ''));
   // A column that is another column's share of its total (each customer's
   // percent of sales) — a total the row layer, which sees one row, cannot know.
   columns.filter((c) => c.share_of).forEach((c) => {
@@ -1780,6 +2148,17 @@ function renderTable(body, rows, cfg) {
   });
   let sort = cfg.sort_by ? { ...cfg.sort_by } : null; // { field, dir }
   const limit = cfg.top_n || 200;
+  // Severity columns (สูง / กลาง / ต่ำ) read as coloured pills, so the eye finds what needs action first.
+  const SEV = { 'วิกฤต': 'crit', critical: 'crit', 'สูง': 'high', 'กลาง': 'mid', 'ต่ำ': 'low', high: 'high', medium: 'mid', low: 'low', 'ใหม่': 'new' };
+  const pillCols = new Set(columns.filter((c) => {
+    const vals = rows.map((r) => r[c.field]).filter((v) => v != null && v !== '');
+    if (!vals.length || !vals.every((v) => typeof v === 'string' && SEV[v.trim().toLowerCase()] || SEV[v])) return false;
+    // Severity always shows as a pill; a status that is the same on every row ("ใหม่") is noise.
+    return vals.some((v) => SEV[String(v).trim().toLowerCase()] !== 'new') || new Set(vals).size > 1;
+  }).map((c) => c.field));
+  // Long lists open short: the first rows are what to act on today; the rest is one click away.
+  const PREVIEW = cfg.preview_rows || 8;
+  let expanded = rows.length <= PREVIEW + 2;
 
   const tools = document.createElement('div');
   tools.className = 'table-tools';
@@ -1789,6 +2168,8 @@ function renderTable(body, rows, cfg) {
   scroller.className = 'table-scroll';
   body.appendChild(tools);
   body.appendChild(scroller);
+
+  const numCount = columns.filter((c) => rows.length && typeof rows[0][c.field] === 'number').length;
 
   function draw() {
     let data = [...rows];
@@ -1800,7 +2181,7 @@ function renderTable(body, rows, cfg) {
         return sort.dir === 'asc' ? cmp : -cmp;
       });
     }
-    const shown = data.slice(0, limit);
+    const shown = data.slice(0, expanded ? limit : PREVIEW);
     tools.querySelector('.widget-foot').textContent =
       data.length > limit ? `แสดง ${limit.toLocaleString('th-TH')} จาก ${data.length.toLocaleString('th-TH')} แถว (Export ได้ครบ)` : `${data.length.toLocaleString('th-TH')} แถว`;
     const head = columns
@@ -1816,13 +2197,19 @@ function renderTable(body, rows, cfg) {
             .map((c) => {
               const v = r[c.field];
               return typeof v === 'number'
-                ? `<td class="num">${esc(c.format ? fmtValue(v, c.format) : v.toLocaleString('th-TH', { maximumFractionDigits: 2 }))}</td>`
-                : `<td>${esc(v)}</td>`;
+                ? `<td class="num" data-label="${esc(c.label || c.field.replace(/_/g, ' '))}">${esc(c.format ? fmtValue(v, c.format) : v.toLocaleString('th-TH', { maximumFractionDigits: 2 }))}</td>`
+                : pillCols.has(c.field) && v != null && v !== ''
+                  ? `<td><span class="sev-pill sev-${SEV[String(v).trim().toLowerCase()] || SEV[v]}">${esc(v)}</span></td>`
+                  : `<td>${esc(v)}</td>`;
             })
             .join('')}</tr>`
       )
       .join('');
-    scroller.innerHTML = `<table class="report-table"><thead><tr>${head}</tr></thead><tbody>${bodyHtml}</tbody></table>`;
+    const more = Math.min(data.length, limit) - PREVIEW;
+    scroller.innerHTML = `<table class="report-table${numCount >= 3 ? ' nums-many' : ''}"><thead><tr>${head}</tr></thead><tbody>${bodyHtml}</tbody></table>${
+      more > 2 ? `<button type="button" class="table-more">${expanded ? 'ย่อเหลือ ' + PREVIEW + ' แถวแรก' : 'แสดงอีก ' + more.toLocaleString('th-TH') + ' แถว'}</button>` : ''}`;
+    const mb = scroller.querySelector('.table-more');
+    if (mb) mb.addEventListener('click', () => { expanded = !expanded; draw(); if (!expanded) scroller.scrollIntoView({ block: 'nearest' }); });
     scroller.querySelectorAll('th').forEach((th) => {
       const toggle = () => {
         const f = th.dataset.field;
@@ -1876,7 +2263,7 @@ function sensitivityRows(list, x, shareKey, labelFn) {
       const y = (item[shareKey] / 100) * x;
       return `<div class="bar-row" title="${esc(labelFn(item))}: ${fmtValue(y, 'pct_signed')}">
         <span class="bar-name">${esc(labelFn(item))}</span>
-        <span class="bar-track"><span class="bar-fill" style="width:${Math.max(2, (item[shareKey] / maxShare) * 100)}%;background:var(--brass)"></span></span>
+        <span class="bar-track"><span class="bar-fill" style="width:${Math.max(2, (item[shareKey] / maxShare) * 100)}%;background:var(--amber)"></span></span>
         <span class="bar-value">${esc(fmtValue(y, 'pct_signed'))}</span>
       </div>`;
     })
@@ -1947,10 +2334,10 @@ function renderMenuBreakdown(body, rows, cfg) {
 // A single-hue sequential ramp, light to dark. Used wherever slices or tiles
 // encode magnitude rather than identity, so the reader sees "more" as "darker"
 // instead of having to decode a rainbow.
-const SEQ_RAMP = ['#184f95', '#2a78d6', '#5598e7', '#9ec5f4', '#cde2fb'];
+const SEQ_RAMP = tokenList(['--q1', '--q2', '--q3', '--q4', '--q5']);
 // Distinct in hue AND lightness, so neighbouring slices separate in greyscale too.
 // No chili: in this app red means "needs action" (overdue, awaiting invoice).
-const CAT_COLORS = ['#2F6FB0', '#A9812F', '#2F8F4E', '#1B2B22', '#8FB4DC', '#C9A15A', '#7A6A9E'];
+const CAT_COLORS = tokenList(['--s1', '--s2', '--s3', '--s4', '--s5', '--s6', '--s7']);
 const seqColor = (i, n) => SEQ_RAMP[Math.min(SEQ_RAMP.length - 1, Math.floor((i / Math.max(1, n - 1)) * (SEQ_RAMP.length - 1)))];
 
 // Shared shaping for the renderers that rank grouped rows.
@@ -1992,7 +2379,7 @@ function renderDonut(body, rows, cfg) {
   // distinct shades past five and painted neighbours the same blue. The tail
   // slice is always neutral so it never reads as a category of its own.
   const colors = items.map((it, i) =>
-    (cfg.colors && cfg.colors[it.name]) || (it.other ? '#D6CFBC' : CAT_COLORS[i % CAT_COLORS.length])
+    (cfg.colors && cfg.colors[it.name]) || (it.other ? cssv('--s-other') : CAT_COLORS[i % CAT_COLORS.length])
   );
   I18N.hookCharts();
   const chart = new Chart(wrap.querySelector('canvas'), {
@@ -2106,7 +2493,7 @@ function renderStack(body, rows, cfg) {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: '#1B2B22' } },
+        legend: { position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: cssv('--ink') } },
         tooltip: {
           callbacks: {
             label: (ctx) => ` ${ctx.dataset.label}: ${fmtValue(ctx.parsed.x, cfg.format)}`,
@@ -2115,8 +2502,8 @@ function renderStack(body, rows, cfg) {
         },
       },
       scales: {
-        x: { stacked: true, beginAtZero: true, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
-        y: { stacked: true, grid: { display: false }, ticks: { color: '#1B2B22' } },
+        x: { stacked: true, beginAtZero: true, grid: { color: cssv('--chart-grid') }, border: { display: false }, ticks: { color: cssv('--muted'), callback: (v) => fmtAxis(v, cfg.format) } },
+        y: { stacked: true, grid: { display: false }, ticks: { color: cssv('--ink') } },
       },
     },
   });
@@ -2150,7 +2537,7 @@ function renderPanels(body, byAlias, cfg) {
       const h = document.createElement('p');
       h.className = 'panel-headline';
       h.innerHTML = panel.headline
-        .map((m) => `<span><span class="dot" style="background:${m.color || '#6b7268'}"></span>${esc(m.label)}: <b style="color:${m.color || '#1B2B22'}">${esc(fmtValue(evalMetric(m.value, rows), m.format || panel.format))}</b></span>`)
+        .map((m) => `<span><span class="dot" style="background:${m.color || cssv('--muted')}"></span>${esc(m.label)}: <b style="color:${m.color || cssv('--ink')}">${esc(fmtValue(evalMetric(m.value, rows), m.format || panel.format))}</b></span>`)
         .join('');
       cell.appendChild(h);
     }
@@ -2183,8 +2570,8 @@ function renderPareto(body, rows, cfg) {
     data: {
       labels: items.map((i) => i.name),
       datasets: [
-        { type: 'bar', label: cfg.bar_label || 'มูลค่า', data: items.map((i) => i.value), backgroundColor: '#2a78d6', borderRadius: 3, order: 2 },
-        { type: 'line', label: 'สะสม %', data: cum, yAxisID: 'y2', borderColor: '#A9812F', backgroundColor: '#A9812F', borderWidth: 2, pointRadius: 3, tension: 0.2, order: 1 },
+        { type: 'bar', label: cfg.bar_label || 'มูลค่า', data: items.map((i) => i.value), backgroundColor: cssv('--s1'), borderRadius: 3, order: 2 },
+        { type: 'line', label: 'สะสม %', data: cum, yAxisID: 'y2', borderColor: cssv('--s2'), backgroundColor: cssv('--s2'), borderWidth: 2, pointRadius: 3, tension: 0.2, order: 1 },
       ],
     },
     options: {
@@ -2192,7 +2579,7 @@ function renderPareto(body, rows, cfg) {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: '#1B2B22' } },
+        legend: { position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, color: cssv('--ink') } },
         tooltip: {
           callbacks: {
             label: (ctx) => (ctx.dataset.yAxisID === 'y2' ? ` ${t(`สะสม ${ctx.parsed.y.toFixed(0)}%`)}` : ` ${fmtValue(ctx.parsed.y, cfg.format)}`),
@@ -2200,9 +2587,9 @@ function renderPareto(body, rows, cfg) {
         },
       },
       scales: {
-        x: { grid: { display: false }, ticks: { color: '#6b7268', maxRotation: 50, minRotation: 0, autoSkip: false } },
-        y: { beginAtZero: true, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.format) } },
-        y2: { position: 'right', min: 0, max: 100, grid: { display: false }, border: { display: false }, ticks: { color: '#A9812F', callback: (v) => v + '%' } },
+        x: { grid: { display: false }, ticks: { color: cssv('--muted'), maxRotation: 50, minRotation: 0, autoSkip: false } },
+        y: { beginAtZero: true, grid: { color: cssv('--chart-grid') }, border: { display: false }, ticks: { color: cssv('--muted'), callback: (v) => fmtAxis(v, cfg.format) } },
+        y2: { position: 'right', min: 0, max: 100, grid: { display: false }, border: { display: false }, ticks: { color: cssv('--s2'), callback: (v) => v + '%' } },
       },
     },
   });
@@ -2219,7 +2606,7 @@ const quadrantLines = {
     const { ctx, chartArea, scales } = chart;
     if (!opts || opts.x == null) return;
     ctx.save();
-    ctx.strokeStyle = '#b9b6ab';
+    ctx.strokeStyle = cssv('--line-strong');
     ctx.setLineDash([4, 3]);
     ctx.lineWidth = 1;
     const px = scales.x.getPixelForValue(opts.x);
@@ -2227,7 +2614,7 @@ const quadrantLines = {
     ctx.beginPath(); ctx.moveTo(px, chartArea.top); ctx.lineTo(px, chartArea.bottom); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(chartArea.left, py); ctx.lineTo(chartArea.right, py); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = '#8a877f';
+    ctx.fillStyle = cssv('--muted');
     ctx.font = '600 10px system-ui, sans-serif';
     (opts.labels || []).forEach((t, i) => {
       const lx = [px + 5, chartArea.left + 5, px + 5, chartArea.left + 5][i];
@@ -2269,7 +2656,7 @@ function renderScatter(body, rows, cfg) {
   wrap.innerHTML = '<canvas></canvas>';
   body.appendChild(wrap);
   const colorFor = (p) =>
-    qx == null ? '#2a78d6' : p.x >= qx && p.y >= qy ? '#0ca30c' : p.x < qx && p.y < qy ? '#BE4229' : '#2a78d6';
+    qx == null ? cssv('--s1') : p.x >= qx && p.y >= qy ? cssv('--good') : p.x < qx && p.y < qy ? cssv('--danger') : cssv('--s1');
   I18N.hookCharts();
   const chart = new Chart(wrap.querySelector('canvas'), {
     type: 'scatter',
@@ -2290,8 +2677,8 @@ function renderScatter(body, rows, cfg) {
         },
       },
       scales: {
-        x: { title: { display: !!cfg.x_label, text: cfg.x_label, color: '#6b7268' }, grid: { color: '#f7f5ee' }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.x_format) } },
-        y: { title: { display: !!cfg.y_label, text: cfg.y_label, color: '#6b7268' }, grid: { color: '#f0ece0' }, border: { display: false }, ticks: { color: '#6b7268', callback: (v) => fmtAxis(v, cfg.y_format) } },
+        x: { title: { display: !!cfg.x_label, text: cfg.x_label, color: cssv('--muted') }, grid: { color: cssv('--chart-grid') }, ticks: { color: cssv('--muted'), callback: (v) => fmtAxis(v, cfg.x_format) } },
+        y: { title: { display: !!cfg.y_label, text: cfg.y_label, color: cssv('--muted') }, grid: { color: cssv('--chart-grid') }, border: { display: false }, ticks: { color: cssv('--muted'), callback: (v) => fmtAxis(v, cfg.y_format) } },
       },
     },
     plugins: [quadrantLines],
@@ -2319,9 +2706,9 @@ function renderTreemap(body, rows, cfg) {
     el.className = 'treemap-tile';
     el.style[vertical ? 'height' : 'width'] = `${pctOfParent}%`;
     el.style.background = seqColor(i, items.length);
+    el.style.color = onColor(el.style.background);
     el.title = `${it.name}: ${fmtValue(it.value, cfg.format)} (${share.toFixed(1)}%)`;
     el.innerHTML = `<span class="treemap-name">${esc(it.name)}</span><span class="treemap-val">${esc(fmtValue(it.value, cfg.format))} · ${share.toFixed(0)}%</span>`;
-    if (i >= 3) el.classList.add('on-light');
     return el;
   };
   wrap.appendChild(tile(first, 0, (first.value / total) * 100, false));
@@ -2435,7 +2822,7 @@ function renderHeatmap(body, rows, cfg) {
   const gMin = Math.min(0, ...all), gMax = Math.max(1e-9, ...all);
   const colLabel = (ck) => (cfg.col_date ? bucketLabel(ck, cfg.bucket || 'day') : ck);
   const short = (v) => fmtCompact(v, cfg.format);
-  const shade = (step, list) => `background:${list[step]};color:${step >= 4 ? '#fff' : '#1b2b22'}`;
+  const shade = (step, list) => `background:${list[step]};color:${onColor(list[step])}`;
   // threshold_col: each cell against its column's median (a month across
   // branches); below `threshold` × median is flagged, far below is darker.
   const thr = Number(cfg.threshold) || 0.85;

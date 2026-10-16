@@ -5,6 +5,20 @@
 // (product names, suppliers, branches) is never touched.
 window.I18N_EN = {
   exact: {
+    'มูลค่า PO รวม': 'Total PO value',
+    'มูลค่ารับของ (GRN) รวม': 'Total GRN value',
+    'มูลค่าใบแจ้งหนี้รวม': 'Total Invoice value',
+    'รับของเทียบ PO': 'GRN vs PO',
+    'ใบแจ้งหนี้เทียบรับของ': 'Invoice vs GRN',
+    'ต้นทุนสูตรรวม': 'Total recipe cost',
+    'จำนวนเมนู': 'Menus',
+    'วัตถุดิบที่ใช้ (รายการ)': 'Distinct ingredients',
+    'วัตถุดิบเฉลี่ยต่อเมนู': 'Avg ingredients / menu',
+    'ยอดขายรวม': 'Total sales',
+    'ต้นทุนขาย (COGS) รวม': 'Total COGS',
+    'กำไรขั้นต้น': 'Gross profit',
+    'อัตรากำไรขั้นต้น': 'Gross margin',
+    'กำลังโหลด': 'Loading',
     // ---------- left menu, settings tabs, Widget library ----------
     'เมนู': 'Menu',
     'เมนูหลัก': 'Main menu',
@@ -139,7 +153,7 @@ window.I18N_EN = {
     'บริษัทนี้ยังไม่มี dashboard — สร้างได้ใน Admin Console': 'This company has no dashboards yet — create one in the Admin Console',
     'ยังไม่มี dashboard ที่คุณเข้าถึงได้ กรุณาติดต่อผู้ดูแลระบบ': 'You do not have access to any dashboard yet. Please contact your administrator',
     'ยังไม่ได้ตั้งค่า FMH API Key ของบริษัทนี้ — ตั้งค่าได้ใน Admin Console': 'This company has no FMH API key yet — set it in the Admin Console',
-    'ยังไม่ได้ตั้งค่า FMH API Key — กดปุ่ม ⚙️ มุมขวาบนเพื่อใส่ Key': 'No FMH API key yet — click ⚙️ at the top right to add it',
+    'ยังไม่ได้ตั้งค่า FMH API Key — กดปุ่ม ตั้งค่า มุมขวาบนเพื่อใส่ Key': 'No FMH API key yet — click Settings at the top right to add it',
     'ระบบยังไม่ได้เชื่อมข้อมูล FMH — กรุณาติดต่อผู้ดูแลระบบของบริษัท': 'FMH data is not connected yet — please contact your company administrator',
     'dashboard นี้ยังไม่มี widget': 'This dashboard has no widgets yet',
     'ช่วงวันที่': 'Date range',
@@ -154,7 +168,7 @@ window.I18N_EN = {
     'ยังไม่เคย sync ข้อมูล': 'Not synced yet',
     'หรือกด "ใช้ข้อมูลที่เก็บไว้"': 'or click "Use saved data"',
     'กำลัง refresh...': 'Refreshing...',
-    'Refresh ด่วน': 'Refresh now',
+    'ดึงข้อมูลใหม่': 'Refresh now',
     'ใช้ไป': 'Used',
     'ยังไม่มีข้อมูล': 'No data yet',
     'ยังไม่มีข้อมูลของรายงานที่ widget นี้ต้องใช้': 'The report this widget needs has no data yet',
@@ -449,7 +463,7 @@ window.I18N_EN = {
     'ไม่พบ dashboard นี้': 'Dashboard not found',
     'ไม่รู้จักการจัดกลุ่มนี้': 'Unknown grouping',
     'dashboard นี้ไม่ได้ใช้รายงานนี้': 'This dashboard does not use this report',
-    'ยังไม่มีข้อมูล — ระบบจะ sync ให้ตอนตี 1 หรือกด Refresh ด่วนได้เลย': 'No data yet — it syncs at 1am, or click Refresh now',
+    'ยังไม่มีข้อมูล — ระบบจะ sync ให้ตอนตี 1 หรือกด ดึงข้อมูลใหม่ได้เลย': 'No data yet — it syncs at 1am, or click Refresh now',
     'ยังไม่ได้ตั้งค่า FMH API Key ของบริษัทนี้': 'This company has no FMH API key yet',
     'มี dashboard ที่ไม่ได้เป็นของบริษัทนี้': 'Some dashboards do not belong to this company',
     'จำนวนเงินต้องมากกว่า 0': 'The amount must be more than 0',
@@ -1081,6 +1095,9 @@ window.I18N_EN = {
 
   // {0}, {1}... match any text and are carried across.
   patterns: [
+    ['แสดงอีก {0} แถว', 'Show {0} more rows'],
+    ['ย่อเหลือ {0} แถวแรก', 'Show first {0} rows only'],
+    ['ช่วงสุดท้าย (เส้นประ) ยังไม่ครบ{0} ตัวเลขยังขึ้นได้อีก', 'The last period (dashed) is not complete yet; it can still rise'],
     ['เหลือ {0} คำถามวันนี้ · AI อาจผิดพลาดได้ ตรวจกับตัวเลขบนกราฟเสมอ', '{0} questions left today · AI can be wrong; check against the charts'],
     ['พร้อมแสดง {0} widget', '{0} widgets ready'],
     ['ข้าม {0} widget: {1}', 'Skips {0}: {1}'],

@@ -164,7 +164,7 @@ const libCatRank = (c) => (typeof catRank === 'function' ? catRank(c) : 0);
 
 // Small drawing of the chart type, so cards can be told apart at a glance.
 function libThumb(type) {
-  const c = 'var(--chili)', b = 'var(--series-blue)', g = 'var(--brass)', m = '#cfc6ad';
+  const c = 'var(--chili)', b = 'var(--series-blue)', g = 'var(--brass)', m = 'var(--line-strong)';
   const bars = (ws, col) => ws.map((w, i) => `<rect x="0" y="${4 + i * 21}" width="${w}" height="12" rx="3" fill="${col}" opacity="${1 - i * 0.17}"/>`).join('');
   const svg = {
     kpi: `<g fill="${m}" opacity=".5"><rect x="0" y="10" width="64" height="66" rx="8"/><rect x="78" y="10" width="64" height="66" rx="8"/><rect x="156" y="10" width="64" height="66" rx="8"/></g><g fill="var(--ink)"><rect x="10" y="40" width="40" height="10" rx="2"/><rect x="88" y="40" width="34" height="10" rx="2"/><rect x="166" y="40" width="44" height="10" rx="2"/></g>`,

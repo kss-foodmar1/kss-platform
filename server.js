@@ -241,8 +241,14 @@ async function rebuildDemoOnBoot() {
   }
 }
 
+// Demo companies: rebuild every night (00:15) whatever FMH_AUTO_SYNC says — generated data must
+// follow the calendar or the demo looks stale (yesterday's "today", PO ages that stop growing).
+cron.schedule('15 0 * * *', () => rebuildDemoOnBoot(), { timezone: 'Asia/Bangkok' });
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`KSS Platform listening on port ${PORT}`);
-  rebuildDemoOnBoot().then(syncMissingOnBoot);
+  rebuildDemoOnBoot()
+    .then(() => require('./lib/fmhArchive').captureAllCached().then((n) => n && console.log(`History archive: filed ${n} day(s) from existing caches`)).catch((e) => console.error('Archive boot capture failed:', e.message)))
+    .then(syncMissingOnBoot);
 });
