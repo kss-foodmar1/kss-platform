@@ -315,6 +315,15 @@ async function upgradeAiFeedback() {
   }
 }
 
+async function upgradeSupportKinds() {
+  // "อยากเห็นข้อมูลเพิ่ม" (wish) and "ความเห็น" (feedback) joined the support kinds.
+  const ci = await columnInfo('support_requests', 'kind');
+  if (ci && !/'wish'/.test(ci.COLUMN_TYPE)) {
+    await pool.query(`ALTER TABLE support_requests MODIFY kind ENUM('data','connect','howto','billing','other','wish','feedback') NOT NULL DEFAULT 'other'`);
+    console.log('  support_requests: added kinds wish, feedback');
+  }
+}
+
 async function upgradeLineQuota() {
   // LINE counts a group push once per member, against the OA's monthly quota: track what we used.
   if (!(await columnInfo('company_line', 'quota_used'))) {
@@ -399,6 +408,7 @@ async function main() {
   await upgradeHomeBranch();
   await upgradeLineQuota();
   await upgradeLineSummary();
+  await upgradeSupportKinds();
   // First run with the saved-data fallback: every cache that has rows today
   // becomes the "last good" copy, so the fallback works before the next sync.
   const [bf] = await pool.query(

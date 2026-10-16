@@ -667,6 +667,7 @@ async function saveProfile(companyId, raw) {
   if (!p.setup && !p.role && !p.goals.length) return;
   const [[before]] = await pool.query(`SELECT data_source, onboarding_json FROM companies WHERE id = ?`, [companyId]);
   await pool.query(`UPDATE companies SET onboarding_json = ? WHERE id = ?`, [JSON.stringify(p), companyId]);
+  require('../lib/fmhCache').forgetShape(companyId);
   // A sample is shaped by the answers (lib/demoData.js shapeRows): rebuild it if the shape changed.
   let old = null;
   try { old = before && before.onboarding_json ? JSON.parse(before.onboarding_json) : null; } catch (e) { /* none */ }

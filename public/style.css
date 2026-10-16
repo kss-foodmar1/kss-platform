@@ -1450,3 +1450,17 @@ body.arranging-on .ai-fab { display: none; }
   .range-control input { min-width: 0; flex: 0 0 auto; }
   .insight-card.loading .ins-skel { height: 150px; }
 }
+
+/* ---- data wishes: "is there already a widget for this?" inside the support form ---- */
+.sup-suggest:empty { display: none; }
+.sup-suggest { margin: 10px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+.sup-sug-h { margin: 0 0 6px; font-size: 13.5px; }
+.sup-sug { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.sup-sug li { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sup-sug li > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13.5px; }
+.sup-sug li .muted { font-size: 12.5px; }
+.sup-sug-f { margin: 8px 0 0; font-size: 12.5px; }
+.ins-ask { margin: 0; font-size: 13.5px; color: var(--ink-2); }
+.ins-ask .link-btn { margin: 0; color: var(--ink); font-weight: 700; font-size: 13.5px; text-decoration: underline; text-underline-offset: 3px; min-height: 32px; }
+.ai-go.primary-go { font-weight: 700; }
+@media (max-width: 700px) { .dash-wish { order: 9; } }

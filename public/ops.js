@@ -13,7 +13,15 @@ const OPS_KIND = {
   connect: 'เชื่อมต่อข้อมูล',
   howto: 'วิธีใช้งาน',
   billing: 'แพ็กเกจ/ชำระเงิน',
+  wish: 'อยากเห็นข้อมูลเพิ่ม',
+  feedback: 'ความเห็น/ข้อเสนอแนะ',
   other: 'เรื่องอื่น',
+};
+// The form lists what people want first, problems after.
+const OPS_KIND_ORDER = ['wish', 'data', 'connect', 'howto', 'billing', 'feedback', 'other'];
+const OPS_KIND_HINT = {
+  wish: ['อยากเห็นข้อมูลอะไร', 'เช่น อยากเห็นยอดขายแยกตามชั่วโมง หรือต้นทุนต่อจานของแต่ละสาขา'],
+  feedback: ['อยากบอกอะไรเรา', 'เช่น ตรงไหนใช้ยาก ตรงไหนชอบ หรืออยากให้ทำอะไรเพิ่ม'],
 };
 const OPS_STATUS = { open: 'รอทีมงาน', doing: 'กำลังดูแล', done: 'เรียบร้อย' };
 const OPS_STATE = { bad: 'ต้องแก้', warn: 'ควรดู', ok: 'ปกติ', off: 'ยังไม่ได้ตั้ง' };
@@ -134,7 +142,7 @@ function openCompanyTab(companyId, tab) {
 
 // ---------- support cards (KSS inbox and a company's own tab) ----------
 function opsContextChips(ctx) {
-  const labels = { page: 'หน้า', dashboard_name: 'Dashboard', widget_title: 'Widget', date_range: 'ช่วงวันที่', filters: 'ตัวกรอง', error: 'ข้อความที่เห็น' };
+  const labels = { page: 'หน้า', dashboard_name: 'Dashboard', widget_title: 'Widget', date_range: 'ช่วงวันที่', filters: 'ตัวกรอง', error: 'ข้อความที่เห็น', asked_ai: 'ถามแชทว่า', suggested: 'ระบบเสนอ widget' };
   return Object.keys(labels).filter((k) => ctx && ctx[k]).map((k) => `<span class="ops-ctx"><i>${labels[k]}</i> ${esc(ctx[k])}</span>`).join('');
 }
 
@@ -178,10 +186,12 @@ function renderSupportList(container, list, { withCompany, onChange }) {
 
 async function renderSupportInbox(main, view = {}) {
   const status = view.status || '';
+  const kind = view.kind || '';
   main.innerHTML = '<p class="muted">กำลังโหลด...</p>';
   let r;
   try {
-    r = await api(`/api/admin/ops/support${status ? `?status=${status}` : ''}`);
+    const qs = new URLSearchParams({ ...(status ? { status } : {}), ...(kind ? { kind } : {}) }).toString();
+    r = await api(`/api/admin/ops/support${qs ? `?${qs}` : ''}`);
   } catch (err) {
     main.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
     return;
@@ -192,9 +202,14 @@ async function renderSupportInbox(main, view = {}) {
     <div class="settings-tabs" role="tablist">
       ${[['', 'ที่ยังไม่เสร็จ'], ['done', 'เสร็จแล้ว']].map(([k, l]) => `<button type="button" role="tab" class="settings-tab${status === k ? ' on' : ''}" data-st="${k}" aria-selected="${status === k}">${l}</button>`).join('')}
     </div>
+    <div class="range-control sup-kinds" role="group" aria-label="ประเภทเรื่อง">
+      ${[['', 'ทุกเรื่อง'], ['problems', 'ปัญหา'], ['ideas', 'คำขอข้อมูลและความเห็น']].map(([k, l]) => `<button type="button" class="range-chip${kind === k ? ' active' : ''}" data-kind="${k}" aria-pressed="${kind === k}">${l}</button>`).join('')}
+    </div>
+    ${kind === 'ideas' ? '<p class="muted">สิ่งที่ลูกค้าอยากเห็น ระบบแนบคำถามที่ถามแชทและ widget ที่ระบบเสนอไว้ให้ ถ้าเสนอแล้วลูกค้ายังส่งมา แปลว่า widget ที่มีอยู่ยังไม่ตอบโจทย์ ตอบในช่องข้อความถึงลูกค้าว่าทำได้ไหมและเมื่อไหร่</p>' : ''}
     <div class="sup-list"></div>`;
-  main.querySelectorAll('.settings-tab').forEach((b) => b.addEventListener('click', () => renderSupportInbox(main, { status: b.dataset.st })));
-  renderSupportList(main.querySelector('.sup-list'), r.list, { withCompany: true, onChange: () => renderSupportInbox(main, { status }) });
+  main.querySelectorAll('.settings-tab').forEach((b) => b.addEventListener('click', () => renderSupportInbox(main, { status: b.dataset.st, kind })));
+  main.querySelectorAll('[data-kind]').forEach((b) => b.addEventListener('click', () => renderSupportInbox(main, { status, kind: b.dataset.kind })));
+  renderSupportList(main.querySelector('.sup-list'), r.list, { withCompany: true, onChange: () => renderSupportInbox(main, { status, kind }) });
 }
 
 async function renderCompanySupport(container, companyId) {
@@ -262,13 +277,14 @@ function openSupportForm(opts = {}) {
   root.className = 'modal-overlay';
   root.innerHTML = `
     <div class="modal-card ops-form" role="dialog" aria-modal="true" aria-labelledby="sup-title">
-      <h2 id="sup-title">แจ้งทีมงาน</h2>
+      <h2 id="sup-title">${opts.kind === 'wish' ? 'บอกเราว่าอยากเห็นข้อมูลอะไร' : opts.kind === 'feedback' ? 'ส่งความเห็นถึงทีม KSS' : 'แจ้งทีมงาน'}</h2>
       <form novalidate>
         <fieldset class="ops-kinds"><legend class="sr-only">เรื่องอะไร</legend>
-          ${Object.entries(OPS_KIND).map(([k, l]) => `<label class="ops-kind-opt"><input type="radio" name="kind" value="${k}"${k === (opts.kind || 'data') ? ' checked' : ''}><span>${esc(l)}</span></label>`).join('')}
+          ${OPS_KIND_ORDER.map((k) => `<label class="ops-kind-opt"><input type="radio" name="kind" value="${k}"${k === (opts.kind || 'data') ? ' checked' : ''}><span>${esc(OPS_KIND[k])}</span></label>`).join('')}
         </fieldset>
-        <div class="field"><label for="sup-msg">เกิดอะไรขึ้น</label>
-          <textarea id="sup-msg" name="message" rows="4" maxlength="1000" required placeholder="เช่น ยอดซื้อสัปดาห์นี้ไม่ตรงกับที่เห็นใน FMH">${esc(opts.message || '')}</textarea></div>
+        <div class="field"><label for="sup-msg" class="sup-msg-label">${esc((OPS_KIND_HINT[opts.kind] || ['เกิดอะไรขึ้น'])[0])}</label>
+          <textarea id="sup-msg" name="message" rows="4" maxlength="1000" required placeholder="${esc((OPS_KIND_HINT[opts.kind] || [0, 'เช่น ยอดซื้อสัปดาห์นี้ไม่ตรงกับที่เห็นใน FMH'])[1])}">${esc(opts.message || '')}</textarea></div>
+        <div class="sup-suggest" aria-live="polite"></div>
         <p class="ops-attach">อย่าใส่รหัสผ่าน, API key หรือเลขบัตรในข้อความ ทีมงานไม่ต้องใช้ในการช่วยคุณ</p>
         ${opsContextChips(ctx) ? `<p class="ops-attach"><b>ระบบแนบให้อัตโนมัติ</b></p><div class="ops-ctxs">${opsContextChips(ctx)}</div>` : ''}
         <div class="sup-msg-out" role="alert"></div>
@@ -289,6 +305,30 @@ function openSupportForm(opts = {}) {
   root.addEventListener('click', (e) => { if (e.target === root || e.target.closest('[data-close]')) close(); });
   const form = root.querySelector('form');
   form.message.focus();
+  // A data wish: is there already a widget for it? Looked up in the browser as they type.
+  const sugBox = root.querySelector('.sup-suggest');
+  let sugT = null;
+  let suggested = [];
+  const lookUp = async () => {
+    if (form.kind.value !== 'wish') { sugBox.innerHTML = ''; suggested = []; return; }
+    const found = typeof fbSuggest === 'function' ? await fbSuggest(form.message.value) : [];
+    suggested = found.map((x) => x.t.name);
+    const canAdd = isCompanyAdmin();
+    sugBox.innerHTML = found.length
+      ? `<p class="sup-sug-h"><b>อาจมีอยู่แล้ว</b> ${canAdd ? 'ลองดู widget เหล่านี้ก่อน ถ้าใช่ เพิ่มลง dashboard ได้เลย' : 'ลองดู widget เหล่านี้ก่อน ให้แอดมินของร้านเพิ่มให้ได้'}</p>
+         <ul class="sup-sug">${found.map((x, i) => `<li><span><b>${esc(x.t.name)}</b><span class="muted">${esc(fbWidgetLine(x.t))}</span></span>${canAdd ? `<button type="button" class="btn small ghost" data-sug="${i}">ดูใน คลัง Widget</button>` : ''}</li>`).join('')}</ul>
+         <p class="muted sup-sug-f">ถ้าไม่ใช่สิ่งที่อยากเห็น ส่งให้ทีมงานได้เลย</p>`
+      : '';
+    sugBox.querySelectorAll('[data-sug]').forEach((b) => b.addEventListener('click', () => { const t = found[Number(b.dataset.sug)].t; close(); fbOpenWidget(t); }));
+  };
+  const relabel = () => {
+    const h = OPS_KIND_HINT[form.kind.value] || ['เกิดอะไรขึ้น', 'เช่น ยอดซื้อสัปดาห์นี้ไม่ตรงกับที่เห็นใน FMH'];
+    root.querySelector('.sup-msg-label').textContent = h[0];
+    form.message.placeholder = h[1];
+  };
+  form.message.addEventListener('input', () => { clearTimeout(sugT); sugT = setTimeout(lookUp, 300); });
+  form.querySelectorAll('input[name=kind]').forEach((r) => r.addEventListener('change', () => { relabel(); lookUp(); }));
+  lookUp();
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const out = root.querySelector('.sup-msg-out');
@@ -296,8 +336,10 @@ function openSupportForm(opts = {}) {
     if (form.message.value.trim().length < 5) { out.innerHTML = '<div class="error-msg">บอกหน่อยว่าเกิดอะไรขึ้น (อย่างน้อย 5 ตัวอักษร)</div>'; form.message.focus(); return; }
     btn.disabled = true;
     try {
-      await api('/api/support', { method: 'POST', body: JSON.stringify({ kind: form.kind.value, message: form.message.value, context: ctx }) });
-      root.querySelector('.modal-card').innerHTML = `<h2 id="sup-title">ส่งให้ทีมงานแล้ว</h2><p>ทีมงาน KSS จะดูเรื่องนี้ และตอบกลับที่หน้า ตั้งค่า › สถานะระบบ</p><div class="row-actions"><button type="button" class="btn primary" data-close>ปิด</button></div>`;
+      const sent = { ...ctx, ...(suggested.length ? { suggested: suggested.join(' · ') } : {}) };
+      await api('/api/support', { method: 'POST', body: JSON.stringify({ kind: form.kind.value, message: form.message.value, context: sent }) });
+      const wish = ['wish', 'feedback'].includes(form.kind.value);
+      root.querySelector('.modal-card').innerHTML = `<h2 id="sup-title">${wish ? 'ขอบคุณที่บอกเรา' : 'ส่งให้ทีมงานแล้ว'}</h2><p>${wish ? 'ทีม KSS อ่านทุกเรื่อง และจะตอบว่าทำได้เมื่อไหร่ ดูคำตอบได้ที่ ตั้งค่า › สถานะระบบ' : 'ทีมงาน KSS จะดูเรื่องนี้ และตอบกลับที่หน้า ตั้งค่า › สถานะระบบ'}</p><div class="row-actions"><button type="button" class="btn primary" data-close>ปิด</button></div>`;
       root.querySelector('[data-close]').focus();
       if (opts.onSent) opts.onSent();
     } catch (err) {

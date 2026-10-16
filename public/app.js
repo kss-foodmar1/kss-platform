@@ -681,10 +681,11 @@ function renderSideNav() {
     ${coName ? `<div class="side-company"><span class="side-co-mark" aria-hidden="true">${esc(coName.trim().charAt(0) || 'K')}</span><span class="side-co-text"><b>${esc(coName)}</b>${state.user.company_code ? `<span>${esc(state.user.company_code)}</span>` : ''}</span></div>` : ''}
     <div class="side-group">${link('data-go="back"', 'back', 'กลับไปดู Dashboard', false)}</div>
     <div class="side-group"><div class="side-title">ตั้งค่า</div>${settings.map(([k, ic, label]) => link(`data-settings="${k}"`, ic, label, cur.kind === 'settings' && cur.tab === k)).join('')}</div>
-    <div class="side-group">${link('data-go="library"', 'library', 'คลัง Widget', cur.kind === 'library')}${link('data-go="support"', 'help', 'แจ้งทีมงาน', false)}</div>`;
+    <div class="side-group">${link('data-go="library"', 'library', 'คลัง Widget', cur.kind === 'library')}${link('data-go="support"', 'help', 'แจ้งทีมงาน', false)}${link('data-go="wish"', 'library', 'ขอข้อมูลเพิ่ม / ความเห็น', false)}</div>`;
   nav.querySelector('[data-go="back"]').addEventListener('click', () => goDashboard(state.activeDashboardId || (state.dashboards[0] || {}).id));
   nav.querySelector('[data-go="library"]').addEventListener('click', () => openLibrary());
   nav.querySelector('[data-go="support"]').addEventListener('click', () => openSupportForm());
+  nav.querySelector('[data-go="wish"]').addEventListener('click', () => openSupportForm({ kind: 'wish' }));
   nav.querySelectorAll('[data-settings]').forEach((b) => b.addEventListener('click', () => openCompanySettings(b.dataset.settings)));
 }
 
@@ -1287,6 +1288,7 @@ class DashboardView {
         ${this.dashboard.description ? `<p class="dash-desc">${esc(this.dashboard.description)}</p>` : ''}
       </div>
       <div class="dash-controls">
+        ${!this.preview && !isSuper() && state.user && state.user.company_id ? '<button type="button" class="btn small ghost dash-wish" title="บอกทีม KSS ว่าอยากเห็นข้อมูลอะไรเพิ่ม">ขอข้อมูลเพิ่ม</button>' : ''}
         ${
           !this.preview && (isSuper() || isCompanyAdmin())
             ? `<div class="dash-actions">
@@ -1311,6 +1313,8 @@ class DashboardView {
       </div>`;
     this.wrap.appendChild(header);
     if (!this.preview) bindDashSwitcher(header.querySelector('.dash-switch-wrap'), this.dashboard.id);
+    const wishBtn = header.querySelector('.dash-wish');
+    if (wishBtn) wishBtn.addEventListener('click', () => openSupportForm({ kind: 'wish' }));
     const editBtn = header.querySelector('.dash-edit');
     if (editBtn) {
       editBtn.addEventListener('click', () => this.arrange());
@@ -2337,7 +2341,10 @@ class DashboardView {
           ${f.widget
             ? `<button type="button" class="btn small ghost ins-go" data-i="${i}">ดูรายละเอียด</button>`
             : f.how ? `<details class="ins-how"><summary>ตัวเลขนี้คิดอย่างไร</summary><p>${esc(f.how)}</p></details>` : ''}
-        </article>`).join('')}</div>` : ''}`;
+        </article>`).join('')}</div>
+      ${!isSuper() && state.user && state.user.company_id ? '<p class="ins-ask">อยากเห็นข้อมูลอื่นที่ยังไม่มีในหน้านี้? <button type="button" class="link-btn ins-wish">บอกเรา</button></p>' : ''}` : ''}`;
+    const wishLink = el.querySelector('.ins-wish');
+    if (wishLink) wishLink.addEventListener('click', () => openSupportForm({ kind: 'wish' }));
     const close = el.querySelector('.ins-close');
     if (close) close.addEventListener('click', () => {
       try { sessionStorage.removeItem(`kss_welcome_${this.dashboard.id}`); } catch (e) { /* none */ }

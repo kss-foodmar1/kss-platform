@@ -499,7 +499,7 @@ CREATE TABLE IF NOT EXISTS support_requests (
   id INT AUTO_INCREMENT PRIMARY KEY,
   company_id INT NOT NULL,
   user_id INT NULL,
-  kind ENUM('data','connect','howto','billing','other') NOT NULL DEFAULT 'other',
+  kind ENUM('data','connect','howto','billing','other','wish','feedback') NOT NULL DEFAULT 'other',
   message VARCHAR(1000) NOT NULL,
   context_json TEXT NULL,
   status ENUM('open','doing','done') NOT NULL DEFAULT 'open',

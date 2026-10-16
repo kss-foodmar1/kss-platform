@@ -2,6 +2,7 @@
 //
 //   customer  POST /api/support            { kind, message, context }   report a problem from the page
 //             GET  /api/support/mine       own company's requests and where each stands
+//             GET  /api/support/widgets    widget names, for "already exists?" before a data wish
 //             GET  /api/health             Settings › สถานะระบบ (company admin)
 //   KSS       GET  /api/admin/ops/attention   companies that need looking after, worst first
 //             GET  /api/admin/ops/support      ?status=open|doing|done&company_id=
@@ -12,7 +13,8 @@ const { requireAuth, requireSuperadmin, requireCompanyAdmin } = require('../midd
 const { wrap, resolveCompanyId } = require('../lib/access');
 const { healthFor, issueScore, RANK } = require('../lib/health');
 
-const KINDS = ['data', 'connect', 'howto', 'billing', 'other'];
+// wish: data the customer wants to see that no widget shows yet. feedback: anything else they think.
+const KINDS = ['data', 'connect', 'howto', 'billing', 'other', 'wish', 'feedback'];
 const STATUSES = ['open', 'doing', 'done'];
 const DAILY_LIMIT = 8; // per user, so one stuck screen cannot flood the queue
 
@@ -36,7 +38,7 @@ async function purgeOld() {
 function cleanContext(raw) {
   const c = raw && typeof raw === 'object' ? raw : {};
   const out = {};
-  for (const [k, n] of [['page', 80], ['dashboard_name', 120], ['widget_title', 120], ['filters', 300], ['error', 300], ['date_range', 60]]) {
+  for (const [k, n] of [['page', 80], ['dashboard_name', 120], ['widget_title', 120], ['filters', 300], ['error', 300], ['date_range', 60], ['asked_ai', 300], ['suggested', 300]]) {
     if (c[k]) out[k] = clean(c[k], n);
   }
   if (Number.isInteger(Number(c.dashboard_id)) && Number(c.dashboard_id) > 0) out.dashboard_id = Number(c.dashboard_id);
@@ -77,6 +79,19 @@ customerRouter.get(
          FROM support_requests r LEFT JOIN users u ON u.id = r.user_id
         WHERE r.company_id = ? ${own ? '' : 'AND r.user_id = ?'} ORDER BY r.created_at DESC LIMIT 20`,
       own ? [req.user.company_id] : [req.user.company_id, req.user.id]
+    );
+    res.json({ list: rows });
+  })
+);
+
+// The widget catalogue in brief, for "is there already a widget for this?" before a
+// data wish becomes a ticket (public/feedback.js scores it in the browser). Names and
+// descriptions only; anyone signed in may read it.
+customerRouter.get(
+  '/widgets',
+  wrap(async (req, res) => {
+    const [rows] = await pool.query(
+      `SELECT id, template_key, name, description, category FROM widget_templates WHERE active = TRUE ORDER BY sort_order, id`
     );
     res.json({ list: rows });
   })
@@ -138,6 +153,9 @@ adminRouter.get(
     const where = [], args = [];
     if (status) { where.push('r.status = ?'); args.push(status); } else { where.push(`r.status <> 'done'`); }
     if (cid) { where.push('r.company_id = ?'); args.push(cid); }
+    // ?kind=ideas: data wishes and feedback only (what customers want next), apart from problems
+    if (req.query.kind === 'ideas') where.push(`r.kind IN ('wish','feedback')`);
+    else if (req.query.kind === 'problems') where.push(`r.kind NOT IN ('wish','feedback')`);
     const [rows] = await pool.query(
       `SELECT r.id, r.company_id, c.name AS company, r.kind, r.message, r.context_json, r.status, r.note, r.created_at, r.handled_at,
               u.display_name AS who, u.email AS who_email, h.display_name AS handler

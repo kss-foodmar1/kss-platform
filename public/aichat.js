@@ -8,7 +8,7 @@
 const aiChat = { dashboardId: null, status: null, history: new Map(), busy: false, taught: null };
 
 const AI_SUGGEST = ['สรุปหน้านี้ให้หน่อย', 'มีอะไรผิดปกติบ้าง', 'ทำไมข้อมูลว่าง', 'เพิ่ม widget ยังไง'];
-const AI_SOURCE = { data: 'คำนวณจากตัวเลขบนหน้านี้', faq: 'คู่มือการใช้งาน', ai: 'ตอบโดย AI (Google Gemini) · อาจคลาดเคลื่อน', none: '' };
+const AI_SOURCE = { data: 'คำนวณจากตัวเลขบนหน้านี้', faq: 'คู่มือการใช้งาน', find: 'ค้นจากคลัง Widget', ai: 'ตอบโดย AI (Google Gemini) · อาจคลาดเคลื่อน', none: '' };
 const AI_REASONS = ['ไม่ตรงเรื่อง', 'ตัวเลขไม่ถูก', 'ไม่ครบ', 'อ่านไม่เข้าใจ'];
 // A question about the data / Dashboard (worth a "miss" and a pointer to the
 // widget library) as opposed to small talk or general knowledge.
@@ -153,8 +153,12 @@ function aiMsgHtml(m, i) {
   const meta = src || rate ? `<div class="ai-meta">${m.rating === 'down' && !m.rated ? '' : src ? `<span class="ai-src ${m.source}">${esc(src)}</span>` : ''}${rate}</div>` : '';
   const aiTag = m.source === 'ai' ? '<div class="ai-tag"><svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg>AI สรุปให้ · ตรวจกับตัวเลขบนกราฟ</div>' : '';
   // Nobody could answer: let the person hand the question to KSS in one tap.
-  const team = m.source === 'none' && m.q && state.user && state.user.company_id && state.user.role !== 'kss_superadmin'
-    ? `<button type="button" class="ai-go" data-support="${i}">แจ้งทีมงานเรื่องนี้ →</button>` : '';
+  const customer = m.q && state.user && state.user.company_id && state.user.role !== 'kss_superadmin';
+  const team = customer && (m.source === 'none' || m.source === 'find')
+    ? (m.wish || m.source === 'find'
+      ? `<button type="button" class="ai-go primary-go" data-wish="${i}">ขอให้ทีม KSS ทำข้อมูลนี้ →</button>`
+      : `<button type="button" class="ai-go" data-support="${i}">แจ้งทีมงานเรื่องนี้ →</button><button type="button" class="ai-go" data-wish="${i}">ขอให้มีข้อมูลนี้ →</button>`)
+    : '';
   return `<div class="ai-msg model${m.source === 'ai' ? ' by-ai' : ''}">${aiTag}${aiFormat(m.text)}${go || team ? `<div class="ai-gos">${go}${team}</div>` : ''}${meta}</div>`;
 }
 
@@ -180,6 +184,7 @@ function aiRender() {
 function aiGo(act) {
   aiToggle(false);
   if (act === 'library' && typeof openLibrary === 'function') openLibrary();
+  else if (act.startsWith('widget:') && typeof openLibrary === 'function') openLibrary({ dashboardId: aiChat.dashboardId, templateId: Number(act.slice(7)) });
   else if (act.startsWith('settings:') && typeof openCompanySettings === 'function') openCompanySettings(act.slice(9));
 }
 
@@ -192,6 +197,13 @@ function aiLogClick(e) {
   const msgs = aiChat.history.get(aiChat.dashboardId) || [];
   const g = e.target.closest('[data-go]');
   if (g) return aiGo(g.dataset.go);
+  // "ask KSS to build this": a data wish with the question attached
+  const wish = e.target.closest('[data-wish]');
+  if (wish) {
+    const m = msgs[Number(wish.dataset.wish)];
+    aiToggle(false);
+    return openSupportForm({ kind: 'wish', message: m ? m.q : '', context: { asked_ai: m ? m.q : '' } });
+  }
   const sup = e.target.closest('[data-support]');
   if (sup) {
     const m = msgs[Number(sup.dataset.support)];
@@ -224,6 +236,8 @@ async function aiSend(question) {
   const history = msgs.filter((m) => !m.error && m.source !== 'none').map((m) => ({ role: m.role, text: m.text }));
   msgs.push({ role: 'user', text: question });
   // 1. FAQ + the page, in the browser.
+  // "อยากเห็น X": look for a widget that already shows it before anything else.
+  if (typeof FB_WISH !== 'undefined' && FB_WISH.test(question)) return aiFindWidget(question, msgs);
   let local = null;
   try { local = helpAnswer(question, aiPageParts(), aiCanSettings(), aiChat.taught); } catch (e) { local = null; }
   if (local) {
@@ -258,6 +272,25 @@ async function aiSend(question) {
     aiChat.busy = false;
     if (aiChat.dashboardId === id && !el('ai-panel').hidden) aiRender();
   }
+}
+
+// A data wish: suggest widgets that may already answer it; if none, offer to ask KSS.
+async function aiFindWidget(question, msgs) {
+  aiChat.busy = true;
+  aiRender();
+  let found = [];
+  try { found = await fbSuggest(question); } catch (e) { found = []; }
+  aiChat.busy = false;
+  const canAdd = aiCanSettings();
+  msgs.push(found.length
+    ? {
+        role: 'model', source: 'find', q: question, wish: true,
+        text: `มี widget ที่น่าจะตอบเรื่องนี้ครับ\n${found.map((x) => `- **${x.t.name}** ${fbWidgetLine(x.t)}`).join('\n')}\n${canAdd ? 'กดดูแล้วเพิ่มลง dashboard ได้เลย' : 'ให้แอดมินของร้านเพิ่มให้ได้'} ถ้ายังไม่ใช่ที่อยากเห็น ส่งคำขอให้ทีม KSS ได้`,
+        go: canAdd ? found.map((x) => ({ label: `ดู “${x.t.name}”`, act: `widget:${x.t.id}` })) : [],
+      }
+    : { role: 'model', source: 'none', q: question, wish: true, text: 'ยังไม่มี widget ที่แสดงข้อมูลนี้ครับ ส่งคำขอให้ทีม KSS ได้เลย ทีมงานจะตอบว่าทำได้ไหมและเมื่อไหร่', go: [] });
+  if (!found.length) aiFeedback('miss', 0, question, '', 'none');
+  aiRender();
 }
 
 // Called when a dashboard opens.
