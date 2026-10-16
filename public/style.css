@@ -1113,7 +1113,7 @@ html.login-hero-on #login-screen > .login-card { flex: 0 0 400px; max-width: 400
 .today-ico { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--amber-ink); color: var(--surface); font-size: 12px; font-weight: 800; flex: none; }
 .today-card.has-crit .today-ico { background: var(--danger); }
 .today-sum { color: var(--ink-2); font-variant-numeric: tabular-nums; min-width: 0; }
-.today-toggle { margin-left: auto; font-weight: 600; color: var(--primary); white-space: nowrap; }
+.today-toggle { margin-left: auto; font-weight: 700; color: var(--ink); white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; }
 .today-toggle::after { content: ' ▾'; }
 .today-card:not(.folded) .today-toggle::after { content: ' ▴'; }
 .today-bar:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 8px; }
@@ -1380,7 +1380,7 @@ body.arranging-on .ai-fab { display: none; }
 .fr-progress i.on { background: var(--primary); }
 .fr-q .starter-opt { min-height: 56px; justify-content: center; }
 .starter-opt.top { border-color: var(--primary); }
-.fr-why { font-size: 13px; color: var(--primary); }
+.fr-why { font-size: 13px; color: var(--ink-2); font-weight: 600; }
 .fr-hero { grid-column: 1 / -1; padding: 20px 22px; }
 .fr-hero .starter-title { font-size: 19px; }
 .fr-sees-h { margin-top: 4px; font-size: 12.5px; font-weight: 700; color: var(--ink-2); }
@@ -1419,6 +1419,17 @@ body.arranging-on .ai-fab { display: none; }
 .ins-card { display: flex; flex-direction: column; gap: 4px; padding: 16px 18px; border-radius: var(--card-radius); background: var(--surface); border: 1px solid var(--line); box-shadow: 0 4px 14px rgba(var(--shadow-ink), .05); min-width: 0; }
 .ins-card.tone-warn { border-top: 3px solid var(--danger); }
 .ins-card.tone-info { border-top: 3px solid var(--primary); }
+.ins-card.tone-good { border-top: 3px solid var(--status-good); }
+.ins-card.tone-good .ins-baht { color: var(--status-good); }
+.ins-tag { font-size: 12px; font-weight: 700; color: var(--ink-2); letter-spacing: .02em; }
+.ins-note { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+.ins-how { margin-top: 8px; font-size: 13px; }
+.ins-how summary { cursor: pointer; color: var(--ink-2); font-weight: 600; min-height: 32px; display: flex; align-items: center; }
+.ins-how p { margin: 4px 0 0; color: var(--ink-2); line-height: 1.5; }
+.insight-card.loading .ins-skel { height: 170px; border-radius: var(--card-radius); background: linear-gradient(90deg, var(--surface-2), var(--surface), var(--surface-2)); background-size: 200% 100%; animation: insskel 1.4s ease infinite; }
+@keyframes insskel { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .insight-card.loading .ins-skel { animation: none; } }
+.widget-card:focus { outline: 2px solid var(--primary); outline-offset: 2px; }
 .ins-baht { font-family: 'Kanit', 'Plus Jakarta Sans', sans-serif; font-size: 30px; font-weight: 600; line-height: 1.15; font-variant-numeric: tabular-nums; color: var(--ink); }
 .ins-card.tone-warn .ins-baht { color: var(--danger-ink); }
 .ins-text { font-size: 15px; font-weight: 700; line-height: 1.4; }
@@ -1426,4 +1437,16 @@ body.arranging-on .ai-fab { display: none; }
 .ins-go { align-self: flex-start; margin-top: auto; }
 .ins-card .ins-go { margin-top: 8px; }
 .widget-headline { margin: 0 0 10px; padding: 8px 12px; border-radius: 10px; background: var(--amber-soft); color: var(--ink); font-size: 13.5px; font-weight: 600; line-height: 1.5; }
-@media (max-width: 700px) { .ins-baht { font-size: 26px; } .ins-card { padding: 14px; } }
+@media (max-width: 700px) {
+  .ins-baht { font-size: 26px; }
+  .ins-card { padding: 14px; }
+  /* phones: cards side by side in one swipeable row, so the first screen shows more than one */
+  .ins-grid { grid-auto-flow: column; grid-auto-columns: 82%; grid-template-columns: none; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 6px; -webkit-overflow-scrolling: touch; }
+  .ins-card { scroll-snap-align: start; }
+  .ins-welcome { padding: 8px 12px; }
+  .ins-welcome .ins-said { display: none; }
+  .hide-m { display: none; }
+  .range-control { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+  .range-control input { min-width: 0; flex: 0 0 auto; }
+  .insight-card.loading .ins-skel { height: 150px; }
+}

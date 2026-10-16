@@ -52,7 +52,7 @@ function describeWidgets(widgets) {
           const c = FMH_REPORTS[sc.source];
           const g = c && sc.group_by && c.groupings.includes(sc.group_by) ? sc.group_by : null;
           // date_field: filter this alias on that row field for this widget only
-          return { as: sc.as, key: cacheKeyFor(sc.source, g), ...(sc.date_field && !g ? { date_field: sc.date_field } : {}) };
+          return { as: sc.as, key: cacheKeyFor(sc.source, g), ...(sc.date_field && !g ? { date_field: sc.date_field } : {}), ...(sc.where ? { where: sc.where, where_fallback: !!sc.where_fallback } : {}) };
         })
       : null;
   });

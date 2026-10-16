@@ -407,7 +407,8 @@ function rowMatches(rule, row) {
     case 'gte': return evalRow(rule.a, row) >= evalRow(rule.b, row);
     case 'lt': return evalRow(rule.a, row) < evalRow(rule.b, row);
     case 'lte': return evalRow(rule.a, row) <= evalRow(rule.b, row);
-    case 'matches': return new RegExp(rule.pattern).test(String(pick(row, rule.field) ?? ''));
+    // flags: 'i' for a name in any case ("Central Kitchen")
+    case 'matches': return new RegExp(rule.pattern, rule.flags || '').test(String(pick(row, rule.field) ?? ''));
     // The last N days counting today (1 = today only), in the viewer's calendar.
     case 'within_days': {
       const d = dateOnly(pick(row, rule.field));
@@ -1332,7 +1333,9 @@ class DashboardView {
       this.insightEl = document.createElement('section');
       this.insightEl.className = 'insight-card';
       this.insightEl.setAttribute('aria-label', 'เราเจอให้คุณ');
-      this.insightEl.hidden = true;
+      // a reserved space while the numbers load, so the page does not jump when the cards arrive
+      this.insightEl.className = 'insight-card loading';
+      this.insightEl.innerHTML = '<div class="ins-skel" aria-hidden="true"></div>';
       this.wrap.appendChild(this.insightEl);
       this.todayEl = document.createElement('section');
       this.todayEl.className = 'today-card';
@@ -1739,7 +1742,7 @@ class DashboardView {
              this.dashboard.data_source === 'demo'
                ? `<span class="demo-pill">ข้อมูลตัวอย่าง</span> <span class="muted">${
                    isCompanyAdmin() && !this.preview
-                     ? '<strong>ตัวเลขเป็นข้อมูลตัวอย่าง ไม่ใช่ของร้านคุณ</strong> ลองจัด dashboard ให้ถูกใจได้เต็มที่ widget และการจัดวางจะอยู่ครบเมื่อสลับเป็นข้อมูลจริง'
+                     ? '<strong>ตัวเลขเป็นข้อมูลตัวอย่าง ไม่ใช่ของร้านคุณ</strong> <span class="hide-m">ลองจัด dashboard ให้ถูกใจได้เต็มที่ widget และการจัดวางจะอยู่ครบเมื่อสลับเป็นข้อมูลจริง</span>'
                      : 'ตัวเลขนี้เป็นข้อมูลตัวอย่าง ไม่ใช่ข้อมูลจริงของร้าน'
                  }</span>`
                : oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
@@ -2155,7 +2158,17 @@ class DashboardView {
         }
         const byAlias = {};
         const minStart = cfg.max_range_days ? daysAgoIso(cfg.max_range_days - 1) : null;
-        widget.pulls.forEach((p) => { byAlias[p.as] = this.rowsFor(p.key, widget, p.date_field, minStart) || []; });
+        widget.pulls.forEach((p) => {
+          let rows = this.rowsFor(p.key, widget, p.date_field, minStart) || [];
+          // a source narrowed to some rows (only the kitchen's purchases); with fallback, all rows
+          // when none match, and the widget says so
+          if (p.where) {
+            const kept = rows.filter((r) => rowMatches(p.where, r));
+            if (kept.length || !p.where_fallback) rows = kept;
+            else (this.whereFell ||= new Set()).add(widget.id);
+          }
+          byAlias[p.as] = rows;
+        });
         raw = pivotRows(byAlias, cfg) || [];
       } else {
         raw = this.rowsFor(key, widget, cfg.row_date_field);
@@ -2241,6 +2254,9 @@ class DashboardView {
         if (cfg.min_range_days && span && span < cfg.min_range_days) body.insertAdjacentHTML('beforeend', `<p class="widget-foot warn-msg">ช่วงที่เลือกสั้นกว่า ${cfg.min_range_days} วัน ตัวเลขอาจแกว่งมาก ลองเลือก ${cfg.min_range_days} วันขึ้นไป</p>`);
         if (cfg.foot && widget.chart_type !== 'range') body.insertAdjacentHTML('beforeend', `<p class="widget-foot widget-note">${esc(cfg.foot).replace(/\n/g, '<br>')}</p>`);
         body.insertAdjacentHTML('beforeend', this.coverageNote(widget));
+        const clippedPull = (widget.pulls ? widget.pulls.map((p) => p.key) : [key]).some((k) => { const r = this.results[k]; return r && r.meta && r.meta.quota && r.meta.quota.truncated; });
+        if (this.whereFell && this.whereFell.has(widget.id) && cfg.where_fallback_note) body.insertAdjacentHTML('beforeend', `<p class="widget-foot warn-msg">${esc(cfg.where_fallback_note)}</p>`);
+        if (clippedPull) body.insertAdjacentHTML('beforeend', '<p class="widget-foot warn-msg">ข้อมูลของ widget นี้ถูกตัดเพราะยาวเกินที่ดึงได้ ตัวเลขยังไม่ครบทั้งช่วง ลองเลือกช่วงวันให้สั้นลง</p>');
       } catch (err) {
         console.error('Widget render failed', widget, err);
         body.innerHTML = `<p class="muted">แสดงผล widget นี้ไม่สำเร็จ (${esc(err.message)})</p>`;
@@ -2259,6 +2275,7 @@ class DashboardView {
   renderInsights() {
     const el = this.insightEl;
     if (!el) return;
+    el.classList.remove('loading');
     const get = (key, dateField) => {
       const r = this.results[key];
       return r && !r.error ? this.rowsFor(key, null, dateField) || [] : null;
@@ -2268,13 +2285,29 @@ class DashboardView {
       return null;
     };
     const profile = this.dashboard.profile || {};
-    const found = findInsights(get, onPage, profile.goals || []);
+    const found = findInsights(get, onPage, profile.goals || [], { start: this.range.start, end: this.range.end, today: todayIso() });
     // the finding behind a widget also heads that widget, so % tables say what they mean in baht
     this.wrap.querySelectorAll('.widget-headline').forEach((x) => x.remove());
     found.all.forEach((f) => {
       if (!f.widget || !f.headline) return;
       const card = this.wrap.querySelector(`.widget-card[data-wid="${f.widget.id}"] .widget-body`);
       if (card) card.insertAdjacentHTML('afterbegin', `<p class="widget-headline">${esc(f.headline)}</p>`);
+    });
+    // a ranking whose values barely differ says so, so equal outlets are not read as a problem
+    (this.cards || []).forEach(({ widget }) => {
+      const c = widget.config || {};
+      const d = this.explainData && this.explainData.get(widget.id);
+      if (!c.flat_within || !d || !d.rows || !d.rows.length) return;
+      const keyF = [].concat(c.group_by_field || [])[0];
+      if (!keyF) return;
+      const groups = new Map();
+      d.rows.forEach((r) => { const k = pick(r, keyF); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
+      if (groups.size < 2) return;
+      const vals = [...groups.values()].map((rs) => evalMetric(c.value, rs));
+      const gap = Math.max(...vals) - Math.min(...vals);
+      if (gap >= c.flat_within) return;
+      const body = this.wrap.querySelector(`.widget-card[data-wid="${widget.id}"] .widget-body`);
+      if (body) body.insertAdjacentHTML('afterbegin', `<p class="widget-headline">ทุกสาขาใกล้เคียงกัน ต่างกันไม่ถึง ${c.flat_within} จุด ยังไม่มีสาขาไหนผิดปกติ</p>`);
     });
     let welcome = null;
     try { welcome = JSON.parse(sessionStorage.getItem(`kss_welcome_${this.dashboard.id}`) || 'null'); } catch (e) { /* none */ }
@@ -2283,27 +2316,45 @@ class DashboardView {
     el.hidden = false;
     const sample = this.dashboard.data_source === 'demo';
     const money = (v) => fmtValue(v, 'currency');
+    // announced once, not on every range or filter change
+    const announce = welcome && !this.welcomeAnnounced;
+    if (welcome) this.welcomeAnnounced = true;
+    const hid = `ins-h-${this.dashboard.id}`;
+    el.setAttribute('aria-labelledby', hid);
+    el.removeAttribute('aria-label');
     el.innerHTML = `
-      ${welcome ? `<div class="ins-welcome" role="status">
-        <div><b>Dashboard ของคุณพร้อมแล้ว</b>${welcome.said && welcome.said.length ? `<span>จัดให้ตามที่คุณบอก: ${esc(welcome.said.join(' · '))}</span>` : ''}</div>
+      ${welcome ? `<div class="ins-welcome"${announce ? ' role="status"' : ''}>
+        <div><b>Dashboard ของคุณพร้อมแล้ว</b>${welcome.said && welcome.said.length ? `<span class="ins-said">จัดให้ตามที่คุณบอก: ${esc(welcome.said.join(' · '))}</span>` : ''}</div>
         <button type="button" class="btn small ghost ins-close" aria-label="ปิดข้อความต้อนรับ">ปิด</button>
       </div>` : ''}
-      ${top.length ? `<div class="ins-head"><h2>เราเจอให้คุณ${sample ? ' <span class="demo-pill">ตัวอย่าง</span>' : ''}</h2><span class="muted">${esc(dayLabel(this.range.start))} – ${esc(dayLabel(this.range.end))}</span></div>
+      ${top.length ? `<div class="ins-head"><h2 id="${hid}">เราเจอให้คุณ${sample ? ' <span class="demo-pill">ตัวอย่าง</span>' : ''}</h2><span class="muted">${esc(dayLabel(this.range.start))} – ${esc(dayLabel(this.range.end))}</span></div>
       <div class="ins-grid">${top.map((f, i) => `<article class="ins-card tone-${f.tone || 'warn'}">
+          <span class="ins-tag">${esc(f.tag || { warn: 'เงินที่เสียหรือควรทวง', good: 'โอกาสประหยัด', info: 'รอดำเนินการ' }[f.tone || 'warn'])}</span>
           <span class="ins-baht">${money(f.baht)}</span>
           <b class="ins-text">${esc(f.text)}</b>
           ${f.sub ? `<span class="ins-sub">${esc(f.sub)}</span>` : ''}
-          ${f.widget ? `<button type="button" class="btn small ghost ins-go" data-i="${i}">ดูรายละเอียด</button>` : ''}
+          ${f.note ? `<span class="ins-note">${esc(f.note)}</span>` : ''}
+          ${f.widget
+            ? `<button type="button" class="btn small ghost ins-go" data-i="${i}">ดูรายละเอียด</button>`
+            : f.how ? `<details class="ins-how"><summary>ตัวเลขนี้คิดอย่างไร</summary><p>${esc(f.how)}</p></details>` : ''}
         </article>`).join('')}</div>` : ''}`;
     const close = el.querySelector('.ins-close');
     if (close) close.addEventListener('click', () => {
       try { sessionStorage.removeItem(`kss_welcome_${this.dashboard.id}`); } catch (e) { /* none */ }
       this.renderInsights();
+      const h = el.querySelector('h2');
+      if (h) { h.tabIndex = -1; h.focus({ preventScroll: true }); }
     });
     el.querySelectorAll('.ins-go').forEach((b) => b.addEventListener('click', () => {
       const f = top[Number(b.dataset.i)];
       const card = this.wrap.querySelector(`.widget-card[data-wid="${f.widget.id}"]`);
-      if (card) { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 1600); }
+      if (!card) return;
+      const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      card.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' });
+      // keyboard and screen-reader users land on the widget, not back on the card
+      if (!card.hasAttribute('tabindex')) card.tabIndex = -1;
+      setTimeout(() => card.focus({ preventScroll: true }), still ? 0 : 350);
+      card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 1600);
     }));
   }
 }
@@ -2312,9 +2363,11 @@ class DashboardView {
 // Each finder reads rows the page already has and returns a money finding or
 // null. get(key, dateField) -> rows on the page's range (null = not loaded);
 // onPage(templateKeys) -> the first of those widgets on the page.
-// Every number here is also in the widget the finding points to.
+// Every number here is the same number the widget it points to shows.
 const CK_NAME = /ครัวกลาง|central\s*kitchen|commissary|\bck\b/i;
-function findInsights(get, onPage, goals) {
+// ISO week key, so prices are only compared within the same week
+const weekKey = (d) => { const t = new Date(String(d).slice(0, 10) + 'T00:00:00Z'); if (isNaN(t)) return ''; const day = (t.getUTCDay() + 6) % 7; t.setUTCDate(t.getUTCDate() - day); return t.toISOString().slice(0, 10); };
+function findInsights(get, onPage, goals, span = {}) {
   const out = [];
   const add = (f) => { if (f && f.baht >= 100) out.push(f); };
   const baht = (v) => fmtValue(v, 'currency');
@@ -2322,66 +2375,139 @@ function findInsights(get, onPage, goals) {
   const keyOfLine = (r) => `${r.product_code || r.product_name}|${r.uom || ''}`;
 
   if (pa && pa.length) {
-    // 1. price rises: paid above the window's first price (the pc_movers definition)
+    // 1. price moves: paid above / below the window's first price (the pc_movers definition),
+    //    rises and falls both shown, so the headline agrees with the by-category chart
     const byP = new Map();
     pa.forEach((r) => { if (!isBlank(r.price) && num(r.qty)) { const k = keyOfLine(r); if (!byP.has(k)) byP.set(k, []); byP.get(k).push(r); } });
-    let total = 0; let worst = null;
+    let up = 0; let down = 0; let worst = null;
     byP.forEach((rs) => {
       if (rs.length < 2) return;
       rs.sort((a, b) => String(a.order_date).localeCompare(String(b.order_date)));
       const first = num(rs[0].price);
       const extra = rs.reduce((s, r) => s + (num(r.price) - first) * num(r.qty), 0);
-      if (extra <= 0) return;
-      total += extra;
-      if (!worst || extra > worst.extra) worst = { extra, name: rs[0].product_name, pct: first ? ((num(rs[rs.length - 1].price) - first) / first) * 100 : 0 };
+      if (extra < 0) { down += -extra; return; }
+      if (extra === 0) return;
+      up += extra;
+      // the average paid against the first price: the move that cost the money
+      const q = rs.reduce((x, r) => x + num(r.qty), 0);
+      const avg = q ? rs.reduce((x, r) => x + num(r.price) * num(r.qty), 0) / q : first;
+      if (!worst || extra > worst.extra) worst = { extra, name: rs[0].product_name, pct: first ? ((avg - first) / first) * 100 : 0 };
     });
     const wPrice = onPage(['pc_movers', 'pc_extra_by_product', 'pc_extra_by_category', 'watch_price']);
-    if (worst) add({ id: 'price_up', goals: ['price', 'profit'], baht: total, text: 'จ่ายเพิ่มเพราะราคาวัตถุดิบขึ้น', sub: `${worst.name} ตัวเดียว ${baht(worst.extra)} (ราคาขึ้น ${worst.pct.toFixed(1)}%)`, widget: wPrice, headline: `รวมจ่ายเพิ่มจากราคาที่ขึ้น ${baht(total)} · มากสุด ${worst.name} ${baht(worst.extra)}` });
+    const moves = `ขึ้น ${baht(up)} · ลง ${baht(down)} · สุทธิ ${baht(up - down)}`;
+    const how = 'เทียบราคาที่จ่ายแต่ละครั้งกับราคาครั้งแรกในช่วงที่เลือก คูณจำนวนที่ซื้อ แยกตามสินค้าและหน่วย';
+    // net up: what the rises cost. Net down: prices fell overall, which is news too, not a loss.
+    if (worst && up > down) add({
+      id: 'price_up', goals: ['price', 'profit'], baht: up - down, text: 'จ่ายเพิ่มสุทธิเพราะราคาวัตถุดิบขึ้น',
+      sub: `${moves} · มากสุด ${worst.name} ${baht(worst.extra)} (ราคาเฉลี่ยสูงกว่าครั้งแรก ${fmtValue(worst.pct, 'pct_signed')})`,
+      widget: wPrice, headline: `ราคาขึ้นทำให้จ่ายเพิ่ม ${baht(up)} · ราคาลงประหยัด ${baht(down)} · สุทธิ ${baht(up - down)}`, how,
+    });
+    else if (down > up && down - up >= 100) add({
+      id: 'price_down', goals: ['price'], tone: 'good', tag: 'ข่าวดี', baht: down - up, text: 'ราคาวัตถุดิบโดยรวมลดลง',
+      sub: `${moves}${worst ? ` · แต่ ${worst.name} ยังทำให้จ่ายเพิ่ม ${baht(worst.extra)}` : ''}`,
+      widget: wPrice, headline: `ราคาขึ้นทำให้จ่ายเพิ่ม ${baht(up)} · ราคาลงประหยัด ${baht(down)} · สุทธิ ${baht(up - down)}`, how,
+    });
 
-    // 2. the same item cheaper from another supplier: paid above the cheapest supplier's average
+    // 2. the same item cheaper from another supplier the same week. A supplier that often
+    //    delivers short (more than 15% of its invoiced lines) is never the "cheaper" one.
+    const shortRate = new Map();
+    pa.forEach((r) => {
+      if (isBlank(r.invoice_quantity) || !num(r.po_qty)) return;
+      const o = shortRate.get(r.supplier) || { n: 0, s: 0 };
+      o.n++; if (num(r.invoice_quantity) < num(r.po_qty) * 0.98) o.s++;
+      shortRate.set(r.supplier, o);
+    });
+    const reliable = (sup) => { const o = shortRate.get(sup); return !o || o.n < 5 || o.s / o.n <= 0.15; };
     let save = 0; let best = null;
     byP.forEach((rs) => {
-      const bySup = new Map();
-      rs.forEach((r) => { const s = r.supplier || ''; const o = bySup.get(s) || { v: 0, q: 0 }; o.v += num(r.price) * num(r.qty); o.q += num(r.qty); bySup.set(s, o); });
-      if (bySup.size < 2) return;
-      const avgs = [...bySup.entries()].filter(([, o]) => o.q > 0).map(([s, o]) => ({ s, avg: o.v / o.q }));
-      if (avgs.length < 2) return;
-      const min = avgs.reduce((a, b) => (b.avg < a.avg ? b : a));
-      const over = rs.reduce((s, r) => s + Math.max(0, num(r.price) - min.avg) * num(r.qty), 0);
-      if (over <= 0) return;
-      save += over;
-      const dear = avgs.reduce((a, b) => (b.avg > a.avg ? b : a));
-      if (!best || over > best.over) best = { over, name: rs[0].product_name, cheap: min.s, dear: dear.s, pct: ((dear.avg - min.avg) / min.avg) * 100 };
+      const byWeek = new Map();
+      rs.forEach((r) => { const w = weekKey(r.order_date); if (!byWeek.has(w)) byWeek.set(w, []); byWeek.get(w).push(r); });
+      byWeek.forEach((ws) => {
+        const bySup = new Map();
+        ws.forEach((r) => { const o = bySup.get(r.supplier) || { v: 0, q: 0 }; o.v += num(r.price) * num(r.qty); o.q += num(r.qty); bySup.set(r.supplier, o); });
+        if (bySup.size < 2) return;
+        const avgs = [...bySup.entries()].filter(([, o]) => o.q > 0).map(([sup, o]) => ({ sup, avg: o.v / o.q }));
+        const cheap = avgs.filter((a) => reliable(a.sup));
+        if (avgs.length < 2 || !cheap.length) return;
+        const min = cheap.reduce((a, b) => (b.avg < a.avg ? b : a));
+        ws.forEach((r) => {
+          const over = Math.max(0, num(r.price) - min.avg) * num(r.qty);
+          if (over <= 0 || r.supplier === min.sup) return;
+          save += over;
+          if (!best || over > best.over) best = { over, name: r.product_name, cheap: min.sup, dear: r.supplier, pct: ((num(r.price) - min.avg) / min.avg) * 100 };
+        });
+      });
     });
-    const wCheap = onPage(['price_variance_top', 'price_compare_suppliers']);
-    if (best) add({ id: 'cheaper', goals: ['price', 'supplier', 'profit'], baht: save, text: 'ประหยัดได้ ถ้าซื้อจากเจ้าที่ถูกกว่า', sub: `${best.name}: ${partyShort(best.cheap)} ถูกกว่า ${partyShort(best.dear)} ${best.pct.toFixed(0)}% · ดูเรื่องส่งตรงเวลาและส่งครบประกอบด้วย`, widget: wCheap, headline: `ถ้าซื้อทุกครั้งจากเจ้าที่ถูกที่สุด จะประหยัดได้ ${baht(save)} · มากสุด ${best.name} ${baht(best.over)}` });
+    if (best) add({
+      id: 'cheaper', goals: ['price', 'supplier', 'profit'], tone: 'good', baht: save,
+      text: 'ส่วนต่างราคาระหว่างเจ้า (ประหยัดได้สูงสุด)',
+      sub: `${best.name}: ${partyShort(best.cheap)} ถูกกว่า ${partyShort(best.dear)} ${best.pct.toFixed(0)}% ในสัปดาห์เดียวกัน`,
+      note: 'ไม่นับเจ้าที่ส่งขาดบ่อย ควรดูว่าเจ้าที่ถูกกว่ารับปริมาณได้พอด้วย',
+      widget: onPage(['price_compare_suppliers', 'price_variance_top']),
+      headline: `ถ้าซื้อจากเจ้าที่ถูกกว่าในสัปดาห์เดียวกัน จะประหยัดได้สูงสุด ${baht(save)} · มากสุด ${best.name}`,
+      how: 'สินค้าและหน่วยเดียวกันที่ซื้อจากหลายเจ้าในสัปดาห์เดียวกัน: ส่วนที่จ่ายเกินราคาเฉลี่ยของเจ้าที่ถูกที่สุดในสัปดาห์นั้น คูณจำนวน ไม่นับเจ้าที่ส่งขาดเกิน 15% ของบรรทัดที่วางบิล',
+    });
 
-    // 3. billed above what was received (the ita_overbilled definition)
-    const over = pa.filter((r) => num(r.invoice_total) > num(r.grn_total) && !isBlank(r.grn_number));
-    if (over.length) {
+    // 3. billed above what was received, less credit notes already issued
+    //    (the sq_overbill_credit definition: invoice + product, quantity over × invoice price)
+    const lines = new Map();
+    pa.forEach((r) => {
+      if (isBlank(r.invoice_number) || !(num(r.invoice_quantity) > num(r.grn_quantity))) return;
+      const k = `${r.invoice_number}|${r.product_code}`;
+      const o = lines.get(k) || { sup: r.supplier, over: 0, cn: 0 };
+      o.over += (num(r.invoice_quantity) - num(r.grn_quantity)) * num(r.invoice_price);
+      lines.set(k, o);
+    });
+    if (lines.size) {
+      const cn = get('credit-notes');
+      if (cn) cn.forEach((c) => { const o = lines.get(`${c.invoice_number}|${c.product_code}`); if (o) o.cn += num(c.total !== undefined ? c.total : c.credit_note_amount); });
       const bySup = new Map();
-      over.forEach((r) => bySup.set(r.supplier, (bySup.get(r.supplier) || 0) + num(r.invoice_total) - num(r.grn_total)));
-      const sumOver = [...bySup.values()].reduce((a, b) => a + b, 0);
+      lines.forEach((o) => { const left = Math.max(0, o.over - o.cn); if (left > 0) bySup.set(o.sup, (bySup.get(o.sup) || 0) + left); });
+      const owed = [...bySup.values()].reduce((a, b) => a + b, 0);
       const topS = [...bySup.entries()].sort((a, b) => b[1] - a[1])[0];
-      add({ id: 'overbilled', goals: ['bills', 'supplier'], baht: sumOver, text: `ซัพพลายเออร์ ${bySup.size} เจ้าวางบิลเกินของที่รับจริง`, sub: `มากสุด ${partyShort(topS[0])} ${baht(topS[1])} ควรทวงใบลดหนี้`, widget: onPage(['ita_overbilled', 'sq_overbill_credit']) });
+      if (topS) add({
+        id: 'overbilled', goals: ['bills', 'supplier'], baht: owed,
+        text: cn ? `บิลเกินที่ยังไม่ได้ใบลดหนี้คืน ${bySup.size} เจ้า` : `ซัพพลายเออร์ ${bySup.size} เจ้าวางบิลเกินของที่รับจริง`,
+        sub: `มากสุด ${partyShort(topS[0])} ${baht(topS[1])} ควรทวงใบลดหนี้`,
+        note: cn ? '' : 'ยังไม่ได้หักใบลดหนี้ เพิ่ม widget "บิลเกินของที่รับ ได้ใบลดหนี้คืนแล้วหรือยัง" เพื่อดูยอดที่ค้างจริง',
+        widget: onPage(cn ? ['sq_overbill_credit', 'ita_overbilled'] : ['ita_overbilled', 'sq_overbill_credit', 'pa_kpis']),
+        how: '(จำนวนในบิล − จำนวนที่รับจริง) × ราคาในบิล ต่อเลขบิลและสินค้า หักใบลดหนี้ของบิลและสินค้าเดียวกัน',
+      });
     }
 
-    // 4. received, no invoice yet (the ita_grn_not_invoiced definition) — not a loss, a bill to come
+    // 4. received, no invoice yet (the ita_grn_not_invoiced definition) — a bill to come, aged by GRN date
     const wait = pa.filter((r) => !isBlank(r.grn_number) && isBlank(r.invoice_number));
     if (wait.length) {
       const v = wait.reduce((s, r) => s + num(r.grn_total), 0);
-      add({ id: 'waiting', goals: ['bills', 'supplier'], tone: 'info', baht: v, text: 'รับของแล้ว ยังรอใบแจ้งหนี้', sub: `${new Set(wait.map((r) => r.supplier)).size} ซัพพลายเออร์ ค่าใช้จ่ายที่ยังไม่เข้าบัญชี`, widget: onPage(['ita_grn_not_invoiced']) });
+      const ref = span.today || todayIso();
+      const age = (r) => (Date.parse(ref) - Date.parse(String(r.grn_date || r.order_date).slice(0, 10))) / 86400000;
+      const old = wait.filter((r) => age(r) > 15).reduce((s, r) => s + num(r.grn_total), 0);
+      const older = wait.filter((r) => age(r) > 30).reduce((s, r) => s + num(r.grn_total), 0);
+      add({
+        id: 'waiting', goals: ['bills', 'supplier'], tone: 'info', baht: v, text: 'รับของแล้ว ยังรอใบแจ้งหนี้',
+        sub: [old ? `รอเกิน 15 วัน ${baht(old)}` : '', older ? `เกิน 30 วัน ${baht(older)}` : '', `${new Set(wait.map((r) => r.supplier)).size} ซัพพลายเออร์`].filter(Boolean).join(' · '),
+        widget: onPage(['ita_grn_not_invoiced', 'pa_kpis']),
+        how: 'มูลค่ารับของของบรรทัดที่มีใบรับของแล้วแต่ยังไม่มีเลขใบแจ้งหนี้ อายุนับจากวันที่รับของ',
+      });
     }
   }
 
-  // 5. counted short (stock counts, the whole synced window: FMH groups it by product)
+  // 5. counted short. FMH groups stock counts by product over the whole synced window
+  //    (about 80 days), so this does not follow the range picker and says so.
   const sc = get('stock-count|product');
   if (sc && sc.length) {
     const neg = sc.filter((r) => num(r.variance_value) < 0);
     if (neg.length) {
-      const v = -neg.reduce((s, r) => s + num(r.variance_value), 0);
+      const short = -neg.reduce((s, r) => s + num(r.variance_value), 0);
+      const extra = sc.filter((r) => num(r.variance_value) > 0).reduce((s, r) => s + num(r.variance_value), 0);
       const w = neg.reduce((a, b) => (num(b.variance_value) < num(a.variance_value) ? b : a));
-      add({ id: 'count_short', goals: ['waste', 'branch', 'profit'], baht: v, text: 'นับสต็อกขาด', sub: `${w.product} ตัวเดียว ${baht(-num(w.variance_value))} · ช่วงที่ดึงข้อมูลล่าสุด`, widget: onPage(['stock_count_variance']) });
+      add({
+        id: 'count_short', goals: ['waste', 'branch', 'profit'], baht: short, text: 'นับสต็อกขาด',
+        sub: `${w.product} ตัวเดียว ${baht(-num(w.variance_value))} · นับเกิน ${baht(extra)} · สุทธิขาด ${baht(short - extra)}`,
+        note: '80 วันล่าสุดที่ดึงจาก FMH ไม่ตามช่วงที่เลือก',
+        widget: onPage(['stock_count_variance']),
+        how: 'ผลรวมมูลค่าที่นับได้ต่ำกว่าในระบบ ต่อสินค้า จากการนับสต็อกใน FMH',
+      });
     }
   }
 
@@ -2406,25 +2532,41 @@ function findInsights(get, onPage, goals) {
       const t = [...byB.entries()].sort((a, b) => b[1] - a[1])[0];
       if (t && t[0]) sub = `มากสุด ${partyShort(t[0])} ${baht(t[1])}`;
     }
-    add({ id: 'waste', goals: ['waste', 'branch'], baht: v, text: 'ของเสียที่บันทึกไว้', sub, widget: onPage(['wastage_pct_by_branch', 'wastage_top_branches', 'wastage_top_products', 'wastage_by_category', 'wastage_trend']) });
+    add({
+      id: 'waste', goals: ['waste', 'branch'], baht: v, text: 'ของเสียที่บันทึกไว้', sub,
+      note: wl ? '' : '80 วันล่าสุดที่ดึงจาก FMH ไม่ตามช่วงที่เลือก',
+      widget: onPage(['wastage_pct_by_branch', 'wastage_top_branches', 'wastage_top_products', 'wastage_by_category', 'wastage_trend']),
+      how: 'มูลค่าของเสียที่สาขาบันทึกใน FMH',
+    });
   }
 
-  // 7. the central kitchen paid more than its recipes say it used (the ck_margin_kpi gap)
+  // 7. the central kitchen paid more than its recipes say its sales used. Only the kitchen's
+  //    own purchases count (an outlet buying direct is not kitchen cost), over the same
+  //    months as the sales buckets.
   const ck = get('cogs-trend');
   const wCk = onPage(['ck_margin_kpi', 'ck_margin_table', 'ck_margin_trend']);
   if (ck && ck.length && pa && pa.length && wCk) {
+    const own = pa.filter((r) => CK_NAME.test(r.branch || ''));
+    const from = ck.map((r) => String(r.period || '').slice(0, 10)).filter(Boolean).sort()[0];
+    const bought = own.filter((r) => !from || String(r.order_date).slice(0, 10) >= from).reduce((s, r) => s + num(r.total), 0);
     const sales = ck.reduce((s, r) => s + num(r.sales), 0);
     const recipe = ck.reduce((s, r) => s + num(r.cogs), 0);
-    const bought = pa.reduce((s, r) => s + num(r.total), 0);
-    if (sales > 0 && bought > recipe) {
-      add({ id: 'ck_gap', goals: ['profit'], baht: bought - recipe, text: 'ครัวกลางจ่ายซื้อเกินต้นทุนตามสูตร', sub: `กำไรจริง ${(((sales - bought) / sales) * 100).toFixed(1)}% เทียบตามสูตร ${(((sales - recipe) / sales) * 100).toFixed(1)}% · เดือนที่ยังไม่จบอาจแกว่ง`, widget: wCk });
+    const open = span.today && ck.some((r) => String(r.period || '').slice(0, 7) === String(span.today).slice(0, 7));
+    if (own.length && sales > 0 && bought > recipe) {
+      add({
+        id: 'ck_gap', goals: ['profit'], baht: bought - recipe, text: 'ครัวกลางจ่ายซื้อเกินต้นทุนตามสูตร',
+        sub: `กำไรขั้นต้นจากที่จ่ายจริง ${(((sales - bought) / sales) * 100).toFixed(1)}% เทียบตามสูตร ${(((sales - recipe) / sales) * 100).toFixed(1)}%`,
+        note: `ยอดซื้อไม่เท่ากับของที่ใช้ ของที่ยังอยู่ในสต็อกก็นับรวม${open ? ' · เดือนนี้ยังไม่จบ ตัวเลขยังแกว่ง' : ''}`,
+        unsure: !!open, widget: wCk,
+        how: 'ยอดซื้อของสาขาครัวกลางในเดือนเดียวกับยอดขาย ลบต้นทุนตามสูตรของสิ่งที่ครัวกลางขาย',
+      });
     }
   }
 
   // Order: what the customer said they care about, then the rest; within each, money to act
-  // on (a loss, a refund) before money that is only waiting (a bill to come), then by size.
+  // on before money that is waiting or unsure (an unfinished month), then by size.
   const wanted = new Set(goals || []);
-  const rank = (f) => (wanted.size && f.goals.some((g) => wanted.has(g)) ? 0 : 2) + (f.tone === 'info' ? 1 : 0);
+  const rank = (f) => (wanted.size && f.goals.some((g) => wanted.has(g)) ? 0 : 2) + (f.tone === 'info' || f.unsure ? 1 : 0);
   const top = [...out].sort((a, b) => rank(a) - rank(b) || b.baht - a.baht).slice(0, 3);
   return { top, all: out };
 }
