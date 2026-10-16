@@ -1374,3 +1374,10 @@ body.arranging-on .ai-fab { display: none; }
 .widget-sample { margin-left: 8px; flex: none; align-self: center; }
 .starter-opt.off { cursor: not-allowed; }
 .firstrun h2:focus { outline: none; }
+.fr-q .starter-opt.off { opacity: .7; }
+.fr-emptyrow { padding: 8px 0 0; }
+@media (max-width: 700px) {
+  .fr-actions { display: flex; flex-wrap: nowrap; gap: 8px; }
+  .fr-actions .btn { flex: 1 1 auto; padding-inline: 12px; }
+  .widget-sample { font-size: 11px; padding: 0 7px; margin-left: 6px; }
+}

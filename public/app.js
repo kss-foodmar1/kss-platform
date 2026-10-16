@@ -918,7 +918,7 @@ async function renderFirstRun(wrap, cid) {
 
   const head = (kicker, title) => `<p class="starter-role">${esc(kicker)}</p><h2 class="starter-h" tabindex="-1">${title}</h2>`;
   const sampleNote = sample
-    ? '<p class="muted starter-lead">ช่วงแรกคุณจะได้ลองกับ<b>ข้อมูลตัวอย่าง</b> ยังไม่ต้องเชื่อมอะไร ลองดู widget ต่างๆ และจัด dashboard ให้ถูกใจ พอพร้อมใช้ข้อมูลจริง กดปุ่ม “พร้อมใช้ข้อมูลจริงแล้ว” ที่แถบด้านบน dashboard และการจัดวางที่ทำไว้จะอยู่ครบ</p>'
+    ? '<p class="muted starter-lead">ช่วงแรกคุณจะได้ลองกับข้อมูลตัวอย่าง ยังไม่ต้องเชื่อมอะไร ลองดู widget ต่างๆ และจัด dashboard ให้ถูกใจ พอพร้อมใช้ข้อมูลจริง กดปุ่ม “พร้อมใช้ข้อมูลจริงแล้ว” ที่แถบด้านบน dashboard และการจัดวางที่ทำไว้จะอยู่ครบ</p>'
     : '';
 
   // No data to show anything with: connect first, questions come after.
@@ -949,7 +949,7 @@ async function renderFirstRun(wrap, cid) {
   // Which choices make sense for the answers so far.
   const info = () => (choices.setupInfo || {})[ans.setup] || { branches: true, ck: true };
   const rolesFor = () => Object.keys(choices.roles).filter((r) =>
-    (r !== 'ck' || info().ck) && (r !== 'branch' || info().branches) && (r !== 'all' || !info().branches));
+    (r !== 'ck' || info().ck) && (r !== 'branch' || info().branches));
   const goalsFor = () => Object.keys(choices.goals).filter((g) => g !== 'branch' || info().branches);
   const hints = {
     single: 'มีหน้าร้านเดียว ซื้อวัตถุดิบเข้ามาขายเอง',
@@ -972,13 +972,13 @@ async function renderFirstRun(wrap, cid) {
     const sel = (v) => (multi ? ans.goals.includes(v) : ans[key] === v);
     const done = () => (multi ? ans.goals.length > 0 : !!ans[key]);
     box.innerHTML = `
-      <p class="starter-role" aria-live="polite">เริ่มต้นใช้งาน · คำถามที่ ${step + 1} จาก 3</p>
+      <p class="starter-role">เริ่มต้นใช้งาน · คำถามที่ ${step + 1} จาก 3</p>
       <div class="fr-progress" aria-hidden="true">${wizard.map((_, i) => `<i class="${i <= step ? 'on' : ''}"></i>`).join('')}</div>
       <h2 class="starter-h" tabindex="-1">${step === 0 && name ? `ยินดีต้อนรับ ${esc(name)} — ` : ''}${titles[key]}</h2>
       ${step === 0 ? sampleNote : ''}
-      ${multi ? `<p class="muted starter-lead fr-cap">${ans.goals.length >= 2 ? 'เลือกครบ 2 ข้อแล้ว ยกเลิกข้อใดข้อหนึ่งถ้าอยากเปลี่ยน' : 'เลือกได้สูงสุด 2 ข้อ'}</p>` : ''}
+      ${multi ? `<p class="muted starter-lead fr-cap" role="status">${ans.goals.length >= 2 ? 'เลือกครบ 2 ข้อแล้ว ยกเลิกข้อใดข้อหนึ่งถ้าอยากเปลี่ยน' : 'เลือกได้สูงสุด 2 ข้อ'}</p>` : ''}
       <div class="starter-grid fr-q" role="${multi ? 'group' : 'radiogroup'}" aria-label="${esc(titles[key])}">
-        ${items.map((v) => `<label class="starter-opt${sel(v) ? ' on' : ''}">
+        ${items.map((v) => `<label class="starter-opt${sel(v) ? ' on' : ''}${multi && !sel(v) && ans.goals.length >= 2 ? ' off' : ''}">
           <input type="${multi ? 'checkbox' : 'radio'}" name="fr-q" value="${esc(v)}"${sel(v) ? ' checked' : ''}${multi && !sel(v) && ans.goals.length >= 2 ? ' disabled' : ''}>
           <b class="starter-title">${esc(labels[v])}</b>
           ${key === 'setup' ? `<span class="starter-desc">${esc(hints[v])}</span>` : ''}
@@ -1046,18 +1046,18 @@ async function renderFirstRun(wrap, cid) {
         <b class="starter-title">${esc(o.title)}</b>
         <span class="starter-desc">${esc(o.description)}</span>
         ${o.why ? `<span class="fr-why">${esc(o.why)}</span>` : ''}
-        <span class="starter-count">ได้ ${o.ready.length} ตัวชี้วัด${plain(o).length ? `: ${esc(plain(o).join(' · '))}` : ''}</span>
+        <span class="starter-count">ได้ ${o.ready.length} widget${plain(o).length ? `: ${esc(plain(o).join(' · '))}` : ''}</span>
       </label>`;
     box.innerHTML = `
       ${head(answered ? 'เลือกให้ตามคำตอบของคุณ' : 'เริ่มต้นใช้งาน', answered ? 'ชุดที่น่าจะตอบโจทย์คุณ' : `ยินดีต้อนรับ${name ? ` ${esc(name)}` : ''} — เลือกชุดเริ่มต้น`)}
-      ${answered ? '' : sampleNote}
+      ${answered ? '' : `<p class="muted starter-lead">ยังไม่ได้ตอบคำถาม จึงแสดงชุดทั่วไปโดยไม่จัดอันดับ กด “ตอบคำถาม” ให้ระบบเลือกชุดที่ตรงกับคุณ</p>${sampleNote}`}
       <div class="starter-grid" role="radiogroup" aria-label="ชุดเริ่มต้น">${shown.map(card).join('')}</div>
       ${more.length ? `<button type="button" class="btn link fr-more">ดูชุดอื่นอีก ${more.length} ชุด</button><div class="starter-grid fr-morebox" hidden>${more.map((o, i) => card(o, i + 3)).join('')}</div>` : ''}
       <div class="starter-actions fr-actions">
         <button type="button" class="btn primary fr-go"${pick ? '' : ' disabled'}>สร้างให้เลย</button>
-        <button type="button" class="btn ghost fr-redo">แก้คำตอบ</button>
-        <button type="button" class="btn link fr-empty">เริ่มจาก dashboard ว่าง</button>
+        <button type="button" class="btn ghost fr-redo">${answered ? 'แก้คำตอบ' : 'ตอบคำถาม'}</button>
       </div>
+      <div class="fr-emptyrow"><button type="button" class="btn link fr-empty">เริ่มจาก dashboard ว่าง</button></div>
       <div class="starter-msg" role="status"></div>`;
     const sync = () => box.querySelectorAll('.starter-opt').forEach((l) => l.classList.toggle('on', l.querySelector('input').value === pick));
     box.querySelectorAll('input[name="fr-pick"]').forEach((r) => r.addEventListener('change', () => { pick = r.value; sync(); }));
@@ -1326,7 +1326,7 @@ class DashboardView {
       const card = document.createElement('section');
       card.className = `widget-card size-${w.config.size || 'half'} widget-${w.chart_type}${[2, 3].includes(Number(w.config.rows)) ? ` rows-${w.config.rows}` : ''}`;
       card.dataset.wid = w.id;
-      card.innerHTML = `<div class="widget-head"><h3 class="widget-title">${esc(w.title)}</h3>${this.dashboard.data_source === 'demo' ? '<span class="demo-pill widget-sample" title="ตัวเลขจากข้อมูลตัวอย่าง ไม่ใช่ของร้านคุณ">ตัวอย่าง</span>' : ''}${
+      card.innerHTML = `<div class="widget-head"><h3 class="widget-title">${esc(w.title)}</h3>${this.dashboard.data_source === 'demo' ? '<span class="demo-pill widget-sample">ตัวอย่าง</span>' : ''}${
         this.preview ? '' : '<button type="button" class="widget-explain" aria-expanded="false" title="กราฟนี้บอกอะไร"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>อธิบาย</button>'
       }</div><div class="explain-box" hidden></div><div class="widget-body">${SKELETON}</div>`;
       grid.appendChild(card);
