@@ -490,3 +490,23 @@ CREATE TABLE IF NOT EXISTS fmh_archive (
   PRIMARY KEY (company_id, source, day),
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;
+
+-- "แจ้งทีมงาน": a customer reports a problem from the page where it happens.
+-- context_json is whitelisted server-side (page, dashboard, widget, filters,
+-- the error text the page showed) so the team starts with the full picture.
+CREATE TABLE IF NOT EXISTS support_requests (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  company_id INT NOT NULL,
+  user_id INT NULL,
+  kind ENUM('data','connect','howto','billing','other') NOT NULL DEFAULT 'other',
+  message VARCHAR(1000) NOT NULL,
+  context_json TEXT NULL,
+  status ENUM('open','doing','done') NOT NULL DEFAULT 'open',
+  note VARCHAR(500) NULL,
+  handled_by INT NULL,
+  handled_at TIMESTAMP NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_support_status (status, created_at),
+  KEY idx_support_company (company_id, created_at),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;

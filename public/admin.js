@@ -346,13 +346,15 @@ async function openAdminConsole() {
   }
   await renderAdminCompanyList();
   if (typeof refreshSignupBadge === 'function') refreshSignupBadge();
-  if (!adminState.selected) adminState.selected = state.viewCompanyId ? { type: 'company', id: state.viewCompanyId } : { type: 'catalog' };
+  if (typeof refreshOpsBadges === 'function') refreshOpsBadges();
+  if (!adminState.selected) adminState.selected = { type: 'home' };
   renderAdminMain();
 }
 
 // A company admin's settings, one page per tab (left menu → ตั้งค่า).
 // Old deep links (focus 'pos' / 'fmh-files' / 'plan') land on their tab.
 const SETTINGS_TABS = [
+  ['status', 'สถานะระบบ'],
   ['dashboards', 'จัดการ Dashboard'],
   ['data', 'การเชื่อมข้อมูล'],
   ['alerts', 'ตัวเตือน & LINE'],
@@ -448,7 +450,9 @@ function renderAdminMain() {
   const sel = adminState.selected || {};
   const main = el('admin-main');
   main.scrollTop = 0;
-  if (sel.type === 'company') return renderCompanyDetail(main, sel.id);
+  if (sel.type === 'home') return renderAdminHome(main);
+  if (sel.type === 'support') return renderSupportInbox(main);
+  if (sel.type === 'company') return renderCompanyDetail(main, sel.id, sel.tab);
   if (sel.type === 'picker') return renderWidgetPicker(main, sel.id, sel.dashboardId);
   if (sel.type === 'my-dashboards') return renderMyDashboards(main, sel.id);
   if (sel.type === 'new-company') return renderNewCompany(main);
@@ -801,16 +805,36 @@ function renderNewCompany(main) {
   });
 }
 
-async function renderCompanyDetail(main, companyId) {
+// One company, one concern per tab. Each tab loads only when opened, so
+// opening a company no longer fires every panel's requests at once.
+const CO_TABS = [
+  ['overview', 'ภาพรวม'],
+  ['dashboards', 'Dashboards'],
+  ['users', 'ผู้ใช้'],
+  ['billing', 'ชำระเงิน'],
+  ['data', 'ข้อมูล POS / ไฟล์'],
+  ['line', 'LINE'],
+  ['support', 'เรื่องที่แจ้ง'],
+];
+async function renderCompanyDetail(main, companyId, tab) {
   main.innerHTML = '<p class="muted">กำลังโหลด...</p>';
-  let data;
+  let data, health;
   try {
-    data = await api(`/api/admin/companies/${companyId}`);
+    [data, health] = await Promise.all([api(`/api/admin/companies/${companyId}`), api(`/api/health?company_id=${companyId}`)]);
   } catch (err) {
     main.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
     return;
   }
+  // Old deep links from the customer side land on the right tab.
+  const focus = adminState.focus;
+  adminState.focus = null;
+  if (!tab && (focus === 'fmh-files' || focus === 'pos')) tab = 'data';
+  if (!tab && focus === 'plan') tab = 'billing';
+  if (!CO_TABS.some(([k]) => k === tab)) tab = 'overview';
+  adminState.selected = { type: 'company', id: companyId, tab };
   const c = data.company;
+  const sync_status = data.sync_status;
+  const problems = health.checks.filter((k) => k.state === 'bad' || k.state === 'warn');
   main.innerHTML = `
     <div class="admin-head">
       <div>
@@ -823,140 +847,127 @@ async function renderCompanyDetail(main, companyId) {
             : ''
         }
         <p class="muted">${esc(STATUS_LABEL[c.status] || c.status)} · ${esc(TIER_LABEL[c.plan_tier] || c.plan_tier)} · สร้างเมื่อ ${esc(fmtDateTime(c.created_at))}</p>
+        ${problems.length ? `<p class="ops-head-issues">${problems.map((k) => `${opsChip(k.state)} ${esc(k.label)}`).join(' ')}</p>` : ''}
       </div>
       <button type="button" class="btn small view-dashboards">ดู dashboard ของบริษัทนี้ →</button>
     </div>
-    <nav class="jump-bar" aria-label="ไปที่หัวข้อ">
-      <a href="#co-info">ข้อมูลบริษัท</a><a href="#co-fmh">FMH</a><a href="#co-dash">Dashboards</a><a href="#co-users">ผู้ใช้</a>
-      <a href="#co-billing">ชำระเงิน</a><a href="#co-pos">ยอดขาย POS</a><a href="#line-bot">LINE</a><a href="#fmh-files">ไฟล์ FMH</a>
-    </nav>
-
-    <section class="admin-card" id="co-info">
-      <h2>1. ข้อมูลบริษัท</h2>
-      <form class="company-form">
-        <div class="form-msg"></div>
-        <div class="grid-3">
-          <div class="field"><label>ชื่อบริษัท</label><input name="name" value="${esc(c.name)}" required></div>
-          ${tierStatusSelects(c)}
-        </div>
-        <button type="submit" class="btn small primary">บันทึก</button>
-      </form>
-    </section>
-
-    <section class="admin-card" id="co-fmh">
-      <h2>2. FMH API Key</h2>
-      <p class="helper-text" style="margin-top:0;">ปกติให้ Admin บริษัทของลูกค้าใส่ Key เองที่ ตั้งค่า › การเชื่อมข้อมูล — ใส่แทนได้ที่นี่ในกรณีจำเป็น (เช่น Demo Co)</p>
-      <div class="fmh-panel"></div>
-      <div class="sync-block"></div>
-    </section>
-
-    <section class="admin-card" id="co-dash">
-      <h2>3. Dashboards &amp; Widgets</h2>
-      <div class="composer"></div>
-    </section>
-
-    <section class="admin-card" id="co-users">
-      <h2>4. ผู้ใช้งาน</h2>
-      <div class="company-users"></div>
-    </section>
-
-    <section class="admin-card" id="co-billing">
-      <h2>5. การชำระเงินและอายุการใช้งาน</h2>
-      <div class="billing"></div>
-    </section>
-
-    <section class="admin-card" id="co-pos">
-      <h2>6. ยอดขาย POS (Foodstory และ POS ที่ไม่มี API)</h2>
-      <div class="pos-panel"></div>
-      <div class="ck-branch-panel"></div>
-    </section>
-
-    <section class="admin-card" id="line-bot">
-      <h2>7. LINE แจ้งเตือนผู้บริหาร</h2>
-      <div class="line-panel"></div>
-    </section>
-
-    <section class="admin-card" id="fmh-files">
-      <h2>8. ข้อมูลย้อนหลังจากไฟล์ FMH (เกิน 90 วัน)</h2>
-      <div class="fmh-files-panel"></div>
-    </section>`;
+    <div class="settings-tabs" role="tablist" aria-label="หัวข้อของบริษัท">
+      ${CO_TABS.map(([k, l]) => `<button type="button" role="tab" class="settings-tab${k === tab ? ' on' : ''}" data-tab="${k}" aria-selected="${k === tab}">${esc(l)}${k === 'support' && health.open_support ? ` <span class="nav-badge">${health.open_support}</span>` : ''}</button>`).join('')}
+    </div>
+    <div class="co-body"></div>`;
 
   main.querySelector('.view-dashboards').addEventListener('click', () => viewCompanyDashboards(companyId));
-  main.querySelectorAll('.jump-bar a').forEach((a) =>
-    a.addEventListener('click', (e) => {
+  main.querySelectorAll('.settings-tab').forEach((b) => b.addEventListener('click', () => {
+    if (!leavePicker()) return;
+    pickerDirty = false;
+    renderCompanyDetail(main, companyId, b.dataset.tab);
+  }));
+  const body = main.querySelector('.co-body');
+
+  if (tab === 'overview') {
+    body.innerHTML = `
+      <section class="admin-card" id="co-health"><h2>สถานะระบบของบริษัทนี้</h2><div class="health-list"></div></section>
+      <section class="admin-card" id="co-info">
+        <h2>ข้อมูลบริษัท</h2>
+        <form class="company-form">
+          <div class="form-msg"></div>
+          <div class="grid-3">
+            <div class="field"><label>ชื่อบริษัท</label><input name="name" value="${esc(c.name)}" required></div>
+            ${tierStatusSelects(c)}
+          </div>
+          <button type="submit" class="btn small primary">บันทึก</button>
+        </form>
+      </section>
+      <section class="admin-card" id="co-fmh">
+        <h2>FMH API Key</h2>
+        <p class="helper-text" style="margin-top:0;">ปกติให้ Admin บริษัทของลูกค้าใส่ Key เองที่ ตั้งค่า › การเชื่อมข้อมูล — ใส่แทนได้ที่นี่ในกรณีจำเป็น (เช่น Demo Co)</p>
+        <div class="fmh-panel"></div>
+        <div class="sync-block"></div>
+      </section>`;
+    renderHealthChecks(body.querySelector('.health-list'), health.checks, {
+      showRaw: true,
+      fixLabel: 'เปิดดู',
+      onGo: (k) => renderCompanyDetail(main, companyId, OPS_TAB_KSS[k.go] || 'overview'),
+    });
+    const form = body.querySelector('.company-form');
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const t = main.querySelector(a.getAttribute('href'));
-      if (t) t.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    })
-  );
-  const form = main.querySelector('.company-form');
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    try {
-      await api(`/api/admin/companies/${companyId}`, { method: 'PATCH', body: JSON.stringify(Object.fromEntries(new FormData(form).entries())) });
-      await renderAdminCompanyList();
-      renderCompanyDetail(main, companyId);
-    } catch (err) {
-      form.querySelector('.form-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
-    }
-  });
-
-  const refreshSyncBlock = async () => {
-    const block = main.querySelector('.sync-block');
-    const { company, sync_status } = await api(`/api/admin/companies/${companyId}`);
-    block.innerHTML = `
-      <div class="sync-head">
-        <strong>ข้อมูลที่ sync ไว้</strong>
-        ${company.fmh_configured ? '<button type="button" class="btn small ghost sync-now">Sync ตอนนี้</button>' : ''}
-      </div>
-      ${
-        sync_status.length
-          ? `<table class="mini-table"><thead><tr><th>Report source</th><th class="num">แถว</th><th>Sync ล่าสุด</th></tr></thead><tbody>${sync_status
-              .map((s) => `<tr><td>${esc(sourceLabel(s.cache_key))}</td><td class="num">${Number(s.rows_cached).toLocaleString('th-TH')}</td><td>${esc(fmtDateTime(s.synced_at))}</td></tr>`)
-              .join('')}</tbody></table>`
-          : '<p class="muted">ยังไม่มีข้อมูล — จะ sync เฉพาะ report source ที่มี widget ใช้งาน</p>'
+      try {
+        await api(`/api/admin/companies/${companyId}`, { method: 'PATCH', body: JSON.stringify(Object.fromEntries(new FormData(form).entries())) });
+        await renderAdminCompanyList();
+        renderCompanyDetail(main, companyId, 'overview');
+      } catch (err) {
+        form.querySelector('.form-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
       }
-      <div class="sync-result"></div>
-      <div class="usage-block"></div>`;
-    renderUsage(block.querySelector('.usage-block'), companyId);
-    const btn = block.querySelector('.sync-now');
-    if (btn) {
-      btn.addEventListener('click', async () => {
-        btn.disabled = true;
-        btn.textContent = 'กำลัง sync...';
-        try {
-          const { results } = await api(`/api/admin/companies/${companyId}/sync`, { method: 'POST' });
-          const failed = Object.entries(results).filter(([, r]) => !r.ok);
-          await refreshSyncBlock();
-          block.querySelector('.sync-result').innerHTML = failed.length
-            ? `<div class="error-msg">${failed.map(([s, r]) => `${esc(sourceLabel(s))}: ${esc(r.error)}`).join('<br>')}</div>`
-            : Object.keys(results).length
-              ? '<div class="ok-msg">Sync สำเร็จ</div>'
-              : '<p class="muted">ยังไม่มี widget ที่ต้องใช้ข้อมูล</p>';
-        } catch (err) {
-          btn.disabled = false;
-          btn.textContent = 'Sync ตอนนี้';
-          block.querySelector('.sync-result').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    });
+    const refreshSyncBlock = async () => {
+      const block = body.querySelector('.sync-block');
+      if (!block) return;
+      const { company, sync_status } = await api(`/api/admin/companies/${companyId}`);
+      block.innerHTML = `
+        <div class="sync-head">
+          <strong>ข้อมูลที่ sync ไว้</strong>
+          ${company.fmh_configured ? '<button type="button" class="btn small ghost sync-now">Sync ตอนนี้</button>' : ''}
+        </div>
+        ${
+          sync_status.length
+            ? `<table class="mini-table"><thead><tr><th>Report source</th><th class="num">แถว</th><th>Sync ล่าสุด</th></tr></thead><tbody>${sync_status
+                .map((s) => `<tr><td>${esc(sourceLabel(s.cache_key))}</td><td class="num">${Number(s.rows_cached).toLocaleString('th-TH')}</td><td>${esc(fmtDateTime(s.synced_at))}</td></tr>`)
+                .join('')}</tbody></table>`
+            : '<p class="muted">ยังไม่มีข้อมูล — จะ sync เฉพาะ report source ที่มี widget ใช้งาน</p>'
         }
-      });
-    }
-  };
-
-  renderFmhKeyPanel(main.querySelector('.fmh-panel'), companyId, async () => {
-    await renderAdminCompanyList();
-    setTimeout(refreshSyncBlock, 1500); // first sync runs in the background
-  });
-  refreshSyncBlock();
-  renderComposer(main.querySelector('.composer'), companyId);
-  renderUserManager(main.querySelector('.company-users'), { companyId });
-  renderBillingPanel(main.querySelector('.billing'), companyId);
-  renderPosPanel(main.querySelector('.pos-panel'), companyId);
-  renderCkBranchPanel(main.querySelector('.ck-branch-panel'), companyId);
-  renderLinePanel(main.querySelector('.line-panel'), companyId);
-  renderFmhFilesPanel(main.querySelector('.fmh-files-panel'), companyId);
-  if (adminState.focus === 'fmh-files') {
-    adminState.focus = null;
-    main.querySelector('#fmh-files').scrollIntoView({ block: 'start' });
+        <div class="sync-result"></div>
+        <div class="usage-block"></div>`;
+      renderUsage(block.querySelector('.usage-block'), companyId);
+      const btn = block.querySelector('.sync-now');
+      if (btn) {
+        btn.addEventListener('click', async () => {
+          btn.disabled = true;
+          btn.textContent = 'กำลัง sync...';
+          try {
+            const { results } = await api(`/api/admin/companies/${companyId}/sync`, { method: 'POST' });
+            const failed = Object.entries(results).filter(([, r]) => !r.ok);
+            await refreshSyncBlock();
+            block.querySelector('.sync-result').innerHTML = failed.length
+              ? `<div class="error-msg">${failed.map(([s, r]) => `${esc(sourceLabel(s))}: ${esc(r.error)}`).join('<br>')}</div>`
+              : Object.keys(results).length
+                ? '<div class="ok-msg">Sync สำเร็จ</div>'
+                : '<p class="muted">ยังไม่มี widget ที่ต้องใช้ข้อมูล</p>';
+          } catch (err) {
+            btn.disabled = false;
+            btn.textContent = 'Sync ตอนนี้';
+            block.querySelector('.sync-result').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+          }
+        });
+      }
+    };
+    renderFmhKeyPanel(body.querySelector('.fmh-panel'), companyId, async () => {
+      await renderAdminCompanyList();
+      setTimeout(refreshSyncBlock, 1500); // first sync runs in the background
+    });
+    refreshSyncBlock();
+  } else if (tab === 'dashboards') {
+    body.innerHTML = '<section class="admin-card" id="co-dash"><h2>Dashboards &amp; Widgets</h2><div class="composer"></div></section>';
+    renderComposer(body.querySelector('.composer'), companyId);
+  } else if (tab === 'users') {
+    body.innerHTML = '<section class="admin-card" id="co-users"><h2>ผู้ใช้งาน</h2><div class="company-users"></div></section>';
+    renderUserManager(body.querySelector('.company-users'), { companyId });
+  } else if (tab === 'billing') {
+    body.innerHTML = '<section class="admin-card" id="co-billing"><h2>การชำระเงินและอายุการใช้งาน</h2><div class="billing"></div></section>';
+    renderBillingPanel(body.querySelector('.billing'), companyId);
+  } else if (tab === 'data') {
+    body.innerHTML = `
+      <section class="admin-card" id="co-pos"><h2>ยอดขาย POS (Foodstory และ POS ที่ไม่มี API)</h2><div class="pos-panel"></div><div class="ck-branch-panel"></div></section>
+      <section class="admin-card" id="fmh-files"><h2>ข้อมูลย้อนหลังจากไฟล์ FMH (เกิน 90 วัน)</h2><div class="fmh-files-panel"></div></section>`;
+    renderPosPanel(body.querySelector('.pos-panel'), companyId);
+    renderCkBranchPanel(body.querySelector('.ck-branch-panel'), companyId);
+    renderFmhFilesPanel(body.querySelector('.fmh-files-panel'), companyId);
+    if (focus === 'fmh-files') body.querySelector('#fmh-files').scrollIntoView({ block: 'start' });
+  } else if (tab === 'line') {
+    body.innerHTML = '<section class="admin-card" id="line-bot"><h2>LINE แจ้งเตือนผู้บริหาร</h2><div class="line-panel"></div></section>';
+    renderLinePanel(body.querySelector('.line-panel'), companyId);
+  } else if (tab === 'support') {
+    renderCompanySupport(body, companyId);
   }
 }
 
@@ -1189,7 +1200,9 @@ async function renderMyDashboards(main, companyId) {
   main.querySelectorAll('.settings-tab').forEach((b) => b.addEventListener('click', () => openCompanySettings(b.dataset.tab)));
   const body = main.querySelector('.settings-body');
 
-  if (tab === 'dashboards') {
+  if (tab === 'status') {
+    renderStatusTab(body, companyId);
+  } else if (tab === 'dashboards') {
     body.innerHTML = `
       <p class="muted settings-lead">สร้าง dashboard จัดลำดับ และเลือก widget ของแต่ละอัน ผู้ใช้ที่ดูอย่างเดียวเห็นเฉพาะ dashboard ที่คุณให้สิทธิ์ในแท็บ ผู้ใช้ · หา widget ใหม่ได้ที่ <button type="button" class="link-btn open-lib">คลัง Widget</button></p>
       <section class="admin-card"><div class="composer"></div></section>

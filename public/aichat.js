@@ -152,7 +152,10 @@ function aiMsgHtml(m, i) {
   }
   const meta = src || rate ? `<div class="ai-meta">${m.rating === 'down' && !m.rated ? '' : src ? `<span class="ai-src ${m.source}">${esc(src)}</span>` : ''}${rate}</div>` : '';
   const aiTag = m.source === 'ai' ? '<div class="ai-tag"><svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 6.6L21 11l-6.6 2.4L12 20l-2.4-6.6L3 11l6.6-2.4z"/></svg>AI สรุปให้ · ตรวจกับตัวเลขบนกราฟ</div>' : '';
-  return `<div class="ai-msg model${m.source === 'ai' ? ' by-ai' : ''}">${aiTag}${aiFormat(m.text)}${go ? `<div class="ai-gos">${go}</div>` : ''}${meta}</div>`;
+  // Nobody could answer: let the person hand the question to KSS in one tap.
+  const team = m.source === 'none' && m.q && state.user && state.user.company_id && state.user.role !== 'kss_superadmin'
+    ? `<button type="button" class="ai-go" data-support="${i}">แจ้งทีมงานเรื่องนี้ →</button>` : '';
+  return `<div class="ai-msg model${m.source === 'ai' ? ' by-ai' : ''}">${aiTag}${aiFormat(m.text)}${go || team ? `<div class="ai-gos">${go}${team}</div>` : ''}${meta}</div>`;
 }
 
 function aiRender() {
@@ -189,6 +192,12 @@ function aiLogClick(e) {
   const msgs = aiChat.history.get(aiChat.dashboardId) || [];
   const g = e.target.closest('[data-go]');
   if (g) return aiGo(g.dataset.go);
+  const sup = e.target.closest('[data-support]');
+  if (sup) {
+    const m = msgs[Number(sup.dataset.support)];
+    aiToggle(false);
+    return openSupportForm({ kind: 'howto', message: m ? m.q : '' });
+  }
   const t = e.target.closest('[data-rate]');
   if (t) {
     const m = msgs[Number(t.dataset.i)];

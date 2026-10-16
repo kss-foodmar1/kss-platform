@@ -205,17 +205,20 @@
 
   <!-- KSS Internal Admin Console (kss_superadmin only) -->
   <div id="admin-view" class="admin-view hidden">
-    <aside class="admin-sidebar">
-      <div class="admin-side-title">บริษัทลูกค้า</div>
+    <aside class="admin-sidebar" aria-label="เมนู Admin">
+      <button class="admin-nav-item" data-view="home" data-icon="home">งานวันนี้ <span class="nav-badge hidden" id="home-badge"></span></button>
+      <div class="admin-side-title">ลูกค้า</div>
       <div id="admin-company-list"></div>
       <button id="admin-add-company-btn" class="btn small ghost admin-add-btn">+ เพิ่มบริษัท</button>
+      <button class="admin-nav-item" data-view="self-serve" data-icon="plan">สมัครเอง / ทดลองใช้ <span class="nav-badge hidden" id="signup-badge"></span></button>
+      <div class="admin-side-title">ซัพพอร์ต</div>
+      <button class="admin-nav-item" data-view="support" data-icon="inbox">เรื่องที่ลูกค้าแจ้ง <span class="nav-badge hidden" id="support-badge"></span></button>
+      <button class="admin-nav-item" data-view="ai-questions" data-icon="chat">คำถามจากแชท</button>
       <div class="admin-side-title">ระบบ</div>
-      <button class="admin-nav-item" data-view="catalog">🧩 Widget Catalog</button>
-      <button class="admin-nav-item" data-view="fmh">🔍 FMH Diagnostics</button>
-      <button class="admin-nav-item" data-view="staff">👤 ทีม KSS</button>
-      <button class="admin-nav-item" data-view="ai-questions">💬 คำถามจากแชท</button>
-      <button class="admin-nav-item" data-view="news">📣 ประกาศ (มีอะไรใหม่)</button>
-      <button class="admin-nav-item" data-view="self-serve">🧾 สมัครเอง / ทดลองใช้ <span class="nav-badge hidden" id="signup-badge"></span></button>
+      <button class="admin-nav-item" data-view="catalog" data-icon="library">Widget Catalog</button>
+      <button class="admin-nav-item" data-view="fmh" data-icon="data">FMH Diagnostics</button>
+      <button class="admin-nav-item" data-view="news" data-icon="megaphone">ประกาศ (มีอะไรใหม่)</button>
+      <button class="admin-nav-item" data-view="staff" data-icon="users">ทีม KSS</button>
     </aside>
     <main id="admin-main" class="admin-main"></main>
   </div>
@@ -277,5 +280,6 @@
 <script src="/helpfaq.js"></script>
 <script src="/aichat.js"></script>
 <script src="/selfserve.js"></script>
+<script src="/ops.js"></script>
 </body>
 </html>

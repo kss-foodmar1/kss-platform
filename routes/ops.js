@@ -1,0 +1,152 @@
+// Day-to-day support loop between customers and KSS staff.
+//
+//   customer  POST /api/support            { kind, message, context }   report a problem from the page
+//             GET  /api/support/mine       own company's requests and where each stands
+//             GET  /api/health             Settings › สถานะระบบ (company admin)
+//   KSS       GET  /api/admin/ops/attention   companies that need looking after, worst first
+//             GET  /api/admin/ops/support      ?status=open|doing|done&company_id=
+//             PATCH /api/admin/ops/support/:id { status, note }
+const express = require('express');
+const pool = require('../db/pool');
+const { requireAuth, requireSuperadmin, requireCompanyAdmin } = require('../middleware/auth');
+const { wrap, resolveCompanyId } = require('../lib/access');
+const { healthFor, RANK } = require('../lib/health');
+
+const KINDS = ['data', 'connect', 'howto', 'billing', 'other'];
+const STATUSES = ['open', 'doing', 'done'];
+const DAILY_LIMIT = 8; // per user, so one stuck screen cannot flood the queue
+
+const clip = (v, n) => String(v == null ? '' : v).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').slice(0, n);
+
+// Only these keys are kept, each clipped; nothing else the browser sends is stored.
+function cleanContext(raw) {
+  const c = raw && typeof raw === 'object' ? raw : {};
+  const out = {};
+  for (const [k, n] of [['page', 80], ['dashboard_name', 120], ['widget_title', 120], ['filters', 300], ['error', 300], ['date_range', 60]]) {
+    if (c[k]) out[k] = clip(c[k], n);
+  }
+  if (Number.isInteger(Number(c.dashboard_id)) && Number(c.dashboard_id) > 0) out.dashboard_id = Number(c.dashboard_id);
+  return out;
+}
+
+// ----- customer side -----
+const customerRouter = express.Router();
+customerRouter.use(requireAuth);
+
+customerRouter.post(
+  '/',
+  wrap(async (req, res) => {
+    if (!req.user.company_id) return res.status(400).json({ error: 'บัญชีทีม KSS แจ้งปัญหาผ่านช่องนี้ไม่ได้' });
+    const b = req.body || {};
+    const message = clip(b.message, 1000).trim();
+    if (message.length < 5) return res.status(400).json({ error: 'บอกหน่อยว่าเกิดอะไรขึ้น (อย่างน้อย 5 ตัวอักษร)' });
+    const kind = KINDS.includes(b.kind) ? b.kind : 'other';
+    const [[today]] = await pool.query(
+      `SELECT COUNT(*) AS n FROM support_requests WHERE user_id = ? AND created_at >= (NOW() - INTERVAL 1 DAY)`, [req.user.id]);
+    if (today.n >= DAILY_LIMIT) return res.status(429).json({ error: 'วันนี้แจ้งครบจำนวนที่กำหนดแล้ว รอทีมงานตอบกลับก่อนนะ' });
+    const [r] = await pool.query(
+      `INSERT INTO support_requests (company_id, user_id, kind, message, context_json) VALUES (?, ?, ?, ?, ?)`,
+      [req.user.company_id, req.user.id, kind, message, JSON.stringify(cleanContext(b.context))]
+    );
+    res.status(201).json({ ok: true, id: r.insertId });
+  })
+);
+
+customerRouter.get(
+  '/mine',
+  wrap(async (req, res) => {
+    if (!req.user.company_id) return res.json({ list: [] });
+    // A company admin sees the whole company's requests; a viewer sees their own.
+    const own = req.user.role === 'company_admin';
+    const [rows] = await pool.query(
+      `SELECT r.id, r.kind, r.message, r.status, r.note, r.created_at, r.handled_at, u.display_name AS who
+         FROM support_requests r LEFT JOIN users u ON u.id = r.user_id
+        WHERE r.company_id = ? ${own ? '' : 'AND r.user_id = ?'} ORDER BY r.created_at DESC LIMIT 20`,
+      own ? [req.user.company_id] : [req.user.company_id, req.user.id]
+    );
+    res.json({ list: rows });
+  })
+);
+
+const healthRouter = express.Router();
+healthRouter.get(
+  '/',
+  requireAuth,
+  requireCompanyAdmin,
+  wrap(async (req, res) => {
+    const id = resolveCompanyId(req);
+    if (!id) return res.status(400).json({ error: 'company_id required' });
+    const h = (await healthFor([id])).get(id);
+    if (!h) return res.status(404).json({ error: 'ไม่พบบริษัทนี้' });
+    res.json({ level: h.level, checks: h.checks, open_support: h.open_support });
+  })
+);
+
+// ----- KSS side -----
+const adminRouter = express.Router();
+adminRouter.use(requireAuth, requireSuperadmin);
+
+adminRouter.get(
+  '/attention',
+  wrap(async (req, res) => {
+    const all = await healthFor();
+    const queue = [];
+    const totals = { bad: 0, warn: 0, ok: 0 };
+    for (const h of all.values()) {
+      if (h.company.status === 'demo') continue;
+      totals[h.level === 'off' ? 'ok' : h.level]++;
+      const issues = h.checks.filter((c) => c.state === 'bad' || c.state === 'warn');
+      if (!issues.length && !h.open_support) continue;
+      queue.push({
+        company_id: h.company.id, name: h.company.name, code: h.company.company_code, status: h.company.status,
+        level: h.level, issues, open_support: h.open_support,
+      });
+    }
+    queue.sort((a, b) => RANK[b.level] - RANK[a.level] || b.open_support - a.open_support || a.name.localeCompare(b.name, 'th'));
+    const [[sg]] = await pool.query(`SELECT COUNT(*) AS n FROM signup_requests WHERE status = 'pending'`);
+    const [[ms]] = await pool.query(`SELECT COUNT(DISTINCT question) AS n FROM ai_feedback WHERE kind IN ('miss','down') AND status = 'open' AND created_at >= (NOW() - INTERVAL 30 DAY)`);
+    const [[sp]] = await pool.query(`SELECT COUNT(*) AS n, SUM(status = 'open') AS fresh FROM support_requests WHERE status <> 'done'`);
+    res.json({
+      totals, queue,
+      inbox: { signups: sg.n, chat_misses: ms.n, support: sp.n || 0, support_new: Number(sp.fresh) || 0 },
+    });
+  })
+);
+
+adminRouter.get(
+  '/support',
+  wrap(async (req, res) => {
+    const status = STATUSES.includes(req.query.status) ? req.query.status : null;
+    const cid = Number(req.query.company_id) || null;
+    const where = [], args = [];
+    if (status) { where.push('r.status = ?'); args.push(status); } else { where.push(`r.status <> 'done'`); }
+    if (cid) { where.push('r.company_id = ?'); args.push(cid); }
+    const [rows] = await pool.query(
+      `SELECT r.id, r.company_id, c.name AS company, r.kind, r.message, r.context_json, r.status, r.note, r.created_at, r.handled_at,
+              u.display_name AS who, u.email AS who_email, h.display_name AS handler
+         FROM support_requests r JOIN companies c ON c.id = r.company_id
+         LEFT JOIN users u ON u.id = r.user_id LEFT JOIN users h ON h.id = r.handled_by
+        WHERE ${where.join(' AND ')} ORDER BY (r.status = 'open') DESC, r.created_at DESC LIMIT 100`,
+      args
+    );
+    rows.forEach((r) => { try { r.context = JSON.parse(r.context_json || '{}'); } catch (e) { r.context = {}; } delete r.context_json; });
+    res.json({ list: rows });
+  })
+);
+
+adminRouter.patch(
+  '/support/:id',
+  wrap(async (req, res) => {
+    const b = req.body || {};
+    const status = STATUSES.includes(b.status) ? b.status : null;
+    if (!status) return res.status(400).json({ error: 'status ไม่ถูกต้อง' });
+    const [r] = await pool.query(
+      `UPDATE support_requests SET status = ?, note = ?, handled_by = ?, handled_at = NOW() WHERE id = ?`,
+      [status, b.note == null ? null : clip(b.note, 500), req.user.id, req.params.id]
+    );
+    if (!r.affectedRows) return res.status(404).json({ error: 'ไม่พบรายการ' });
+    res.json({ ok: true });
+  })
+);
+
+module.exports = { customerRouter, healthRouter, adminRouter };

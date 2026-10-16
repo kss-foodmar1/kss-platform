@@ -631,6 +631,12 @@ const NAV_ICON = {
   plan: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>',
   building: '<path d="M4 21V5l8-2v18M12 9l8 2v10M8 8v1M8 12v1M8 16v1M16 13v1M16 17v1M2 21h20"/>',
   back: '<path d="M15 6l-6 6 6 6"/>',
+  home: '<path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/>',
+  inbox: '<path d="M3 13l3-8h12l3 8v6H3zM3 13h5l1 3h6l1-3h5"/>',
+  chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
+  megaphone: '<path d="M3 10v4l11 4V6zM14 8c3 0 5 1.5 5 4s-2 4-5 4M6 14l1 5h3l-1-4"/>',
+  pulse: '<path d="M3 12h4l2-6 4 12 2-6h6"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1.9-1.1 1.8M12 17h.01"/>',
 };
 const navIcon = (k) => `<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${NAV_ICON[k]}</svg>`;
 
@@ -642,6 +648,7 @@ function renderSideNav() {
   const link = (attrs, icon, label, on) =>
     `<button type="button" class="side-link${on ? ' on' : ''}" ${attrs}${on ? ' aria-current="page"' : ''}>${icon ? navIcon(icon) : ''}<span class="side-label">${esc(label)}</span></button>`;
   const settings = [
+    ['status', 'pulse', 'สถานะระบบ'],
     ['dashboards', 'layout', 'จัดการ Dashboard'],
     ['data', 'data', 'การเชื่อมข้อมูล'],
     ['alerts', 'bell', 'ตัวเตือน & LINE'],
@@ -653,9 +660,10 @@ function renderSideNav() {
     ${coName ? `<div class="side-company"><span class="side-co-mark" aria-hidden="true">${esc(coName.trim().charAt(0) || 'K')}</span><span class="side-co-text"><b>${esc(coName)}</b>${state.user.company_code ? `<span>${esc(state.user.company_code)}</span>` : ''}</span></div>` : ''}
     <div class="side-group">${link('data-go="back"', 'back', 'กลับไปดู Dashboard', false)}</div>
     <div class="side-group"><div class="side-title">ตั้งค่า</div>${settings.map(([k, ic, label]) => link(`data-settings="${k}"`, ic, label, cur.kind === 'settings' && cur.tab === k)).join('')}</div>
-    <div class="side-group">${link('data-go="library"', 'library', 'คลัง Widget', cur.kind === 'library')}</div>`;
+    <div class="side-group">${link('data-go="library"', 'library', 'คลัง Widget', cur.kind === 'library')}${link('data-go="support"', 'help', 'แจ้งทีมงาน', false)}</div>`;
   nav.querySelector('[data-go="back"]').addEventListener('click', () => goDashboard(state.activeDashboardId || (state.dashboards[0] || {}).id));
   nav.querySelector('[data-go="library"]').addEventListener('click', () => openLibrary());
+  nav.querySelector('[data-go="support"]').addEventListener('click', () => openSupportForm());
   nav.querySelectorAll('[data-settings]').forEach((b) => b.addEventListener('click', () => openCompanySettings(b.dataset.settings)));
 }
 

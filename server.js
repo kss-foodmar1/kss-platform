@@ -35,7 +35,7 @@ const app = express();
 // browser has never seen cannot be served from cache. The stamp is the newest
 // mtime among the shell files, so it changes exactly when they do and stays
 // stable across restarts that changed nothing.
-const SHELL_FILES = ['app.js', 'admin.js', 'selfserve.js', 'style.css', 'index.html', 'i18n.js', 'i18n-en.js', 'pos-parse.js', 'fmh-file.js'];
+const SHELL_FILES = ['app.js', 'admin.js', 'ops.js', 'selfserve.js', 'style.css', 'index.html', 'i18n.js', 'i18n-en.js', 'pos-parse.js', 'fmh-file.js'];
 const ASSET_VERSION = (() => {
   try {
     const newest = SHELL_FILES.reduce((max, f) => {
@@ -59,7 +59,7 @@ const LOGIN_HERO = (() => {
 const SHELL_HTML = (() => {
   let raw = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
   if (LOGIN_HERO) raw = raw.replace('<html lang="th">', '<html lang="th" class="login-hero-on">');
-  return raw.replace(/(src|href)="\/(app\.js|admin\.js|library\.js|explain\.js|aichat\.js|helpfaq\.js|selfserve\.js|style\.css|i18n\.js|i18n-en\.js|pos-parse\.js|fmh-file\.js)"/g, `$1="/$2?v=${ASSET_VERSION}"`);
+  return raw.replace(/(src|href)="\/(app\.js|admin\.js|ops\.js|library\.js|explain\.js|aichat\.js|helpfaq\.js|selfserve\.js|style\.css|i18n\.js|i18n-en\.js|pos-parse\.js|fmh-file\.js)"/g, `$1="/$2?v=${ASSET_VERSION}"`);
 })();
 
 function sendShell(res) {
@@ -94,6 +94,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/dashboards', dashboardRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/admin/ops', require('./routes/ops').adminRouter);
+app.use('/api/support', require('./routes/ops').customerRouter);
+app.use('/api/health', require('./routes/ops').healthRouter);
 app.use('/api/admin/self-serve', require('./routes/selfServe').adminRouter);
 app.use('/api/admin/billing', billingRoutes.adminRouter);
 app.use('/api/admin', adminRoutes);
