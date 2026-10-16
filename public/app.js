@@ -916,7 +916,7 @@ async function renderFirstRun(wrap, cid) {
   const ans = { setup: null, role: null, goals: [] };
   const wizard = ['setup', 'role', 'goals'];
 
-  const head = (kicker, title) => `<p class="starter-role">${esc(kicker)}</p><h2 class="starter-h">${title}</h2>`;
+  const head = (kicker, title) => `<p class="starter-role">${esc(kicker)}</p><h2 class="starter-h" tabindex="-1">${title}</h2>`;
   const sampleNote = sample
     ? '<p class="muted starter-lead">ช่วงแรกคุณจะได้ลองกับ<b>ข้อมูลตัวอย่าง</b> ยังไม่ต้องเชื่อมอะไร ลองดู widget ต่างๆ และจัด dashboard ให้ถูกใจ พอพร้อมใช้ข้อมูลจริง กดปุ่ม “พร้อมใช้ข้อมูลจริงแล้ว” ที่แถบด้านบน dashboard และการจัดวางที่ทำไว้จะอยู่ครบ</p>'
     : '';
@@ -947,16 +947,19 @@ async function renderFirstRun(wrap, cid) {
   }
 
   // Which choices make sense for the answers so far.
+  const info = () => (choices.setupInfo || {})[ans.setup] || { branches: true, ck: true };
   const rolesFor = () => Object.keys(choices.roles).filter((r) =>
-    (r !== 'ck' || ans.setup === 'ck') && (r !== 'branch' || ans.setup !== 'single'));
-  const goalsFor = () => Object.keys(choices.goals).filter((g) => g !== 'branch' || ans.setup === 'ck');
+    (r !== 'ck' || info().ck) && (r !== 'branch' || info().branches) && (r !== 'all' || !info().branches));
+  const goalsFor = () => Object.keys(choices.goals).filter((g) => g !== 'branch' || info().branches);
   const hints = {
     single: 'มีหน้าร้านเดียว ซื้อวัตถุดิบเข้ามาขายเอง',
     multi: 'หลายสาขา แต่แต่ละสาขาซื้อเองหรือไม่มีครัวกลางผลิตให้',
-    ck: 'ครัวกลางผลิตหรือจัดของส่งให้สาขา',
+    ck: 'ครัวกลางหรือศูนย์กระจายวัตถุดิบผลิตหรือจัดของส่งให้สาขา',
+    hotel: 'หลายห้องอาหารหรือเอาท์เล็ต ใช้ครัวใหญ่หรือฝ่ายจัดซื้อกลางของโรงแรม',
+    cloud: 'ครัวเดียวทำหลายแบรนด์ ขายผ่านแอปเดลิเวอรี่เป็นหลัก',
   };
 
-  function renderQuestion(step) {
+  function renderQuestion(step, focus = false) {
     const key = wizard[step];
     const multi = key === 'goals';
     const items = key === 'setup' ? Object.keys(choices.setups) : key === 'role' ? rolesFor() : goalsFor();
@@ -969,14 +972,14 @@ async function renderFirstRun(wrap, cid) {
     const sel = (v) => (multi ? ans.goals.includes(v) : ans[key] === v);
     const done = () => (multi ? ans.goals.length > 0 : !!ans[key]);
     box.innerHTML = `
-      <p class="starter-role">เริ่มต้นใช้งาน · คำถามที่ ${step + 1} จาก 3</p>
+      <p class="starter-role" aria-live="polite">เริ่มต้นใช้งาน · คำถามที่ ${step + 1} จาก 3</p>
       <div class="fr-progress" aria-hidden="true">${wizard.map((_, i) => `<i class="${i <= step ? 'on' : ''}"></i>`).join('')}</div>
-      <h2 class="starter-h">${step === 0 && name ? `ยินดีต้อนรับ ${esc(name)} — ` : ''}${titles[key]}</h2>
+      <h2 class="starter-h" tabindex="-1">${step === 0 && name ? `ยินดีต้อนรับ ${esc(name)} — ` : ''}${titles[key]}</h2>
       ${step === 0 ? sampleNote : ''}
-      ${multi ? '<p class="muted starter-lead">เลือกได้สูงสุด 2 ข้อ</p>' : ''}
+      ${multi ? `<p class="muted starter-lead fr-cap">${ans.goals.length >= 2 ? 'เลือกครบ 2 ข้อแล้ว ยกเลิกข้อใดข้อหนึ่งถ้าอยากเปลี่ยน' : 'เลือกได้สูงสุด 2 ข้อ'}</p>` : ''}
       <div class="starter-grid fr-q" role="${multi ? 'group' : 'radiogroup'}" aria-label="${esc(titles[key])}">
         ${items.map((v) => `<label class="starter-opt${sel(v) ? ' on' : ''}">
-          <input type="${multi ? 'checkbox' : 'radio'}" name="fr-q" value="${esc(v)}"${sel(v) ? ' checked' : ''}>
+          <input type="${multi ? 'checkbox' : 'radio'}" name="fr-q" value="${esc(v)}"${sel(v) ? ' checked' : ''}${multi && !sel(v) && ans.goals.length >= 2 ? ' disabled' : ''}>
           <b class="starter-title">${esc(labels[v])}</b>
           ${key === 'setup' ? `<span class="starter-desc">${esc(hints[v])}</span>` : ''}
         </label>`).join('')}
@@ -988,12 +991,12 @@ async function renderFirstRun(wrap, cid) {
       </div>
       <div class="starter-msg" role="status"></div>`;
     const next = box.querySelector('.fr-next');
+    if (focus) box.querySelector('.starter-h').focus({ preventScroll: true });
     box.querySelectorAll('input[name="fr-q"]').forEach((r) =>
       r.addEventListener('change', () => {
         if (multi) {
           const v = r.value;
           ans.goals = r.checked ? [...ans.goals, v] : ans.goals.filter((g) => g !== v);
-          if (ans.goals.length > 2) { ans.goals = ans.goals.slice(-2); }
         } else {
           ans[key] = r.value;
           if (key === 'setup') { // roles / goals that no longer fit are dropped
@@ -1004,13 +1007,17 @@ async function renderFirstRun(wrap, cid) {
         box.querySelectorAll('.starter-opt').forEach((l) => {
           const inp = l.querySelector('input');
           inp.checked = sel(inp.value);
+          if (multi) inp.disabled = !inp.checked && ans.goals.length >= 2;
           l.classList.toggle('on', inp.checked);
+          l.classList.toggle('off', inp.disabled);
         });
+        const cap = box.querySelector('.fr-cap');
+        if (cap) cap.textContent = ans.goals.length >= 2 ? 'เลือกครบ 2 ข้อแล้ว ยกเลิกข้อใดข้อหนึ่งถ้าอยากเปลี่ยน' : 'เลือกได้สูงสุด 2 ข้อ';
         next.disabled = !done();
       }));
-    next.addEventListener('click', () => (step === 2 ? renderResult() : renderQuestion(step + 1)));
+    next.addEventListener('click', () => (step === 2 ? renderResult() : renderQuestion(step + 1, true)));
     const back = box.querySelector('.fr-back');
-    if (back) back.addEventListener('click', () => renderQuestion(step - 1));
+    if (back) back.addEventListener('click', () => renderQuestion(step - 1, true));
     box.querySelector('.fr-skip').addEventListener('click', () => renderResult());
   }
 
@@ -1031,13 +1038,15 @@ async function renderFirstRun(wrap, cid) {
     const shown = usable.slice(0, 3);
     const more = usable.slice(3);
     let pick = shown.length ? shown[0].key : null;
+    // Widget names with terms an owner may not use (GRN, COGS, PO...) stay off the card.
+    const plain = (o) => o.ready.map((w) => w.name).filter((n) => !/[A-Za-z]{2,}/.test(n)).slice(0, 3);
     const card = (o, i) => `<label class="starter-opt${o.key === pick ? ' on' : ''}${answered && i === 0 ? ' top' : ''}">
         <input type="radio" name="fr-pick" value="${esc(o.key)}"${o.key === pick ? ' checked' : ''}>
         <span class="starter-role">${answered && i === 0 ? 'แนะนำสำหรับคุณ' : esc(o.role || 'ทั่วไป')}</span>
         <b class="starter-title">${esc(o.title)}</b>
         <span class="starter-desc">${esc(o.description)}</span>
         ${o.why ? `<span class="fr-why">${esc(o.why)}</span>` : ''}
-        <span class="starter-count">ได้ ${o.ready.length} widget: ${esc(o.ready.slice(0, 3).map((w) => w.name).join(' · '))}${o.ready.length > 3 ? ' …' : ''}</span>
+        <span class="starter-count">ได้ ${o.ready.length} ตัวชี้วัด${plain(o).length ? `: ${esc(plain(o).join(' · '))}` : ''}</span>
       </label>`;
     box.innerHTML = `
       ${head(answered ? 'เลือกให้ตามคำตอบของคุณ' : 'เริ่มต้นใช้งาน', answered ? 'ชุดที่น่าจะตอบโจทย์คุณ' : `ยินดีต้อนรับ${name ? ` ${esc(name)}` : ''} — เลือกชุดเริ่มต้น`)}
@@ -1046,7 +1055,7 @@ async function renderFirstRun(wrap, cid) {
       ${more.length ? `<button type="button" class="btn link fr-more">ดูชุดอื่นอีก ${more.length} ชุด</button><div class="starter-grid fr-morebox" hidden>${more.map((o, i) => card(o, i + 3)).join('')}</div>` : ''}
       <div class="starter-actions fr-actions">
         <button type="button" class="btn primary fr-go"${pick ? '' : ' disabled'}>สร้างให้เลย</button>
-        <button type="button" class="btn ghost fr-redo">ตอบคำถามใหม่</button>
+        <button type="button" class="btn ghost fr-redo">แก้คำตอบ</button>
         <button type="button" class="btn link fr-empty">เริ่มจาก dashboard ว่าง</button>
       </div>
       <div class="starter-msg" role="status"></div>`;
@@ -1054,7 +1063,8 @@ async function renderFirstRun(wrap, cid) {
     box.querySelectorAll('input[name="fr-pick"]').forEach((r) => r.addEventListener('change', () => { pick = r.value; sync(); }));
     const moreBtn = box.querySelector('.fr-more');
     if (moreBtn) moreBtn.addEventListener('click', () => { box.querySelector('.fr-morebox').hidden = false; moreBtn.remove(); });
-    box.querySelector('.fr-redo').addEventListener('click', () => { ans.setup = null; ans.role = null; ans.goals = []; renderQuestion(0); });
+    box.querySelector('.fr-redo').addEventListener('click', () => renderQuestion(0, true));
+    box.querySelector('.starter-h').focus({ preventScroll: true });
     const go = box.querySelector('.fr-go');
     go.addEventListener('click', () => create(go, { key: pick }, 'สร้างให้เลย'));
     const emp = box.querySelector('.fr-empty');
@@ -1316,7 +1326,7 @@ class DashboardView {
       const card = document.createElement('section');
       card.className = `widget-card size-${w.config.size || 'half'} widget-${w.chart_type}${[2, 3].includes(Number(w.config.rows)) ? ` rows-${w.config.rows}` : ''}`;
       card.dataset.wid = w.id;
-      card.innerHTML = `<div class="widget-head"><h3 class="widget-title">${esc(w.title)}</h3>${
+      card.innerHTML = `<div class="widget-head"><h3 class="widget-title">${esc(w.title)}</h3>${this.dashboard.data_source === 'demo' ? '<span class="demo-pill widget-sample" title="ตัวเลขจากข้อมูลตัวอย่าง ไม่ใช่ของร้านคุณ">ตัวอย่าง</span>' : ''}${
         this.preview ? '' : '<button type="button" class="widget-explain" aria-expanded="false" title="กราฟนี้บอกอะไร"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>อธิบาย</button>'
       }</div><div class="explain-box" hidden></div><div class="widget-body">${SKELETON}</div>`;
       grid.appendChild(card);

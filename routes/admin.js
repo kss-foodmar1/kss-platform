@@ -678,7 +678,7 @@ router.get(
     // ?setup=&role=&goals=a,b ranks and filters by the first-run answers.
     const q = req.query;
     const profile = starter.cleanProfile({ setup: q.setup, role: q.role, goals: String(q.goals || '').split(',') });
-    res.json({ options: starter.recommend(opts, profile), profile, choices: { setups: starter.SETUPS, roles: starter.ROLES, goals: starter.GOALS } });
+    res.json({ options: starter.recommend(opts, profile), profile, choices: { setups: starter.SETUPS, setupInfo: starter.SETUP_INFO, roles: starter.ROLES, goals: starter.GOALS } });
   })
 );
 
