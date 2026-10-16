@@ -71,6 +71,21 @@ function sendShell(res) {
 // several MB of JSON per report, which compresses about tenfold.
 app.use(compression());
 
+// Canonical host: once PUBLIC_BASE_URL is set and CANONICAL_REDIRECT=on, page
+// requests on any other host (e.g. the old *.up.railway.app address) are sent
+// to the canonical domain. Only GET/HEAD outside /api, so webhooks (LINE,
+// Omise) and API clients on the old address keep working.
+const CANON = process.env.PUBLIC_BASE_URL && process.env.CANONICAL_REDIRECT === 'on'
+  ? (() => { try { return new URL(process.env.PUBLIC_BASE_URL); } catch (e) { return null; } })() : null;
+if (CANON) {
+  app.use((req, res, next) => {
+    if ((req.method !== 'GET' && req.method !== 'HEAD') || req.path.startsWith('/api/')) return next();
+    const host = (req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase();
+    if (!host || host === CANON.host.toLowerCase() || /^(localhost|127\.0\.0\.1)(:|$)/.test(host)) return next();
+    res.redirect(301, CANON.origin + req.originalUrl);
+  });
+}
+
 // Keep the raw bytes of webhook bodies: Omise's signature is over them.
 // 20mb: a POS upload is daily totals, but a few months of a large chain adds up.
 app.use(express.json({ limit: '20mb', verify: (req, res, buf) => { if (req.originalUrl.startsWith('/api/webhooks/')) req.rawBody = buf; } }));

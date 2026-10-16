@@ -50,7 +50,7 @@ npm run seed
 ผ่านปุ่ม Start/Restart ใน Node.js Selector ของ DirectAdmin
 
 ### 6. ทดสอบ
-เปิด `https://play.kinsupplyandservice.com` → login ด้วย admin หรือ demo account
+เปิด `https://dashboard.kinsupplyandservice.com` → login ด้วย admin หรือ demo account
 
 ## สิ่งที่ยังไม่ทำ (ทำต่อได้หลัง demo)
 
