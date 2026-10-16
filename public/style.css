@@ -1381,5 +1381,9 @@ body.arranging-on .ai-fab { display: none; }
   .fr-actions .btn { flex: 1 1 auto; padding-inline: 12px; }
   .widget-sample { font-size: 11px; padding: 0 7px; margin-left: 6px; }
 }
-.fr-offnote { display: none; font-size: 12.5px; color: var(--muted); }
-.starter-opt.off .fr-offnote { display: block; }
+.fr-cap { margin: 0 0 12px; color: var(--ink); }
+.fr-cap.full { font-weight: 600; }
+.fr-cap.flash { animation: frflash .7s ease; }
+@keyframes frflash { 0%, 100% { background: transparent; } 30% { background: var(--amber-soft); } }
+@media (prefers-reduced-motion: reduce) { .fr-cap.flash { animation: none; } }
+@media (max-width: 700px) { .widget-grid { padding-bottom: 88px; } }

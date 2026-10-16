@@ -235,6 +235,12 @@ function keyOf(row, spec) {
     const v = bucketOf(pick(row, spec.field), spec.bucket);
     return v;
   }
+  // The same outlet is written "Company - Outlet" in one FMH report and "Outlet" in
+  // another: line them up on the outlet part, ignoring case and spacing.
+  if (spec.short) {
+    const v = pick(row, spec.field);
+    return isBlank(v) ? null : partyShort(v).toLowerCase().replace(/\s+/g, ' ');
+  }
   const v = pick(row, spec.field || spec);
   return v === undefined || v === null || v === '' ? null : String(v).trim();
 }
@@ -258,7 +264,7 @@ function pivotRows(rowsByAlias, cfg) {
   const out = [...buckets.entries()].map(([key, byAlias]) => {
     const row = { [spec.key_field || 'key']: key };
     (spec.columns || []).forEach((c) => {
-      const side = byAlias[c.from] || [];
+      const side = c.from_any ? c.from_any.flatMap((a) => byAlias[a] || []) : byAlias[c.from] || [];
       // `first` carries a label across (a product name next to its code);
       // everything else is an aggregate over that side's rows.
       if (c.first) {
@@ -308,6 +314,9 @@ function evalRow(expr, row) {
     case 'mul': return a() * b();
     case 'div': { const d = b(); return d ? a() / d : 0; }
     case 'pct_of': { const d = b(); return d ? (a() / d) * 100 : 0; }
+    // Text instead of a number when the gate field is zero: "not recorded" must not
+    // read as 0%. `a` is the number shown otherwise.
+    case 'if0': return evalRow(expr.gate, row) === 0 ? expr.text : a();
     case 'abs': return Math.abs(a());
     case 'max0': return Math.max(0, a());
     // Wilson score lower bound of a rate k/n, as a percent. Ranks suppliers by
@@ -976,12 +985,11 @@ async function renderFirstRun(wrap, cid) {
       <div class="fr-progress" aria-hidden="true">${wizard.map((_, i) => `<i class="${i <= step ? 'on' : ''}"></i>`).join('')}</div>
       <h2 class="starter-h" tabindex="-1">${step === 0 && name ? `ยินดีต้อนรับ ${esc(name)} — ` : ''}${titles[key]}</h2>
       ${step === 0 ? sampleNote : ''}
-      ${multi ? `<p class="muted starter-lead fr-cap" role="status">${ans.goals.length >= 2 ? 'เลือกครบ 2 ข้อแล้ว ยกเลิกข้อใดข้อหนึ่งถ้าอยากเปลี่ยน' : 'เลือกได้สูงสุด 2 ข้อ'}</p>` : ''}
+      ${multi ? '<p class="starter-lead fr-cap" role="status"></p>' : ''}
       <div class="starter-grid fr-q" role="${multi ? 'group' : 'radiogroup'}" aria-label="${esc(titles[key])}">
         ${items.map((v) => `<label class="starter-opt${sel(v) ? ' on' : ''}${multi && !sel(v) && ans.goals.length >= 2 ? ' off' : ''}">
           <input type="${multi ? 'checkbox' : 'radio'}" name="fr-q" value="${esc(v)}"${sel(v) ? ' checked' : ''}${multi && !sel(v) && ans.goals.length >= 2 ? ' disabled' : ''}>
           <b class="starter-title">${esc(labels[v])}</b>
-          <span class="fr-offnote">เลือกครบ 2 ข้อแล้ว ยกเลิกข้อที่เลือกไว้ก่อน</span>
           ${key === 'setup' ? `<span class="starter-desc">${esc(hints[v])}</span>` : ''}
         </label>`).join('')}
       </div>
@@ -992,6 +1000,20 @@ async function renderFirstRun(wrap, cid) {
       </div>
       <div class="starter-msg" role="status"></div>`;
     const next = box.querySelector('.fr-next');
+    // One line says how many are picked and what to do at the limit.
+    const capLine = () => {
+      const cap = box.querySelector('.fr-cap');
+      if (!cap) return;
+      const names = ans.goals.map((g) => choices.goals[g]).join(' · ');
+      cap.classList.toggle('full', ans.goals.length >= 2);
+      cap.textContent = ans.goals.length >= 2 ? `เลือกแล้ว: ${names} กดติ๊กออกจากข้อใดข้อหนึ่งเพื่อเปลี่ยน` : ans.goals.length ? `เลือกแล้ว: ${names} เลือกได้อีก 1 ข้อ` : 'เลือกได้สูงสุด 2 ข้อ';
+    };
+    capLine();
+    // A dimmed option cannot be ticked; tapping it points at the line above instead of doing nothing.
+    box.querySelectorAll('.starter-opt').forEach((l) => l.addEventListener('click', () => {
+      const cap = box.querySelector('.fr-cap');
+      if (l.classList.contains('off') && cap) { cap.classList.remove('flash'); void cap.offsetWidth; cap.classList.add('flash'); }
+    }));
     if (focus) box.querySelector('.starter-h').focus({ preventScroll: true });
     box.querySelectorAll('input[name="fr-q"]').forEach((r) =>
       r.addEventListener('change', () => {
@@ -1012,8 +1034,7 @@ async function renderFirstRun(wrap, cid) {
           l.classList.toggle('on', inp.checked);
           l.classList.toggle('off', inp.disabled);
         });
-        const cap = box.querySelector('.fr-cap');
-        if (cap) cap.textContent = ans.goals.length >= 2 ? 'เลือกครบ 2 ข้อแล้ว ยกเลิกข้อใดข้อหนึ่งถ้าอยากเปลี่ยน' : 'เลือกได้สูงสุด 2 ข้อ';
+        capLine();
         next.disabled = !done();
       }));
     next.addEventListener('click', () => (step === 2 ? renderResult() : renderQuestion(step + 1, true)));
@@ -1672,7 +1693,7 @@ class DashboardView {
              this.dashboard.data_source === 'demo'
                ? `<span class="demo-pill">ข้อมูลตัวอย่าง</span> <span class="muted">${
                    isCompanyAdmin() && !this.preview
-                     ? 'ตัวเลขเป็นข้อมูลตัวอย่าง ไม่ใช่ของร้านคุณ ลองจัด dashboard ให้ถูกใจได้เต็มที่ widget และการจัดวางจะอยู่ครบเมื่อสลับเป็นข้อมูลจริง'
+                     ? '<strong>ตัวเลขเป็นข้อมูลตัวอย่าง ไม่ใช่ของร้านคุณ</strong> ลองจัด dashboard ให้ถูกใจได้เต็มที่ widget และการจัดวางจะอยู่ครบเมื่อสลับเป็นข้อมูลจริง'
                      : 'ตัวเลขนี้เป็นข้อมูลตัวอย่าง ไม่ใช่ข้อมูลจริงของร้าน'
                  }</span>`
                : oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
