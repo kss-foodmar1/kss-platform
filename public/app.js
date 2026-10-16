@@ -316,7 +316,8 @@ function evalRow(expr, row) {
     case 'pct_of': { const d = b(); return d ? (a() / d) * 100 : 0; }
     // Text instead of a number when the gate field is zero: "not recorded" must not
     // read as 0%. `a` is the number shown otherwise.
-    case 'if0': return evalRow(expr.gate, row) === 0 ? expr.text : a();
+    // `then` (a number) instead of `text` keeps such rows sortable.
+    case 'if0': return evalRow(expr.gate, row) === 0 ? (expr.then !== undefined ? evalRow(expr.then, row) : expr.text) : a();
     case 'abs': return Math.abs(a());
     case 'max0': return Math.max(0, a());
     // Wilson score lower bound of a rate k/n, as a percent. Ranks suppliers by
@@ -988,7 +989,7 @@ async function renderFirstRun(wrap, cid) {
       ${multi ? '<p class="starter-lead fr-cap" role="status"></p>' : ''}
       <div class="starter-grid fr-q" role="${multi ? 'group' : 'radiogroup'}" aria-label="${esc(titles[key])}">
         ${items.map((v) => `<label class="starter-opt${sel(v) ? ' on' : ''}${multi && !sel(v) && ans.goals.length >= 2 ? ' off' : ''}">
-          <input type="${multi ? 'checkbox' : 'radio'}" name="fr-q" value="${esc(v)}"${sel(v) ? ' checked' : ''}${multi && !sel(v) && ans.goals.length >= 2 ? ' disabled' : ''}>
+          <input type="${multi ? 'checkbox' : 'radio'}" name="fr-q" value="${esc(v)}"${sel(v) ? ' checked' : ''}${multi && !sel(v) && ans.goals.length >= 2 ? ' aria-disabled="true"' : ''}>
           <b class="starter-title">${esc(labels[v])}</b>
           ${key === 'setup' ? `<span class="starter-desc">${esc(hints[v])}</span>` : ''}
         </label>`).join('')}
@@ -1001,24 +1002,34 @@ async function renderFirstRun(wrap, cid) {
       <div class="starter-msg" role="status"></div>`;
     const next = box.querySelector('.fr-next');
     // One line says how many are picked and what to do at the limit.
-    const capLine = () => {
+    const capLine = (refused = false) => {
       const cap = box.querySelector('.fr-cap');
       if (!cap) return;
       const names = ans.goals.map((g) => choices.goals[g]).join(' · ');
       cap.classList.toggle('full', ans.goals.length >= 2);
-      cap.textContent = ans.goals.length >= 2 ? `เลือกแล้ว: ${names} กดติ๊กออกจากข้อใดข้อหนึ่งเพื่อเปลี่ยน` : ans.goals.length ? `เลือกแล้ว: ${names} เลือกได้อีก 1 ข้อ` : 'เลือกได้สูงสุด 2 ข้อ';
+      cap.textContent = (refused ? 'เลือกครบ 2 ข้อแล้ว — ' : '') + (ans.goals.length >= 2 ? `เลือกแล้ว: ${names} — กดติ๊กออกจากข้อใดข้อหนึ่งเพื่อเปลี่ยน` : ans.goals.length ? `เลือกแล้ว: ${names} — เลือกได้อีก 1 ข้อ` : 'เลือกได้สูงสุด 2 ข้อ');
     };
     capLine();
-    // A dimmed option cannot be ticked; tapping it points at the line above instead of doing nothing.
-    box.querySelectorAll('.starter-opt').forEach((l) => l.addEventListener('click', () => {
+    // A third pick is refused, not disabled: the option stays reachable by keyboard,
+    // and refusing it points at the line that says why (outlined, scrolled into view,
+    // re-announced), which works with reduced motion too.
+    let nudgeTimer;
+    const nudge = () => {
       const cap = box.querySelector('.fr-cap');
-      if (l.classList.contains('off') && cap) { cap.classList.remove('flash'); void cap.offsetWidth; cap.classList.add('flash'); }
-    }));
+      if (!cap) return;
+      capLine(true);
+      cap.classList.remove('flash'); void cap.offsetWidth; cap.classList.add('flash');
+      const top = cap.getBoundingClientRect().top;
+      if (top < 0 || top > window.innerHeight - 40) cap.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      clearTimeout(nudgeTimer);
+      nudgeTimer = setTimeout(() => cap.classList.remove('flash'), 1800);
+    };
     if (focus) box.querySelector('.starter-h').focus({ preventScroll: true });
     box.querySelectorAll('input[name="fr-q"]').forEach((r) =>
       r.addEventListener('change', () => {
         if (multi) {
           const v = r.value;
+          if (r.checked && ans.goals.length >= 2) { r.checked = false; nudge(); return; }
           ans.goals = r.checked ? [...ans.goals, v] : ans.goals.filter((g) => g !== v);
         } else {
           ans[key] = r.value;
@@ -1030,9 +1041,10 @@ async function renderFirstRun(wrap, cid) {
         box.querySelectorAll('.starter-opt').forEach((l) => {
           const inp = l.querySelector('input');
           inp.checked = sel(inp.value);
-          if (multi) inp.disabled = !inp.checked && ans.goals.length >= 2;
+          const full = multi && !inp.checked && ans.goals.length >= 2;
+          if (full) inp.setAttribute('aria-disabled', 'true'); else inp.removeAttribute('aria-disabled');
           l.classList.toggle('on', inp.checked);
-          l.classList.toggle('off', inp.disabled);
+          l.classList.toggle('off', full);
         });
         capLine();
         next.disabled = !done();
@@ -1636,18 +1648,20 @@ class DashboardView {
     return notes.length ? `<p class="widget-foot coverage-note">${notes.map(esc).join('<br>')}</p>` : '';
   }
 
-  rowsFor(key, widget) {
+  // dateOverride: a widget that lines two reports up by date filters a pull on a
+  // field the page does not use for that report (its other widgets want it whole).
+  rowsFor(key, widget, dateOverride) {
     const r0 = this.results[key];
     if (!r0 || r0.error) return null;
     // Exception lists (unreceived lines, over-billing…) are about now: archived history keeps the last
     // status a line had in FMH's window, so it would list lines that were settled later.
     const r = widget && RECENT_ONLY.has(widget.category) && r0.data.some((x) => x._arch) ? { ...r0, data: r0.data.filter((x) => !x._arch) } : r0;
-    const dateField = this.sources[key] && this.sources[key].date_field;
+    const dateField = dateOverride || (this.sources[key] && this.sources[key].date_field);
     const active = Object.entries(this.filters).filter(([, v]) => v !== null && v !== undefined);
     const byFilter = (rows) => (active.length ? rows.filter((row) => active.every(([f, v]) => !(f in row) || String(row[f]) === v)) : rows);
     if (!dateField || !this.hasDateSource) return byFilter(r.data);
     const { start, end } = this.range;
-    if (this.sources[key].date_is_bucket) return byFilter(keepOverlappingBuckets(r.data, dateField, start, end));
+    if (!dateOverride && this.sources[key].date_is_bucket) return byFilter(keepOverlappingBuckets(r.data, dateField, start, end));
     return byFilter(r.data).filter((row) => {
       const d = row[dateField] ? String(row[dateField]).slice(0, 10) : null;
       return d && (!start || d >= start) && (!end || d <= end);
@@ -2073,7 +2087,7 @@ class DashboardView {
         const byAlias = {};
         widget.pulls.forEach((p) => {
           const r = this.results[p.key];
-          byAlias[p.as] = r && !r.error ? this.rowsFor(p.key, widget) || [] : null;
+          byAlias[p.as] = r && !r.error ? this.rowsFor(p.key, widget, p.date_field) || [] : null;
         });
         this.explainData.set(widget.id, { panels: true });
         try {
@@ -2100,10 +2114,10 @@ class DashboardView {
           return;
         }
         const byAlias = {};
-        widget.pulls.forEach((p) => { byAlias[p.as] = this.rowsFor(p.key, widget) || []; });
+        widget.pulls.forEach((p) => { byAlias[p.as] = this.rowsFor(p.key, widget, p.date_field) || []; });
         raw = pivotRows(byAlias, cfg) || [];
       } else {
-        raw = this.rowsFor(key, widget);
+        raw = this.rowsFor(key, widget, cfg.row_date_field);
       }
       const rows = applyRowLayer(raw, cfg);
       if (!rows.length) {
@@ -2179,7 +2193,10 @@ class DashboardView {
         if (skipped.length) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">widget นี้ไม่มีข้อมูล${esc(skipped.map((f) => ({ customer: 'ลูกค้า', branch: 'สาขา', supplier: 'ซัพพลายเออร์' })[f] || f).join(', '))} จึงแสดงทั้งหมด ไม่ได้กรองตามตัวเลือกด้านบน</p>`);
         // A note on how to read the widget. Renderers that place it themselves
         // (range) are left alone.
-        if (cfg.foot && widget.chart_type !== 'range') body.insertAdjacentHTML('beforeend', `<p class="widget-foot widget-note">${esc(cfg.foot)}</p>`);
+        // A widget that needs a long span to mean anything says so when the range is shorter.
+        const span = this.range.start && this.range.end ? (Date.parse(this.range.end) - Date.parse(this.range.start)) / 86400000 + 1 : null;
+        if (cfg.min_range_days && span && span < cfg.min_range_days) body.insertAdjacentHTML('beforeend', `<p class="widget-foot warn-msg">ช่วงที่เลือกสั้นกว่า ${cfg.min_range_days} วัน ตัวเลขอาจแกว่งมาก ลองเลือก 30 วันขึ้นไป</p>`);
+        if (cfg.foot && widget.chart_type !== 'range') body.insertAdjacentHTML('beforeend', `<p class="widget-foot widget-note">${esc(cfg.foot).replace(/\n/g, '<br>')}</p>`);
         body.insertAdjacentHTML('beforeend', this.coverageNote(widget));
       } catch (err) {
         console.error('Widget render failed', widget, err);
@@ -2859,7 +2876,7 @@ function renderPanels(body, byAlias, cfg) {
     }
     renderer(inner, rows, panel);
   });
-  if (cfg.foot) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">${esc(cfg.foot)}</p>`);
+  if (cfg.foot) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">${esc(cfg.foot).replace(/\n/g, '<br>')}</p>`);
 }
 
 // ---- pareto: ranked bars plus a cumulative share line ----

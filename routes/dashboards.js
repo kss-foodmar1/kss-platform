@@ -51,7 +51,8 @@ function describeWidgets(widgets) {
       ? w.config.sources.map((sc) => {
           const c = FMH_REPORTS[sc.source];
           const g = c && sc.group_by && c.groupings.includes(sc.group_by) ? sc.group_by : null;
-          return { as: sc.as, key: cacheKeyFor(sc.source, g) };
+          // date_field: filter this alias on that row field for this widget only
+          return { as: sc.as, key: cacheKeyFor(sc.source, g), ...(sc.date_field && !g ? { date_field: sc.date_field } : {}) };
         })
       : null;
   });

@@ -826,6 +826,7 @@ const PROBES = {
   date_filter: (id) => probe.probeDateFilter(id),
   group_by: (id) => probe.probeGroupBy(id),
   ck_sales: (id) => probe.probeCkSales(id),
+  widget_fields: (id) => probe.probeWidgetFields(id),
 };
 
 router.post(
