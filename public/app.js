@@ -631,6 +631,12 @@ const NAV_ICON = {
   plan: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>',
   building: '<path d="M4 21V5l8-2v18M12 9l8 2v10M8 8v1M8 12v1M8 16v1M16 13v1M16 17v1M2 21h20"/>',
   back: '<path d="M15 6l-6 6 6 6"/>',
+  home: '<path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/>',
+  inbox: '<path d="M3 13l3-8h12l3 8v6H3zM3 13h5l1 3h6l1-3h5"/>',
+  chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
+  megaphone: '<path d="M3 10v4l11 4V6zM14 8c3 0 5 1.5 5 4s-2 4-5 4M6 14l1 5h3l-1-4"/>',
+  pulse: '<path d="M3 12h4l2-6 4 12 2-6h6"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1.9-1.1 1.8M12 17h.01"/>',
 };
 const navIcon = (k) => `<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${NAV_ICON[k]}</svg>`;
 
@@ -642,6 +648,7 @@ function renderSideNav() {
   const link = (attrs, icon, label, on) =>
     `<button type="button" class="side-link${on ? ' on' : ''}" ${attrs}${on ? ' aria-current="page"' : ''}>${icon ? navIcon(icon) : ''}<span class="side-label">${esc(label)}</span></button>`;
   const settings = [
+    ['status', 'pulse', 'สถานะระบบ'],
     ['dashboards', 'layout', 'จัดการ Dashboard'],
     ['data', 'data', 'การเชื่อมข้อมูล'],
     ['alerts', 'bell', 'ตัวเตือน & LINE'],
@@ -653,9 +660,10 @@ function renderSideNav() {
     ${coName ? `<div class="side-company"><span class="side-co-mark" aria-hidden="true">${esc(coName.trim().charAt(0) || 'K')}</span><span class="side-co-text"><b>${esc(coName)}</b>${state.user.company_code ? `<span>${esc(state.user.company_code)}</span>` : ''}</span></div>` : ''}
     <div class="side-group">${link('data-go="back"', 'back', 'กลับไปดู Dashboard', false)}</div>
     <div class="side-group"><div class="side-title">ตั้งค่า</div>${settings.map(([k, ic, label]) => link(`data-settings="${k}"`, ic, label, cur.kind === 'settings' && cur.tab === k)).join('')}</div>
-    <div class="side-group">${link('data-go="library"', 'library', 'คลัง Widget', cur.kind === 'library')}</div>`;
+    <div class="side-group">${link('data-go="library"', 'library', 'คลัง Widget', cur.kind === 'library')}${link('data-go="support"', 'help', 'แจ้งทีมงาน', false)}</div>`;
   nav.querySelector('[data-go="back"]').addEventListener('click', () => goDashboard(state.activeDashboardId || (state.dashboards[0] || {}).id));
   nav.querySelector('[data-go="library"]').addEventListener('click', () => openLibrary());
+  nav.querySelector('[data-go="support"]').addEventListener('click', () => openSupportForm());
   nav.querySelectorAll('[data-settings]').forEach((b) => b.addEventListener('click', () => openCompanySettings(b.dataset.settings)));
 }
 
@@ -806,10 +814,151 @@ async function loadDashboards(preferredDashboardId) {
   if (target) selectDashboard(target.id);
   else {
     destroyCharts();
-    wrap.innerHTML = `<p class="muted">${
-      isSuper() ? 'บริษัทนี้ยังไม่มี dashboard — สร้างได้ใน Admin Console' : 'ยังไม่มี dashboard ที่คุณเข้าถึงได้ กรุณาติดต่อผู้ดูแลระบบ'
-    }</p>`;
+    if (isCompanyAdmin()) renderFirstRun(wrap, state.viewCompanyId);
+    else if (isSuper()) wrap.innerHTML = '<p class="muted">บริษัทนี้ยังไม่มี dashboard — สร้างได้ใน Admin Console</p>';
+    else renderNoAccess(wrap);
   }
+}
+
+// A member whose company admin has not shared a dashboard yet: say what
+// happened and who can fix it, instead of a blank page.
+function renderNoAccess(wrap) {
+  wrap.innerHTML = `<div class="dash-empty firstrun-noaccess">
+    <h2 class="starter-h">ยังไม่มี dashboard ให้คุณดู</h2>
+    <p class="muted starter-lead">บัญชีของคุณเข้าระบบได้แล้ว แต่ผู้ดูแลบริษัทยังไม่ได้เปิดสิทธิ์ dashboard ให้ ขอให้ผู้ดูแลบริษัทเปิดให้ หรือกดแจ้งทีมงานด้านล่าง ระบบจะแนบข้อมูลบัญชีให้เอง</p>
+    <div class="starter-actions"><button type="button" class="btn primary" id="noaccess-report">แจ้งทีมงาน</button></div>
+  </div>`;
+  wrap.querySelector('#noaccess-report').addEventListener('click', () =>
+    openSupportForm({ kind: 'other', message: 'ล็อกอินแล้วยังไม่เห็น dashboard — ขอให้เปิดสิทธิ์ให้' }));
+}
+
+// "Ready for real data?" — asks first, says what stays and what is cleared,
+// and when nothing real is connected yet explains how to connect it.
+function showRealConfirm(bar, dashboardId, force = false) {
+  bar.querySelector('.real-confirm')?.remove();
+  const box = document.createElement('div');
+  box.className = 'real-confirm';
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', 'สลับเป็นข้อมูลจริง');
+  bar.appendChild(box);
+  const close = () => { box.remove(); bar.querySelector('.use-real-btn')?.focus(); };
+  box.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } });
+  const show = (html, wire) => { box.innerHTML = html; (wire || (() => {}))(); const f = box.querySelector('button'); if (f) f.focus(); };
+  const ask = () => show(`
+    <b>สลับเป็นข้อมูลจริง?</b>
+    <ul>
+      <li>dashboard, widget และการจัดวางที่คุณทำไว้ <b>อยู่ครบ</b> (widget ที่ใช้ข้อมูล FMH จะแสดงตัวเลขเมื่อดึงเสร็จ)</li>
+      <li>ตัวเลขตัวอย่างจะหายไป รวมถึงรายการ "เช้านี้ต้องทำ" ของตัวอย่าง (ไม่กระทบข้อมูลจริงของร้าน) รายการเตือนจริงจะขึ้นตามข้อมูลที่ดึงมา</li>
+      <li>ตัวเลขจริงใช้เวลาดึงสักครู่ (ปกติไม่กี่นาที) และเดือนปัจจุบันยังไม่จบ ตัวเลขต้นทุนช่วงแรกอาจยังไม่ครบ</li>
+      <li>สลับแล้วกลับไปใช้ข้อมูลตัวอย่างเองไม่ได้ (ทีม KSS ช่วยเปลี่ยนกลับได้)</li>
+    </ul>
+    <div class="real-actions"><button type="button" class="btn small primary real-yes">ยืนยันสลับ</button><button type="button" class="btn small ghost real-no">ยังก่อน</button></div>
+    <div class="real-msg" role="status"></div>`, () => {
+      box.querySelector('.real-no').addEventListener('click', close);
+      box.querySelector('.real-yes').addEventListener('click', go);
+    });
+  const noData = () => show(`
+    <b>ยังไม่ได้เชื่อมข้อมูลจริง</b>
+    <p class="muted">ต้องมีอย่างใดอย่างหนึ่งก่อน: <b>FMH API Key</b> (รหัสเชื่อมระบบจัดซื้อ FMH ของร้านคุณ ขอได้จากทีม KSS หรือผู้ดูแล FMH) หรือ <b>ไฟล์ยอดขาย POS</b> ไม่แน่ใจว่ามีไหม ให้ทีม KSS ช่วยตั้งให้ได้เลย ระหว่างนี้จัดเรียง dashboard ต่อได้</p>
+    <div class="real-actions"><button type="button" class="btn small primary real-help">ให้ทีม KSS ช่วยตั้งให้</button><button type="button" class="btn small ghost real-connect">ใส่ key / อัปโหลดไฟล์เอง</button><button type="button" class="btn small ghost real-no">ปิด</button></div>`, () => {
+      box.querySelector('.real-connect').addEventListener('click', () => openCompanySettings('data'));
+      box.querySelector('.real-help').addEventListener('click', () => openSupportForm({ kind: 'connect', message: 'อยากเริ่มใช้ข้อมูลจริง ขอให้ช่วยเชื่อม FMH key หรือไฟล์ POS' }));
+      box.querySelector('.real-no').addEventListener('click', close);
+    });
+  const posOnly = (msg) => show(`
+    <b>มีเฉพาะไฟล์ยอดขาย POS</b>
+    <p class="muted">${esc(msg)}</p>
+    <div class="real-actions"><button type="button" class="btn small primary real-connect">ใส่ FMH key ก่อน</button><button type="button" class="btn small ghost real-force">สลับเลย (ส่วน FMH ว่างก่อน)</button><button type="button" class="btn small ghost real-no">ยังก่อน</button></div>`, () => {
+      box.querySelector('.real-connect').addEventListener('click', () => openCompanySettings('data'));
+      box.querySelector('.real-force').addEventListener('click', () => go(true));
+      box.querySelector('.real-no').addEventListener('click', close);
+    });
+  async function go(forceNow) {
+    const yes = box.querySelector('.real-yes') || box.querySelector('.real-force');
+    box.querySelectorAll('button').forEach((b) => (b.disabled = true));
+    if (yes) yes.textContent = 'กำลังสลับ...';
+    try {
+      await api('/api/settings/use-real-data', { method: 'POST', body: JSON.stringify({ force: forceNow === true }) });
+      state.realNoteUntil = Date.now() + 15 * 60 * 1000;
+      await loadDashboards(dashboardId);
+    } catch (err) {
+      if (err.code === 'NO_DATA') return noData();
+      if (err.code === 'POS_ONLY') return posOnly(err.message);
+      ask();
+      box.querySelector('.real-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    }
+  }
+  ask();
+}
+
+// First login of a company admin with no dashboard: a guided start in place of
+// a blank page. Pick a starter, one click makes the dashboard and fills it;
+// if no data is connected yet, the first step is connecting it.
+async function renderFirstRun(wrap, cid) {
+  wrap.innerHTML = '<div class="dash-empty starter firstrun"><p class="muted">กำลังเตรียมหน้าเริ่มต้น...</p></div>';
+  const box = wrap.firstElementChild;
+  let options;
+  let sample = false;
+  try {
+    // Nothing connected yet: start on sample data so the first look has numbers.
+    ({ sample } = await api('/api/settings/start-sample', { method: 'POST', body: JSON.stringify({}) }));
+    ({ options } = await api(`/api/admin/companies/${cid}/starter-options`));
+  } catch (err) {
+    box.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    return;
+  }
+  const anyReady = options.some((o) => o.ready.length);
+  let pick = (options.find((o) => o.key === 'basic' && o.ready.length) || options.find((o) => o.ready.length) || {}).key || null;
+  const name = (state.user && state.user.company_name) || '';
+  const step = (n, label, state_) => `<li class="fr-step ${state_}"><span class="fr-n">${state_ === 'done' ? '✓' : n}</span>${esc(label)}</li>`;
+  box.innerHTML = `
+    <p class="starter-role">เริ่มต้นใช้งาน</p>
+    <h2 class="starter-h">ยินดีต้อนรับ${name ? ` ${esc(name)}` : ''} — มาตั้ง dashboard แรกกัน</h2>
+    <ol class="fr-steps" aria-label="ขั้นตอนเริ่มต้น">
+      ${sample
+        ? `${step(1, 'เลือกชุดและดูข้อมูลตัวอย่าง', 'now')}${step(2, 'เชื่อมข้อมูลจริงของร้านคุณ', 'todo')}${step(3, 'ปรับแต่งและเชิญทีม', 'todo')}`
+        : `${step(1, 'เชื่อมข้อมูล (FMH / ไฟล์ POS)', anyReady ? 'done' : 'now')}${step(2, 'เลือกชุด dashboard', anyReady ? 'now' : 'todo')}${step(3, 'ปรับแต่งและเชิญทีม', 'todo')}`}
+    </ol>
+    ${anyReady
+      ? `<p class="muted starter-lead">${sample ? 'ช่วงแรกคุณจะได้ลองกับ<b>ข้อมูลตัวอย่าง</b> ยังไม่ต้องเชื่อมอะไร ลองดู widget ต่างๆ และจัด dashboard ให้ถูกใจ ' : ''}เลือกชุดที่ตรงกับบทบาทของคุณ แล้วกด “สร้างให้เลย” ระบบสร้าง dashboard และใส่ widget ให้ทันที พอพร้อมใช้ข้อมูลจริง กดปุ่ม “พร้อมใช้ข้อมูลจริงแล้ว” ที่แถบด้านบน dashboard widget และการจัดวางที่ทำไว้จะอยู่ครบ</p>`
+      : '<div class="fr-connect"><b>ยังไม่มีข้อมูลให้แสดง</b><span class="muted">ใส่ FMH API Key หรืออัปโหลดไฟล์ POS ก่อน แล้ว dashboard จะมีตัวเลขจริงตั้งแต่เปิดครั้งแรก</span><button type="button" class="btn primary fr-data">เชื่อมข้อมูลตอนนี้</button></div>'}
+    ${!anyReady ? '' : `<div class="starter-grid" role="radiogroup" aria-label="ชุดเริ่มต้น">
+      ${options.map((o) => `<label class="starter-opt${o.ready.length ? '' : ' off'}${o.key === pick ? ' on' : ''}">
+        <input type="radio" name="fr-pick" value="${esc(o.key)}"${o.key === pick ? ' checked' : ''}${o.ready.length ? '' : ' disabled'}>
+        <span class="starter-role">${esc(o.role || 'แนะนำ')}</span>
+        <b class="starter-title">${esc(o.title)}</b>
+        <span class="starter-desc">${esc(o.description)}</span>
+        <span class="starter-count">${o.ready.length ? `พร้อมแสดง ${o.ready.length} widget` : 'ยังไม่มีข้อมูลสำหรับชุดนี้'}</span>
+      </label>`).join('')}
+    </div>`}
+    <div class="starter-actions fr-actions">
+      ${anyReady ? `<button type="button" class="btn primary fr-go"${pick ? '' : ' disabled'}>สร้างให้เลย</button>` : ''}
+      <button type="button" class="btn ghost fr-empty">เริ่มจาก dashboard ว่าง</button>
+    </div>
+    <div class="starter-msg" role="status"></div>`;
+  box.querySelectorAll('input[name="fr-pick"]').forEach((r) =>
+    r.addEventListener('change', () => {
+      pick = r.value;
+      box.querySelectorAll('.starter-opt').forEach((l) => l.classList.toggle('on', l.querySelector('input').value === pick));
+    }));
+  const dataBtn = box.querySelector('.fr-data');
+  if (dataBtn) dataBtn.addEventListener('click', () => openCompanySettings('data'));
+  const run = async (btn, body, busy, idle) => {
+    box.querySelectorAll('button').forEach((b) => (b.disabled = true));
+    btn.textContent = busy;
+    try {
+      const r = await api(`/api/admin/companies/${cid}/first-dashboard`, { method: 'POST', body: JSON.stringify(body) });
+      await loadDashboards(r.id);
+    } catch (err) {
+      box.querySelectorAll('button').forEach((b) => (b.disabled = false));
+      btn.textContent = idle;
+      box.querySelector('.starter-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    }
+  };
+  const go = box.querySelector('.fr-go');
+  if (go) go.addEventListener('click', () => run(go, { key: pick }, 'กำลังสร้าง...', 'สร้างให้เลย'));
+  const emp = box.querySelector('.fr-empty');
+  emp.addEventListener('click', () => run(emp, { empty: true }, 'กำลังสร้าง...', 'เริ่มจาก dashboard ว่าง'));
 }
 
 function renderTabs() {
@@ -1000,6 +1149,13 @@ class DashboardView {
       header.querySelector('.dash-add').addEventListener('click', () => openLibrary({ dashboardId: this.dashboard.id }));
     }
 
+    // Sample data is the first thing to know: its banner goes above the to-do
+    // list; with real data the sync line stays below it as before.
+    const statusFirst = this.dashboard.data_source === 'demo';
+    if (statusFirst) {
+      this.statusEl = document.createElement('div');
+      this.wrap.appendChild(this.statusEl);
+    }
     if (!this.preview) {
       this.todayEl = document.createElement('section');
       this.todayEl.className = 'today-card';
@@ -1007,8 +1163,10 @@ class DashboardView {
       this.wrap.appendChild(this.todayEl);
       this.renderToday();
     }
-    this.statusEl = document.createElement('div');
-    this.wrap.appendChild(this.statusEl);
+    if (!statusFirst) {
+      this.statusEl = document.createElement('div');
+      this.wrap.appendChild(this.statusEl);
+    }
     // A page-wide filter (customer, for the CK sales widgets): any widget can
     // ask for it with config.page_filter, and it then applies to every widget
     // on the page whose rows carry that field.
@@ -1398,10 +1556,14 @@ class DashboardView {
       : `<div class="fmh-sync-line">
            <span>${
              this.dashboard.data_source === 'demo'
-               ? '<span class="demo-pill">ข้อมูลตัวอย่าง</span> <span class="muted">ข้อมูลตัวอย่างสำหรับเดโม — ไม่ใช่ข้อมูลจริงและไม่ใช้โควตา FMH</span>'
+               ? `<span class="demo-pill">ข้อมูลตัวอย่าง</span> <span class="muted">${
+                   isCompanyAdmin() && !this.preview
+                     ? 'ลองจัด dashboard ให้ถูกใจได้เต็มที่ — widget และการจัดวางจะอยู่ครบเมื่อสลับเป็นข้อมูลจริง'
+                     : 'ตัวเลขนี้เป็นข้อมูลตัวอย่าง ไม่ใช่ข้อมูลจริงของร้าน'
+                 }</span>`
                : oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
            }</span>
-           <span class="sync-actions">${toggle}${keyMissing ? '' : '<button type="button" class="btn small ghost fmh-refresh-btn">ดึงข้อมูลใหม่</button>'}</span>
+           <span class="sync-actions">${this.dashboard.data_source === 'demo' ? '' : toggle}${this.dashboard.data_source === 'demo' && isCompanyAdmin() && !this.preview ? '<button type="button" class="btn small primary use-real-btn">พร้อมใช้ข้อมูลจริงแล้ว</button>' : ''}${keyMissing || this.dashboard.data_source === 'demo' ? '' : '<button type="button" class="btn small ghost fmh-refresh-btn">ดึงข้อมูลใหม่</button>'}</span>
          </div>
          ${
            failed.length
@@ -1474,7 +1636,17 @@ class DashboardView {
     if (tg) tg.addEventListener('click', () => this.switchSaved(tg.dataset.on === '1'));
     if (keyMissing && !this.useSaved) bar.insertAdjacentHTML('beforeend', `<div class="error-msg" style="margin:4px 0 0;">${esc(keyMissingMessage())}</div>`);
     this.statusEl.appendChild(bar);
+    if (state.realNoteUntil && Date.now() < state.realNoteUntil && this.dashboard.data_source !== 'demo') {
+      const note = document.createElement('div');
+      note.className = 'real-note';
+      note.setAttribute('role', 'status');
+      note.innerHTML = '<span><b>กำลังดึงข้อมูลจริงของร้านคุณ</b> ตัวเลขจะค่อยๆ ขึ้นภายในไม่กี่นาที เดือนปัจจุบันยังไม่จบและข้อมูลย้อนหลังอาจยังไม่ครบ ตัวเลขต้นทุนช่วงแรกจึงอาจต่ำหรือสูงกว่าจริง</span><button type="button" class="btn small ghost real-note-x">เข้าใจแล้ว</button>';
+      note.querySelector('.real-note-x').addEventListener('click', () => { state.realNoteUntil = 0; note.remove(); });
+      bar.after(note);
+    }
 
+    const real = bar.querySelector('.use-real-btn');
+    if (real) real.addEventListener('click', () => showRealConfirm(bar, this.dashboard.id));
     const btn = bar.querySelector('.fmh-refresh-btn');
     if (btn) {
       btn.addEventListener('click', async () => {
@@ -1520,20 +1692,23 @@ class DashboardView {
     const sevCls = { 'วิกฤต': 'crit', 'สูง': 'high', 'กลาง': 'mid' };
     const money = (v) => (v ? '฿' + Math.round(v).toLocaleString('th-TH') : '');
     const people = data.people || [];
+    const sampleMode = this.dashboard.data_source === 'demo';
     const item = (it, i) => `<li class="today-item" data-i="${i}">
         <span class="sev-pill sev-${sevCls[it.severity] || 'mid'}">${esc(it.severity)}</span>
         <div class="today-main"><b>${esc(it.subject || it.detail)}</b>${it.owner ? `<span class="today-owner">งาน${esc(it.owner)}</span>` : ''}<span>${esc(it.subject ? it.detail : '')}</span>
           <span class="today-meta">${[it.branch, it.age_days != null ? `ค้าง ${it.age_days} วัน` : '', money(it.impact)].filter(Boolean).map(esc).join(' · ')}${it.handled ? ` · <em>${esc(it.handled)}</em>` : ''}</span></div>
         <div class="today-acts">${
-          it.ack_status
-            ? '<button type="button" class="btn small ghost t-clear">ยกเลิก</button>'
-            : '<button type="button" class="btn small ghost t-ack">รับทราบ</button><button type="button" class="btn small ghost t-assign">มอบหมาย</button>'
+          sampleMode
+            ? ''
+            : it.ack_status
+              ? '<button type="button" class="btn small ghost t-clear">ยกเลิก</button>'
+              : '<button type="button" class="btn small ghost t-ack">รับทราบ</button><button type="button" class="btn small ghost t-assign">มอบหมาย</button>'
         }${it.source && this.widgets.some((w) => w.report_source === it.source) ? '<button type="button" class="btn small ghost t-go">ดูในรายการ</button>' : ''}</div>
         <form class="today-assign" hidden><label class="sr-only" for="ta-${i}">มอบหมายให้</label><input id="ta-${i}" list="today-people-${this.dashboard.id}" placeholder="ชื่อผู้รับผิดชอบ" maxlength="80" required><button type="submit" class="btn small primary">มอบหมาย</button></form>
       </li>`;
     const all = [...open, ...taken];
     box.innerHTML = `<div class="today-head">
-        <div><h2>เช้านี้ต้องทำ</h2><p>${open.length ? `${open.length} เรื่องยังไม่มีคนรับ${crit ? ` · วิกฤต ${crit}` : ''}${sumOpen ? ` · ยอดค้าง ฿${Math.round(sumOpen).toLocaleString('th-TH')}` : ''}` : 'ทุกเรื่องมีคนรับแล้ว'}${taken.length ? ` · รับแล้ว ${taken.length}` : ''}</p></div>
+        <div><h2>เช้านี้ต้องทำ${sampleMode ? ' <span class="demo-pill">ตัวอย่าง</span>' : ''}</h2>${sampleMode ? '<p class="muted">รายการนี้สร้างจากข้อมูลตัวอย่าง ไม่ใช่งานค้างจริงของร้านคุณ ปุ่มรับทราบ/มอบหมายจะใช้ได้เมื่อเป็นข้อมูลจริง</p>' : ''}<p>${open.length ? `${open.length} เรื่องยังไม่มีคนรับ${crit ? ` · วิกฤต ${crit}` : ''}${sumOpen ? ` · ยอดค้าง ฿${Math.round(sumOpen).toLocaleString('th-TH')}` : ''}` : 'ทุกเรื่องมีคนรับแล้ว'}${taken.length ? ` · รับแล้ว ${taken.length}` : ''}</p></div>
         <button type="button" class="btn small ghost today-fold" aria-expanded="${!folded}" aria-label="${folded ? 'แสดงรายการเช้านี้ต้องทำ' : 'ย่อรายการเช้านี้ต้องทำ'}">${folded ? 'แสดง' : 'ย่อ'}</button>
       </div>
       <div class="today-body"${folded ? ' hidden' : ''}>

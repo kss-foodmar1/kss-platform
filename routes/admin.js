@@ -47,6 +47,7 @@ const COMPANY_ADMIN_ROUTES = [
   // "Start with a basic dashboard?" (lib/starter.js)
   ['GET', /^\/companies\/(\d+)\/starter-options$/, 'company'],
   ['POST', /^\/companies\/(\d+)\/dashboards\/\d+\/starter$/, 'company'],
+  ['POST', /^\/companies\/(\d+)\/first-dashboard$/, 'company'],
 ];
 
 async function adminAccess(req, res, next) {
@@ -688,6 +689,30 @@ router.post(
       added++;
     }
     res.json({ added });
+  })
+);
+
+// First run: a company with no dashboard yet gets one made from the chosen
+// starter option in a single call, named after the option. { key } or { empty: true }.
+router.post(
+  '/companies/:id/first-dashboard',
+  wrap(async (req, res) => {
+    const companyId = Number(req.params.id);
+    if (!(await companyExists(companyId))) return res.status(404).json({ error: 'Company not found' });
+    const [[have]] = await pool.query(`SELECT id FROM dashboards WHERE company_id = ? ORDER BY sort_order, id LIMIT 1`, [companyId]);
+    if (have) return res.json({ id: have.id, added: 0, existing: true });
+    const starter = require('../lib/starter');
+    if (req.body && req.body.empty) {
+      return res.status(201).json({ id: await createDashboard(companyId, 'Dashboard ของฉัน'), added: 0 });
+    }
+    const key = String((req.body && req.body.key) || 'basic');
+    const opt = starter.OPTIONS.find((o) => o.key === key);
+    if (!opt) return bad(res, 'ไม่รู้จักชุดนี้');
+    const tpls = await starter.readyTemplates(companyId, key);
+    if (!tpls || !tpls.length) return bad(res, 'ชุดนี้ยังไม่มีข้อมูลพร้อมแสดง — เชื่อมข้อมูลก่อน หรือเริ่มจาก dashboard ว่าง');
+    const id = await createDashboard(companyId, opt.title);
+    for (const t of tpls) await appendWidget(companyId, id, t, {});
+    res.status(201).json({ id, added: tpls.length });
   })
 );
 
