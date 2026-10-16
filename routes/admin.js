@@ -661,12 +661,24 @@ router.post(
   })
 );
 
+// What the first admin answered in the first-run questions, kept on the company.
+async function saveProfile(companyId, raw) {
+  const p = require('../lib/starter').cleanProfile(raw);
+  if (!p.setup && !p.role && !p.goals.length) return;
+  await pool.query(`UPDATE companies SET onboarding_json = ? WHERE id = ?`, [JSON.stringify(p), companyId]);
+}
+
 // ---------- "Start with a basic dashboard?" ----------
 router.get(
   '/companies/:id/starter-options',
   wrap(async (req, res) => {
     if (!(await companyExists(req.params.id))) return res.status(404).json({ error: 'Company not found' });
-    res.json({ options: await require('../lib/starter').options(Number(req.params.id)) });
+    const starter = require('../lib/starter');
+    const opts = await starter.options(Number(req.params.id));
+    // ?setup=&role=&goals=a,b ranks and filters by the first-run answers.
+    const q = req.query;
+    const profile = starter.cleanProfile({ setup: q.setup, role: q.role, goals: String(q.goals || '').split(',') });
+    res.json({ options: starter.recommend(opts, profile), profile, choices: { setups: starter.SETUPS, roles: starter.ROLES, goals: starter.GOALS } });
   })
 );
 
@@ -703,6 +715,7 @@ router.post(
     if (have) return res.json({ id: have.id, added: 0, existing: true });
     const starter = require('../lib/starter');
     if (req.body && req.body.empty) {
+      await saveProfile(companyId, req.body && req.body.profile);
       return res.status(201).json({ id: await createDashboard(companyId, 'Dashboard ของฉัน'), added: 0 });
     }
     const key = String((req.body && req.body.key) || 'basic');
@@ -712,6 +725,7 @@ router.post(
     if (!tpls || !tpls.length) return bad(res, 'ชุดนี้ยังไม่มีข้อมูลพร้อมแสดง — เชื่อมข้อมูลก่อน หรือเริ่มจาก dashboard ว่าง');
     const id = await createDashboard(companyId, opt.title);
     for (const t of tpls) await appendWidget(companyId, id, t, {});
+    await saveProfile(companyId, req.body && req.body.profile);
     res.status(201).json({ id, added: tpls.length });
   })
 );

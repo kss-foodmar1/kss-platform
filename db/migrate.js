@@ -136,6 +136,13 @@ async function upgradeCompanies() {
     await pool.query(`ALTER TABLE companies ADD COLUMN suspended_reason VARCHAR(20) NULL`);
     console.log('  companies: added suspended_reason');
   }
+  // What the first admin told us in the first-run questions (shape of the
+  // business, role, interests): picks the starter pack, and tells KSS who the
+  // customer is.
+  if (!(await columnInfo('companies', 'onboarding_json'))) {
+    await pool.query(`ALTER TABLE companies ADD COLUMN onboarding_json TEXT NULL`);
+    console.log('  companies: added onboarding_json');
+  }
 }
 
 // Which POS a file came from, once more than one POS can be uploaded.

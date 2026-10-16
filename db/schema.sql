@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS companies (
   subscription_ends_at DATE NULL,
   data_source ENUM('fmh','demo') NOT NULL DEFAULT 'fmh',
   suspended_reason VARCHAR(20) NULL,
+  onboarding_json TEXT NULL,
   self_serve BOOLEAN NOT NULL DEFAULT FALSE,
   data_purged_at TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

@@ -892,73 +892,176 @@ function showRealConfirm(bar, dashboardId, force = false) {
 }
 
 // First login of a company admin with no dashboard: a guided start in place of
-// a blank page. Pick a starter, one click makes the dashboard and fills it;
-// if no data is connected yet, the first step is connecting it.
+// a blank page. Three short questions (the shape of the business, who is
+// looking, what they want to find out) pick and rank the starter packs, so the
+// first dashboard already answers their question. One click then makes it.
+// If no data is connected yet, the first step is connecting it.
 async function renderFirstRun(wrap, cid) {
   wrap.innerHTML = '<div class="dash-empty starter firstrun"><p class="muted">กำลังเตรียมหน้าเริ่มต้น...</p></div>';
   const box = wrap.firstElementChild;
   let options;
+  let choices;
   let sample = false;
   try {
     // Nothing connected yet: start on sample data so the first look has numbers.
     ({ sample } = await api('/api/settings/start-sample', { method: 'POST', body: JSON.stringify({}) }));
-    ({ options } = await api(`/api/admin/companies/${cid}/starter-options`));
+    ({ options, choices } = await api(`/api/admin/companies/${cid}/starter-options`));
   } catch (err) {
-    box.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    box.innerHTML = `<div class="error-msg">${esc(err.message)}<div><button type="button" class="btn ghost fr-retry">ลองอีกครั้ง</button></div></div>`;
+    box.querySelector('.fr-retry').addEventListener('click', () => renderFirstRun(wrap, cid));
     return;
   }
-  const anyReady = options.some((o) => o.ready.length);
-  let pick = (options.find((o) => o.key === 'basic' && o.ready.length) || options.find((o) => o.ready.length) || {}).key || null;
   const name = (state.user && state.user.company_name) || '';
-  const step = (n, label, state_) => `<li class="fr-step ${state_}"><span class="fr-n">${state_ === 'done' ? '✓' : n}</span>${esc(label)}</li>`;
-  box.innerHTML = `
-    <p class="starter-role">เริ่มต้นใช้งาน</p>
-    <h2 class="starter-h">ยินดีต้อนรับ${name ? ` ${esc(name)}` : ''} — มาตั้ง dashboard แรกกัน</h2>
-    <ol class="fr-steps" aria-label="ขั้นตอนเริ่มต้น">
-      ${sample
-        ? `${step(1, 'เลือกชุดและดูข้อมูลตัวอย่าง', 'now')}${step(2, 'เชื่อมข้อมูลจริงของร้านคุณ', 'todo')}${step(3, 'ปรับแต่งและเชิญทีม', 'todo')}`
-        : `${step(1, 'เชื่อมข้อมูล (FMH / ไฟล์ POS)', anyReady ? 'done' : 'now')}${step(2, 'เลือกชุด dashboard', anyReady ? 'now' : 'todo')}${step(3, 'ปรับแต่งและเชิญทีม', 'todo')}`}
-    </ol>
-    ${anyReady
-      ? `<p class="muted starter-lead">${sample ? 'ช่วงแรกคุณจะได้ลองกับ<b>ข้อมูลตัวอย่าง</b> ยังไม่ต้องเชื่อมอะไร ลองดู widget ต่างๆ และจัด dashboard ให้ถูกใจ ' : ''}เลือกชุดที่ตรงกับบทบาทของคุณ แล้วกด “สร้างให้เลย” ระบบสร้าง dashboard และใส่ widget ให้ทันที พอพร้อมใช้ข้อมูลจริง กดปุ่ม “พร้อมใช้ข้อมูลจริงแล้ว” ที่แถบด้านบน dashboard widget และการจัดวางที่ทำไว้จะอยู่ครบ</p>`
-      : '<div class="fr-connect"><b>ยังไม่มีข้อมูลให้แสดง</b><span class="muted">ใส่ FMH API Key หรืออัปโหลดไฟล์ POS ก่อน แล้ว dashboard จะมีตัวเลขจริงตั้งแต่เปิดครั้งแรก</span><button type="button" class="btn primary fr-data">เชื่อมข้อมูลตอนนี้</button></div>'}
-    ${!anyReady ? '' : `<div class="starter-grid" role="radiogroup" aria-label="ชุดเริ่มต้น">
-      ${options.map((o) => `<label class="starter-opt${o.ready.length ? '' : ' off'}${o.key === pick ? ' on' : ''}">
-        <input type="radio" name="fr-pick" value="${esc(o.key)}"${o.key === pick ? ' checked' : ''}${o.ready.length ? '' : ' disabled'}>
-        <span class="starter-role">${esc(o.role || 'แนะนำ')}</span>
-        <b class="starter-title">${esc(o.title)}</b>
-        <span class="starter-desc">${esc(o.description)}</span>
-        <span class="starter-count">${o.ready.length ? `พร้อมแสดง ${o.ready.length} widget` : 'ยังไม่มีข้อมูลสำหรับชุดนี้'}</span>
-      </label>`).join('')}
-    </div>`}
-    <div class="starter-actions fr-actions">
-      ${anyReady ? `<button type="button" class="btn primary fr-go"${pick ? '' : ' disabled'}>สร้างให้เลย</button>` : ''}
-      <button type="button" class="btn ghost fr-empty">เริ่มจาก dashboard ว่าง</button>
-    </div>
-    <div class="starter-msg" role="status"></div>`;
-  box.querySelectorAll('input[name="fr-pick"]').forEach((r) =>
-    r.addEventListener('change', () => {
-      pick = r.value;
-      box.querySelectorAll('.starter-opt').forEach((l) => l.classList.toggle('on', l.querySelector('input').value === pick));
-    }));
-  const dataBtn = box.querySelector('.fr-data');
-  if (dataBtn) dataBtn.addEventListener('click', () => openCompanySettings('data'));
-  const run = async (btn, body, busy, idle) => {
+  const anyReady = options.some((o) => o.ready.length);
+  const ans = { setup: null, role: null, goals: [] };
+  const wizard = ['setup', 'role', 'goals'];
+
+  const head = (kicker, title) => `<p class="starter-role">${esc(kicker)}</p><h2 class="starter-h">${title}</h2>`;
+  const sampleNote = sample
+    ? '<p class="muted starter-lead">ช่วงแรกคุณจะได้ลองกับ<b>ข้อมูลตัวอย่าง</b> ยังไม่ต้องเชื่อมอะไร ลองดู widget ต่างๆ และจัด dashboard ให้ถูกใจ พอพร้อมใช้ข้อมูลจริง กดปุ่ม “พร้อมใช้ข้อมูลจริงแล้ว” ที่แถบด้านบน dashboard และการจัดวางที่ทำไว้จะอยู่ครบ</p>'
+    : '';
+
+  // No data to show anything with: connect first, questions come after.
+  if (!anyReady) {
+    box.innerHTML = `${head('เริ่มต้นใช้งาน', `ยินดีต้อนรับ${name ? ` ${esc(name)}` : ''}`)}
+      <div class="fr-connect"><b>ยังไม่มีข้อมูลให้แสดง</b><span class="muted">ใส่ FMH API Key หรืออัปโหลดไฟล์ POS ก่อน แล้ว dashboard จะมีตัวเลขจริงตั้งแต่เปิดครั้งแรก</span><button type="button" class="btn primary fr-data">เชื่อมข้อมูลตอนนี้</button></div>
+      <div class="starter-actions fr-actions"><button type="button" class="btn ghost fr-empty">เริ่มจาก dashboard ว่าง</button></div>
+      <div class="starter-msg" role="status"></div>`;
+    box.querySelector('.fr-data').addEventListener('click', () => openCompanySettings('data'));
+    const e0 = box.querySelector('.fr-empty');
+    e0.addEventListener('click', () => create(e0, { empty: true }, 'เริ่มจาก dashboard ว่าง'));
+    return;
+  }
+
+  async function create(btn, body, idle) {
     box.querySelectorAll('button').forEach((b) => (b.disabled = true));
-    btn.textContent = busy;
+    btn.textContent = 'กำลังสร้าง...';
     try {
-      const r = await api(`/api/admin/companies/${cid}/first-dashboard`, { method: 'POST', body: JSON.stringify(body) });
+      const r = await api(`/api/admin/companies/${cid}/first-dashboard`, { method: 'POST', body: JSON.stringify({ ...body, profile: ans }) });
       await loadDashboards(r.id);
     } catch (err) {
       box.querySelectorAll('button').forEach((b) => (b.disabled = false));
       btn.textContent = idle;
       box.querySelector('.starter-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
     }
+  }
+
+  // Which choices make sense for the answers so far.
+  const rolesFor = () => Object.keys(choices.roles).filter((r) =>
+    (r !== 'ck' || ans.setup === 'ck') && (r !== 'branch' || ans.setup !== 'single'));
+  const goalsFor = () => Object.keys(choices.goals).filter((g) => g !== 'branch' || ans.setup === 'ck');
+  const hints = {
+    single: 'มีหน้าร้านเดียว ซื้อวัตถุดิบเข้ามาขายเอง',
+    multi: 'หลายสาขา แต่แต่ละสาขาซื้อเองหรือไม่มีครัวกลางผลิตให้',
+    ck: 'ครัวกลางผลิตหรือจัดของส่งให้สาขา',
   };
-  const go = box.querySelector('.fr-go');
-  if (go) go.addEventListener('click', () => run(go, { key: pick }, 'กำลังสร้าง...', 'สร้างให้เลย'));
-  const emp = box.querySelector('.fr-empty');
-  emp.addEventListener('click', () => run(emp, { empty: true }, 'กำลังสร้าง...', 'เริ่มจาก dashboard ว่าง'));
+
+  function renderQuestion(step) {
+    const key = wizard[step];
+    const multi = key === 'goals';
+    const items = key === 'setup' ? Object.keys(choices.setups) : key === 'role' ? rolesFor() : goalsFor();
+    const labels = choices[key === 'setup' ? 'setups' : key === 'role' ? 'roles' : 'goals'];
+    const titles = {
+      setup: 'ร้านของคุณเป็นแบบไหน',
+      role: 'คุณดูแลงานด้านไหน',
+      goals: 'อยากรู้อะไรจาก dashboard มากที่สุด',
+    };
+    const sel = (v) => (multi ? ans.goals.includes(v) : ans[key] === v);
+    const done = () => (multi ? ans.goals.length > 0 : !!ans[key]);
+    box.innerHTML = `
+      <p class="starter-role">เริ่มต้นใช้งาน · คำถามที่ ${step + 1} จาก 3</p>
+      <div class="fr-progress" aria-hidden="true">${wizard.map((_, i) => `<i class="${i <= step ? 'on' : ''}"></i>`).join('')}</div>
+      <h2 class="starter-h">${step === 0 && name ? `ยินดีต้อนรับ ${esc(name)} — ` : ''}${titles[key]}</h2>
+      ${step === 0 ? sampleNote : ''}
+      ${multi ? '<p class="muted starter-lead">เลือกได้สูงสุด 2 ข้อ</p>' : ''}
+      <div class="starter-grid fr-q" role="${multi ? 'group' : 'radiogroup'}" aria-label="${esc(titles[key])}">
+        ${items.map((v) => `<label class="starter-opt${sel(v) ? ' on' : ''}">
+          <input type="${multi ? 'checkbox' : 'radio'}" name="fr-q" value="${esc(v)}"${sel(v) ? ' checked' : ''}>
+          <b class="starter-title">${esc(labels[v])}</b>
+          ${key === 'setup' ? `<span class="starter-desc">${esc(hints[v])}</span>` : ''}
+        </label>`).join('')}
+      </div>
+      <div class="starter-actions fr-actions">
+        <button type="button" class="btn primary fr-next"${done() ? '' : ' disabled'}>${step === 2 ? 'ดูชุดที่แนะนำ' : 'ต่อไป'}</button>
+        ${step > 0 ? '<button type="button" class="btn ghost fr-back">ย้อนกลับ</button>' : ''}
+        <button type="button" class="btn link fr-skip">ข้ามคำถาม</button>
+      </div>
+      <div class="starter-msg" role="status"></div>`;
+    const next = box.querySelector('.fr-next');
+    box.querySelectorAll('input[name="fr-q"]').forEach((r) =>
+      r.addEventListener('change', () => {
+        if (multi) {
+          const v = r.value;
+          ans.goals = r.checked ? [...ans.goals, v] : ans.goals.filter((g) => g !== v);
+          if (ans.goals.length > 2) { ans.goals = ans.goals.slice(-2); }
+        } else {
+          ans[key] = r.value;
+          if (key === 'setup') { // roles / goals that no longer fit are dropped
+            if (!rolesFor().includes(ans.role)) ans.role = null;
+            ans.goals = ans.goals.filter((g) => goalsFor().includes(g));
+          }
+        }
+        box.querySelectorAll('.starter-opt').forEach((l) => {
+          const inp = l.querySelector('input');
+          inp.checked = sel(inp.value);
+          l.classList.toggle('on', inp.checked);
+        });
+        next.disabled = !done();
+      }));
+    next.addEventListener('click', () => (step === 2 ? renderResult() : renderQuestion(step + 1)));
+    const back = box.querySelector('.fr-back');
+    if (back) back.addEventListener('click', () => renderQuestion(step - 1));
+    box.querySelector('.fr-skip').addEventListener('click', () => renderResult());
+  }
+
+  async function renderResult() {
+    box.innerHTML = '<p class="muted">กำลังเลือกชุดที่เหมาะกับคุณ...</p>';
+    let list;
+    try {
+      const qs = new URLSearchParams({ setup: ans.setup || '', role: ans.role || '', goals: ans.goals.join(',') });
+      ({ options: list } = await api(`/api/admin/companies/${cid}/starter-options?${qs}`));
+    } catch (err) {
+      box.innerHTML = `<div class="error-msg">${esc(err.message)}<div><button type="button" class="btn ghost fr-retry">ลองอีกครั้ง</button></div></div>`;
+      box.querySelector('.fr-retry').addEventListener('click', renderResult);
+      return;
+    }
+    const answered = !!(ans.setup || ans.role || ans.goals.length);
+    // Packs with nothing to show come last and never as a recommendation.
+    const usable = list.filter((o) => o.ready.length);
+    const shown = usable.slice(0, 3);
+    const more = usable.slice(3);
+    let pick = shown.length ? shown[0].key : null;
+    const card = (o, i) => `<label class="starter-opt${o.key === pick ? ' on' : ''}${answered && i === 0 ? ' top' : ''}">
+        <input type="radio" name="fr-pick" value="${esc(o.key)}"${o.key === pick ? ' checked' : ''}>
+        <span class="starter-role">${answered && i === 0 ? 'แนะนำสำหรับคุณ' : esc(o.role || 'ทั่วไป')}</span>
+        <b class="starter-title">${esc(o.title)}</b>
+        <span class="starter-desc">${esc(o.description)}</span>
+        ${o.why ? `<span class="fr-why">${esc(o.why)}</span>` : ''}
+        <span class="starter-count">ได้ ${o.ready.length} widget: ${esc(o.ready.slice(0, 3).map((w) => w.name).join(' · '))}${o.ready.length > 3 ? ' …' : ''}</span>
+      </label>`;
+    box.innerHTML = `
+      ${head(answered ? 'เลือกให้ตามคำตอบของคุณ' : 'เริ่มต้นใช้งาน', answered ? 'ชุดที่น่าจะตอบโจทย์คุณ' : `ยินดีต้อนรับ${name ? ` ${esc(name)}` : ''} — เลือกชุดเริ่มต้น`)}
+      ${answered ? '' : sampleNote}
+      <div class="starter-grid" role="radiogroup" aria-label="ชุดเริ่มต้น">${shown.map(card).join('')}</div>
+      ${more.length ? `<button type="button" class="btn link fr-more">ดูชุดอื่นอีก ${more.length} ชุด</button><div class="starter-grid fr-morebox" hidden>${more.map((o, i) => card(o, i + 3)).join('')}</div>` : ''}
+      <div class="starter-actions fr-actions">
+        <button type="button" class="btn primary fr-go"${pick ? '' : ' disabled'}>สร้างให้เลย</button>
+        <button type="button" class="btn ghost fr-redo">ตอบคำถามใหม่</button>
+        <button type="button" class="btn link fr-empty">เริ่มจาก dashboard ว่าง</button>
+      </div>
+      <div class="starter-msg" role="status"></div>`;
+    const sync = () => box.querySelectorAll('.starter-opt').forEach((l) => l.classList.toggle('on', l.querySelector('input').value === pick));
+    box.querySelectorAll('input[name="fr-pick"]').forEach((r) => r.addEventListener('change', () => { pick = r.value; sync(); }));
+    const moreBtn = box.querySelector('.fr-more');
+    if (moreBtn) moreBtn.addEventListener('click', () => { box.querySelector('.fr-morebox').hidden = false; moreBtn.remove(); });
+    box.querySelector('.fr-redo').addEventListener('click', () => { ans.setup = null; ans.role = null; ans.goals = []; renderQuestion(0); });
+    const go = box.querySelector('.fr-go');
+    go.addEventListener('click', () => create(go, { key: pick }, 'สร้างให้เลย'));
+    const emp = box.querySelector('.fr-empty');
+    emp.addEventListener('click', () => create(emp, { empty: true }, 'เริ่มจาก dashboard ว่าง'));
+  }
+
+  renderQuestion(0);
 }
 
 function renderTabs() {
