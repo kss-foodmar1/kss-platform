@@ -1356,3 +1356,7 @@ body.arranging-on .ai-fab { display: none; }
 .real-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .real-actions .btn { min-height: 40px; }
 .real-msg:empty { display: none; }
+
+.real-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 8px; padding: 12px 16px; border-radius: 12px; background: var(--amber-soft); color: var(--amber-ink); border: 1px solid var(--amber-line); font-size: 13px; line-height: 1.55; }
+.real-note > span { flex: 1 1 320px; }
+@media (max-width: 700px) { .real-actions .btn, .real-note .btn { min-height: 44px; } }

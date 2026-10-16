@@ -842,13 +842,15 @@ function showRealConfirm(bar, dashboardId, force = false) {
   box.setAttribute('aria-label', 'สลับเป็นข้อมูลจริง');
   bar.appendChild(box);
   const close = () => { box.remove(); bar.querySelector('.use-real-btn')?.focus(); };
+  box.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } });
   const show = (html, wire) => { box.innerHTML = html; (wire || (() => {}))(); const f = box.querySelector('button'); if (f) f.focus(); };
   const ask = () => show(`
     <b>สลับเป็นข้อมูลจริง?</b>
     <ul>
-      <li>dashboard, widget และการจัดวางที่คุณทำไว้ <b>อยู่ครบ</b></li>
-      <li>ตัวเลขตัวอย่างและงานที่รับทราบ/มอบหมายตอนลอง จะถูกล้าง</li>
-      <li>ตัวเลขจริงใช้เวลาดึงสักครู่ (ปกติไม่กี่นาที)</li>
+      <li>dashboard, widget และการจัดวางที่คุณทำไว้ <b>อยู่ครบ</b> (widget ที่ใช้ข้อมูล FMH จะแสดงตัวเลขเมื่อดึงเสร็จ)</li>
+      <li>ตัวเลขตัวอย่างจะหายไป รวมถึงรายการ "เช้านี้ต้องทำ" ของตัวอย่าง (ไม่กระทบข้อมูลจริงของร้าน) รายการเตือนจริงจะขึ้นตามข้อมูลที่ดึงมา</li>
+      <li>ตัวเลขจริงใช้เวลาดึงสักครู่ (ปกติไม่กี่นาที) และเดือนปัจจุบันยังไม่จบ ตัวเลขต้นทุนช่วงแรกอาจยังไม่ครบ</li>
+      <li>สลับแล้วกลับไปใช้ข้อมูลตัวอย่างเองไม่ได้ (ทีม KSS ช่วยเปลี่ยนกลับได้)</li>
     </ul>
     <div class="real-actions"><button type="button" class="btn small primary real-yes">ยืนยันสลับ</button><button type="button" class="btn small ghost real-no">ยังก่อน</button></div>
     <div class="real-msg" role="status"></div>`, () => {
@@ -857,14 +859,14 @@ function showRealConfirm(bar, dashboardId, force = false) {
     });
   const noData = () => show(`
     <b>ยังไม่ได้เชื่อมข้อมูลจริง</b>
-    <p class="muted">ต้องมีอย่างใดอย่างหนึ่งก่อน: <b>FMH API Key</b> (ขอได้จากทีม KSS หรือผู้ที่ดูแล FMH ของร้านคุณ) หรือ <b>ไฟล์ยอดขาย POS</b> ไม่มี key ก็ให้ทีม KSS ช่วยตั้งให้ได้ ระหว่างนี้จัดเรียง dashboard ต่อได้เลย</p>
-    <div class="real-actions"><button type="button" class="btn small primary real-connect">ใส่ key / อัปโหลดไฟล์</button><button type="button" class="btn small ghost real-help">ให้ทีม KSS ช่วยตั้งให้</button><button type="button" class="btn small ghost real-no">ปิด</button></div>`, () => {
+    <p class="muted">ต้องมีอย่างใดอย่างหนึ่งก่อน: <b>FMH API Key</b> (รหัสเชื่อมระบบจัดซื้อ FMH ของร้านคุณ ขอได้จากทีม KSS หรือผู้ดูแล FMH) หรือ <b>ไฟล์ยอดขาย POS</b> ไม่แน่ใจว่ามีไหม ให้ทีม KSS ช่วยตั้งให้ได้เลย ระหว่างนี้จัดเรียง dashboard ต่อได้</p>
+    <div class="real-actions"><button type="button" class="btn small primary real-help">ให้ทีม KSS ช่วยตั้งให้</button><button type="button" class="btn small ghost real-connect">ใส่ key / อัปโหลดไฟล์เอง</button><button type="button" class="btn small ghost real-no">ปิด</button></div>`, () => {
       box.querySelector('.real-connect').addEventListener('click', () => openCompanySettings('data'));
       box.querySelector('.real-help').addEventListener('click', () => openSupportForm({ kind: 'connect', message: 'อยากเริ่มใช้ข้อมูลจริง ขอให้ช่วยเชื่อม FMH key หรือไฟล์ POS' }));
       box.querySelector('.real-no').addEventListener('click', close);
     });
   const posOnly = (msg) => show(`
-    <b>มีเฉพาะไฟล์ POS</b>
+    <b>มีเฉพาะไฟล์ยอดขาย POS</b>
     <p class="muted">${esc(msg)}</p>
     <div class="real-actions"><button type="button" class="btn small primary real-connect">ใส่ FMH key ก่อน</button><button type="button" class="btn small ghost real-force">สลับเลย (ส่วน FMH ว่างก่อน)</button><button type="button" class="btn small ghost real-no">ยังก่อน</button></div>`, () => {
       box.querySelector('.real-connect').addEventListener('click', () => openCompanySettings('data'));
@@ -877,6 +879,7 @@ function showRealConfirm(bar, dashboardId, force = false) {
     if (yes) yes.textContent = 'กำลังสลับ...';
     try {
       await api('/api/settings/use-real-data', { method: 'POST', body: JSON.stringify({ force: forceNow === true }) });
+      state.realNoteUntil = Date.now() + 15 * 60 * 1000;
       await loadDashboards(dashboardId);
     } catch (err) {
       if (err.code === 'NO_DATA') return noData();
@@ -1555,7 +1558,7 @@ class DashboardView {
              this.dashboard.data_source === 'demo'
                ? `<span class="demo-pill">ข้อมูลตัวอย่าง</span> <span class="muted">${
                    isCompanyAdmin() && !this.preview
-                     ? 'ลองเพิ่ม ลบ และจัดเรียง widget ได้เต็มที่ ตัวเลขนี้ไม่ใช่ข้อมูลจริงของร้านคุณ เมื่อสลับเป็นข้อมูลจริง widget และการจัดวางที่ทำไว้จะอยู่ครบ'
+                     ? 'ลองจัด dashboard ให้ถูกใจได้เต็มที่ — widget และการจัดวางจะอยู่ครบเมื่อสลับเป็นข้อมูลจริง'
                      : 'ตัวเลขนี้เป็นข้อมูลตัวอย่าง ไม่ใช่ข้อมูลจริงของร้าน'
                  }</span>`
                : oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
@@ -1633,6 +1636,14 @@ class DashboardView {
     if (tg) tg.addEventListener('click', () => this.switchSaved(tg.dataset.on === '1'));
     if (keyMissing && !this.useSaved) bar.insertAdjacentHTML('beforeend', `<div class="error-msg" style="margin:4px 0 0;">${esc(keyMissingMessage())}</div>`);
     this.statusEl.appendChild(bar);
+    if (state.realNoteUntil && Date.now() < state.realNoteUntil && this.dashboard.data_source !== 'demo') {
+      const note = document.createElement('div');
+      note.className = 'real-note';
+      note.setAttribute('role', 'status');
+      note.innerHTML = '<span><b>กำลังดึงข้อมูลจริงของร้านคุณ</b> ตัวเลขจะค่อยๆ ขึ้นภายในไม่กี่นาที เดือนปัจจุบันยังไม่จบและข้อมูลย้อนหลังอาจยังไม่ครบ ตัวเลขต้นทุนช่วงแรกจึงอาจต่ำหรือสูงกว่าจริง</span><button type="button" class="btn small ghost real-note-x">เข้าใจแล้ว</button>';
+      note.querySelector('.real-note-x').addEventListener('click', () => { state.realNoteUntil = 0; note.remove(); });
+      bar.after(note);
+    }
 
     const real = bar.querySelector('.use-real-btn');
     if (real) real.addEventListener('click', () => showRealConfirm(bar, this.dashboard.id));
@@ -1681,20 +1692,23 @@ class DashboardView {
     const sevCls = { 'วิกฤต': 'crit', 'สูง': 'high', 'กลาง': 'mid' };
     const money = (v) => (v ? '฿' + Math.round(v).toLocaleString('th-TH') : '');
     const people = data.people || [];
+    const sampleMode = this.dashboard.data_source === 'demo';
     const item = (it, i) => `<li class="today-item" data-i="${i}">
         <span class="sev-pill sev-${sevCls[it.severity] || 'mid'}">${esc(it.severity)}</span>
         <div class="today-main"><b>${esc(it.subject || it.detail)}</b>${it.owner ? `<span class="today-owner">งาน${esc(it.owner)}</span>` : ''}<span>${esc(it.subject ? it.detail : '')}</span>
           <span class="today-meta">${[it.branch, it.age_days != null ? `ค้าง ${it.age_days} วัน` : '', money(it.impact)].filter(Boolean).map(esc).join(' · ')}${it.handled ? ` · <em>${esc(it.handled)}</em>` : ''}</span></div>
         <div class="today-acts">${
-          it.ack_status
-            ? '<button type="button" class="btn small ghost t-clear">ยกเลิก</button>'
-            : '<button type="button" class="btn small ghost t-ack">รับทราบ</button><button type="button" class="btn small ghost t-assign">มอบหมาย</button>'
+          sampleMode
+            ? ''
+            : it.ack_status
+              ? '<button type="button" class="btn small ghost t-clear">ยกเลิก</button>'
+              : '<button type="button" class="btn small ghost t-ack">รับทราบ</button><button type="button" class="btn small ghost t-assign">มอบหมาย</button>'
         }${it.source && this.widgets.some((w) => w.report_source === it.source) ? '<button type="button" class="btn small ghost t-go">ดูในรายการ</button>' : ''}</div>
         <form class="today-assign" hidden><label class="sr-only" for="ta-${i}">มอบหมายให้</label><input id="ta-${i}" list="today-people-${this.dashboard.id}" placeholder="ชื่อผู้รับผิดชอบ" maxlength="80" required><button type="submit" class="btn small primary">มอบหมาย</button></form>
       </li>`;
     const all = [...open, ...taken];
     box.innerHTML = `<div class="today-head">
-        <div><h2>เช้านี้ต้องทำ</h2><p>${open.length ? `${open.length} เรื่องยังไม่มีคนรับ${crit ? ` · วิกฤต ${crit}` : ''}${sumOpen ? ` · ยอดค้าง ฿${Math.round(sumOpen).toLocaleString('th-TH')}` : ''}` : 'ทุกเรื่องมีคนรับแล้ว'}${taken.length ? ` · รับแล้ว ${taken.length}` : ''}</p></div>
+        <div><h2>เช้านี้ต้องทำ${sampleMode ? ' <span class="demo-pill">ตัวอย่าง</span>' : ''}</h2>${sampleMode ? '<p class="muted">รายการนี้สร้างจากข้อมูลตัวอย่าง ไม่ใช่งานค้างจริงของร้านคุณ ปุ่มรับทราบ/มอบหมายจะใช้ได้เมื่อเป็นข้อมูลจริง</p>' : ''}<p>${open.length ? `${open.length} เรื่องยังไม่มีคนรับ${crit ? ` · วิกฤต ${crit}` : ''}${sumOpen ? ` · ยอดค้าง ฿${Math.round(sumOpen).toLocaleString('th-TH')}` : ''}` : 'ทุกเรื่องมีคนรับแล้ว'}${taken.length ? ` · รับแล้ว ${taken.length}` : ''}</p></div>
         <button type="button" class="btn small ghost today-fold" aria-expanded="${!folded}" aria-label="${folded ? 'แสดงรายการเช้านี้ต้องทำ' : 'ย่อรายการเช้านี้ต้องทำ'}">${folded ? 'แสดง' : 'ย่อ'}</button>
       </div>
       <div class="today-body"${folded ? ' hidden' : ''}>

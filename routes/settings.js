@@ -111,7 +111,7 @@ router.post(
     // POS file only: sales will be real but everything that comes from FMH
     // (purchasing, cost, stock) stays empty — say so and let the admin decide.
     if (!c.has_key && !(req.body && req.body.force)) {
-      return res.status(409).json({ code: 'POS_ONLY', error: 'มีเฉพาะไฟล์ POS — widget จัดซื้อ ต้นทุน และสต็อกที่มาจาก FMH จะว่างจนกว่าจะใส่ FMH API Key' });
+      return res.status(409).json({ code: 'POS_ONLY', error: 'ตอนนี้มีเฉพาะไฟล์ยอดขาย POS: ดูยอดขายได้ แต่ต้นทุนวัตถุดิบ กำไรต่อเมนู ยอดซื้อ และสต็อก (ข้อมูลจาก FMH) จะยังไม่ขึ้นจนกว่าจะใส่ FMH API Key — หน้า dashboard จึงดูโล่งกว่าปกติ ไม่ได้แปลว่าระบบเสีย' });
     }
     await toRealData(companyId);
     withTrigger('use_real', () => syncCompany(companyId)).catch((e) => console.error('Sync after switch failed:', e.message));
