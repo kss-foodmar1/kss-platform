@@ -236,10 +236,10 @@ async function aiSend(question) {
   const history = msgs.filter((m) => !m.error && m.source !== 'none').map((m) => ({ role: m.role, text: m.text }));
   msgs.push({ role: 'user', text: question });
   // 1. FAQ + the page, in the browser.
-  // "อยากเห็น X": look for a widget that already shows it before anything else.
-  if (typeof FB_WISH !== 'undefined' && FB_WISH.test(question)) return aiFindWidget(question, msgs);
   let local = null;
   try { local = helpAnswer(question, aiPageParts(), aiCanSettings(), aiChat.taught); } catch (e) { local = null; }
+  // "อยากเห็น X": after the page and the guide had their go, look for a widget that shows it.
+  if (!local && typeof FB_WISH !== 'undefined' && FB_WISH.test(question)) return aiFindWidget(question, msgs);
   if (local) {
     msgs.push({ role: 'model', text: local.text, source: local.source, go: local.go, q: question });
     return aiRender();
@@ -285,7 +285,7 @@ async function aiFindWidget(question, msgs) {
   msgs.push(found.length
     ? {
         role: 'model', source: 'find', q: question, wish: true,
-        text: `มี widget ที่น่าจะตอบเรื่องนี้ครับ\n${found.map((x) => `- **${x.t.name}** ${fbWidgetLine(x.t)}`).join('\n')}\n${canAdd ? 'กดดูแล้วเพิ่มลง dashboard ได้เลย' : 'ให้แอดมินของร้านเพิ่มให้ได้'} ถ้ายังไม่ใช่ที่อยากเห็น ส่งคำขอให้ทีม KSS ได้`,
+        text: `widget ที่อาจใกล้เคียงครับ\n${found.map((x) => `- **${x.t.name}** ${fbWidgetLine(x.t)}${x.t.needs ? ` (${x.t.needs})` : ''}`).join('\n')}\n${canAdd ? 'กดดูแล้วเพิ่มลง dashboard ได้เลย' : 'ให้แอดมินของร้านเพิ่มให้ได้'} ถ้ายังไม่ใช่ที่อยากเห็น ส่งคำขอให้ทีม KSS ได้`,
         go: canAdd ? found.map((x) => ({ label: `ดู “${x.t.name}”`, act: `widget:${x.t.id}` })) : [],
       }
     : { role: 'model', source: 'none', q: question, wish: true, text: 'ยังไม่มี widget ที่แสดงข้อมูลนี้ครับ ส่งคำขอให้ทีม KSS ได้เลย ทีมงานจะตอบว่าทำได้ไหมและเมื่อไหร่', go: [] });

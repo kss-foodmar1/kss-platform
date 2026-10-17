@@ -1288,10 +1288,11 @@ class DashboardView {
         ${this.dashboard.description ? `<p class="dash-desc">${esc(this.dashboard.description)}</p>` : ''}
       </div>
       <div class="dash-controls">
-        ${!this.preview && !isSuper() && state.user && state.user.company_id ? '<button type="button" class="btn small ghost dash-wish" title="บอกทีม KSS ว่าอยากเห็นข้อมูลอะไรเพิ่ม">ขอข้อมูลเพิ่ม</button>' : ''}
+        ${!this.preview && !isSuper() && !isCompanyAdmin() && state.user && state.user.company_id ? '<div class="dash-actions"><button type="button" class="btn small ghost dash-wish" title="บอกทีม KSS ว่าอยากเห็นข้อมูลอะไรเพิ่ม">ขอข้อมูลเพิ่ม</button></div>' : ''}
         ${
           !this.preview && (isSuper() || isCompanyAdmin())
             ? `<div class="dash-actions">
+                 ${isCompanyAdmin() ? '<button type="button" class="btn small ghost dash-wish" title="บอกทีม KSS ว่าอยากเห็นข้อมูลอะไรเพิ่ม">ขอข้อมูลเพิ่ม</button>' : ''}
                  <button type="button" class="btn small ghost dash-edit"><svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="18" height="7" rx="1.5"/></svg>จัดเรียง</button>
                  <button type="button" class="btn small primary dash-add">+ เพิ่ม Widget</button>
                </div>`
@@ -3640,12 +3641,16 @@ const notif = { items: [], open: false };
 
 async function loadNotifications() {
   try {
-    const r = await api('/api/announcements');
+    // KSS replies to what this person reported or asked for count with the posts
+    const mine = state.user && state.user.company_id && !isSuper() ? api('/api/support/mine').catch(() => null) : Promise.resolve(null);
+    const [r, m] = await Promise.all([api('/api/announcements'), mine]);
     notif.items = r.items;
+    notif.replies = m ? m.list.filter((x) => x.reply_unseen) : [];
+    const unread = r.unread + notif.replies.length;
     const badge = el('notif-badge');
-    badge.textContent = r.unread > 9 ? '9+' : String(r.unread);
-    badge.classList.toggle('hidden', !r.unread);
-    el('notif-btn').setAttribute('aria-label', r.unread ? `มีอะไรใหม่ (${r.unread} ยังไม่ได้อ่าน)` : 'มีอะไรใหม่');
+    badge.textContent = unread > 9 ? '9+' : String(unread);
+    badge.classList.toggle('hidden', !unread);
+    el('notif-btn').setAttribute('aria-label', unread ? `มีอะไรใหม่ (${unread} ยังไม่ได้อ่าน)` : 'มีอะไรใหม่');
   } catch (err) {
     /* the bell is a nicety; never block the app on it */
   }
@@ -3658,6 +3663,11 @@ function renderNotifPanel() {
   const canAdd = isCompanyAdmin() || isSuper();
   panel.innerHTML = `
     <div class="notif-head"><strong>มีอะไรใหม่</strong><button type="button" class="icon-mini notif-close" aria-label="ปิด">✕</button></div>
+    ${(notif.replies || []).length ? `<article class="notif-item unread notif-reply">
+        <div class="notif-meta"><span class="notif-new">ทีม KSS ตอบแล้ว</span></div>
+        ${notif.replies.slice(0, 3).map((x) => `<p><b>${esc(x.message.slice(0, 80))}${x.message.length > 80 ? '…' : ''}</b><br>${esc(x.note || OPS_STATUS[x.status] || '')}</p>`).join('')}
+        <button type="button" class="btn small ghost notif-mine">ดูเรื่องที่แจ้งไว้ →</button>
+      </article>` : ''}
     ${
       notif.items.length
         ? notif.items
@@ -3680,6 +3690,8 @@ function renderNotifPanel() {
         : '<p class="muted notif-empty">ยังไม่มีประกาศ</p>'
     }`;
   panel.querySelector('.notif-close').addEventListener('click', () => toggleNotif(false));
+  const mineBtn = panel.querySelector('.notif-mine');
+  if (mineBtn) mineBtn.addEventListener('click', () => { toggleNotif(false); fbOpenMine(); });
   panel.querySelectorAll('.notif-add').forEach((b) =>
     b.addEventListener('click', () => {
       toggleNotif(false);

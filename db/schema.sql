@@ -506,6 +506,7 @@ CREATE TABLE IF NOT EXISTS support_requests (
   note VARCHAR(500) NULL,
   handled_by INT NULL,
   handled_at TIMESTAMP NULL,
+  reply_unseen BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_support_status (status, created_at),
   KEY idx_support_company (company_id, created_at),

@@ -75,12 +75,27 @@ customerRouter.get(
     // A company admin sees the whole company's requests; a viewer sees their own.
     const own = req.user.role === 'company_admin';
     const [rows] = await pool.query(
-      `SELECT r.id, r.kind, r.message, r.status, r.note, r.created_at, r.handled_at, u.display_name AS who
+      `SELECT r.id, r.kind, r.message, r.status, r.note, r.created_at, r.handled_at, r.reply_unseen, u.display_name AS who
          FROM support_requests r LEFT JOIN users u ON u.id = r.user_id
-        WHERE r.company_id = ? ${own ? '' : 'AND r.user_id = ?'} ORDER BY r.created_at DESC LIMIT 20`,
+        WHERE r.company_id = ? ${own ? '' : 'AND r.user_id = ?'} ORDER BY r.reply_unseen DESC, r.created_at DESC LIMIT 20`,
       own ? [req.user.company_id] : [req.user.company_id, req.user.id]
     );
-    res.json({ list: rows });
+    rows.forEach((r) => (r.reply_unseen = !!r.reply_unseen));
+    res.json({ list: rows, unseen: rows.filter((r) => r.reply_unseen).length });
+  })
+);
+
+// The customer opened their requests: replies are read.
+customerRouter.post(
+  '/seen',
+  wrap(async (req, res) => {
+    if (!req.user.company_id) return res.json({ ok: true });
+    const own = req.user.role === 'company_admin';
+    await pool.query(
+      `UPDATE support_requests SET reply_unseen = FALSE WHERE company_id = ? ${own ? '' : 'AND user_id = ?'} AND reply_unseen = TRUE`,
+      own ? [req.user.company_id] : [req.user.company_id, req.user.id]
+    );
+    res.json({ ok: true });
   })
 );
 
@@ -91,9 +106,18 @@ customerRouter.get(
   '/widgets',
   wrap(async (req, res) => {
     const [rows] = await pool.query(
-      `SELECT id, template_key, name, description, category FROM widget_templates WHERE active = TRUE ORDER BY sort_order, id`
+      `SELECT id, template_key, name, description, category, report_source, default_config_json FROM widget_templates WHERE active = TRUE ORDER BY sort_order, id`
     );
-    res.json({ list: rows });
+    // Would it show numbers for this company? A widget that needs a POS file the
+    // shop has not uploaded is still listed, with why, so nobody adds an empty one.
+    const starter = require('../lib/starter');
+    const facts = req.user.company_id ? await starter.companyFacts(req.user.company_id) : null;
+    res.json({
+      list: rows.map(({ default_config_json, report_source, ...t }) => {
+        const why = facts ? starter.whyNotReady({ report_source, default_config_json }, facts) : null;
+        return { ...t, needs: why && why !== 'FMH ยังไม่มีข้อมูลรายงานนี้' ? why : null, empty: why === 'FMH ยังไม่มีข้อมูลรายงานนี้' };
+      }),
+    });
   })
 );
 
@@ -175,9 +199,13 @@ adminRouter.patch(
     const b = req.body || {};
     const status = STATUSES.includes(b.status) ? b.status : null;
     if (!status) return res.status(400).json({ error: 'status ไม่ถูกต้อง' });
+    const note = b.note == null ? null : clean(b.note, 500);
+    // the customer's bell lights up when there is something new for them to read
+    const [[before]] = await pool.query(`SELECT status, note FROM support_requests WHERE id = ?`, [req.params.id]);
+    const news = !!before && ((note || '') !== (before.note || '') || status !== before.status) && (!!note || status === 'done');
     const [r] = await pool.query(
-      `UPDATE support_requests SET status = ?, note = ?, handled_by = ?, handled_at = NOW() WHERE id = ?`,
-      [status, b.note == null ? null : clean(b.note, 500), req.user.id, req.params.id]
+      `UPDATE support_requests SET status = ?, note = ?, handled_by = ?, handled_at = NOW()${news ? ', reply_unseen = TRUE' : ''} WHERE id = ?`,
+      [status, note, req.user.id, req.params.id]
     );
     if (!r.affectedRows) return res.status(404).json({ error: 'ไม่พบรายการ' });
     res.json({ ok: true });

@@ -272,12 +272,19 @@ function supportContext(extra) {
 function openSupportForm(opts = {}) {
   if (isSuper() || !state.user || !state.user.company_id) return;
   const prev = document.activeElement;
+  // a request typed before a trip to the widget library comes back
+  let restored = false;
+  if (!opts.message) {
+    const d = typeof fbTakeDraft === 'function' ? fbTakeDraft() : null;
+    if (d && d.message) { opts = { ...opts, kind: d.kind || opts.kind, message: d.message }; restored = true; }
+  }
   const ctx = supportContext(opts.context);
   const root = document.createElement('div');
   root.className = 'modal-overlay';
   root.innerHTML = `
     <div class="modal-card ops-form" role="dialog" aria-modal="true" aria-labelledby="sup-title">
-      <h2 id="sup-title">${opts.kind === 'wish' ? 'บอกเราว่าอยากเห็นข้อมูลอะไร' : opts.kind === 'feedback' ? 'ส่งความเห็นถึงทีม KSS' : 'แจ้งทีมงาน'}</h2>
+      <div class="sup-top"><h2 id="sup-title">${opts.kind === 'wish' ? 'บอกเราว่าอยากเห็นข้อมูลอะไร' : opts.kind === 'feedback' ? 'ส่งความเห็นถึงทีม KSS' : 'แจ้งทีมงาน'}</h2><button type="button" class="link-btn sup-mine">เรื่องที่แจ้งไว้</button></div>
+      ${restored ? '<p class="muted sup-restored">ข้อความที่พิมพ์ไว้ก่อนหน้ายังอยู่ ส่งต่อได้เลย</p>' : ''}
       <form novalidate>
         <fieldset class="ops-kinds"><legend class="sr-only">เรื่องอะไร</legend>
           ${OPS_KIND_ORDER.map((k) => `<label class="ops-kind-opt"><input type="radio" name="kind" value="${k}"${k === (opts.kind || 'data') ? ' checked' : ''}><span>${esc(OPS_KIND[k])}</span></label>`).join('')}
@@ -305,6 +312,7 @@ function openSupportForm(opts = {}) {
   root.addEventListener('click', (e) => { if (e.target === root || e.target.closest('[data-close]')) close(); });
   const form = root.querySelector('form');
   form.message.focus();
+  root.querySelector('.sup-mine').addEventListener('click', () => { close(); fbOpenMine(); });
   // A data wish: is there already a widget for it? Looked up in the browser as they type.
   const sugBox = root.querySelector('.sup-suggest');
   let sugT = null;
@@ -315,11 +323,17 @@ function openSupportForm(opts = {}) {
     suggested = found.map((x) => x.t.name);
     const canAdd = isCompanyAdmin();
     sugBox.innerHTML = found.length
-      ? `<p class="sup-sug-h"><b>อาจมีอยู่แล้ว</b> ${canAdd ? 'ลองดู widget เหล่านี้ก่อน ถ้าใช่ เพิ่มลง dashboard ได้เลย' : 'ลองดู widget เหล่านี้ก่อน ให้แอดมินของร้านเพิ่มให้ได้'}</p>
-         <ul class="sup-sug">${found.map((x, i) => `<li><span><b>${esc(x.t.name)}</b><span class="muted">${esc(fbWidgetLine(x.t))}</span></span>${canAdd ? `<button type="button" class="btn small ghost" data-sug="${i}">ดูใน คลัง Widget</button>` : ''}</li>`).join('')}</ul>
+      ? `<p class="sup-sug-h"><b>อาจใกล้เคียง</b> ${canAdd ? 'ลองดู widget เหล่านี้ก่อน ถ้าใช่ เพิ่มลง dashboard ได้เลย' : 'ลองดู widget เหล่านี้ก่อน ให้แอดมินของร้านเพิ่มให้ได้'}</p>
+         <ul class="sup-sug">${found.map((x, i) => `<li><span><b>${esc(x.t.name)}</b><span class="muted">${esc(fbWidgetLine(x.t))}</span>${x.t.needs ? `<span class="sup-needs">${esc(x.t.needs)}</span>` : ''}</span>${canAdd ? `<button type="button" class="btn small ghost" data-sug="${i}">ดูใน คลัง Widget</button>` : ''}</li>`).join('')}</ul>
          <p class="muted sup-sug-f">ถ้าไม่ใช่สิ่งที่อยากเห็น ส่งให้ทีมงานได้เลย</p>`
       : '';
-    sugBox.querySelectorAll('[data-sug]').forEach((b) => b.addEventListener('click', () => { const t = found[Number(b.dataset.sug)].t; close(); fbOpenWidget(t); }));
+    sugBox.querySelectorAll('[data-sug]').forEach((b) => b.addEventListener('click', () => {
+      const t = found[Number(b.dataset.sug)].t;
+      // keep what they typed: if the widget is not it, the request is one tap away
+      fbSaveDraft({ kind: form.kind.value, message: form.message.value });
+      close();
+      fbOpenWidget(t);
+    }));
   };
   const relabel = () => {
     const h = OPS_KIND_HINT[form.kind.value] || ['เกิดอะไรขึ้น', 'เช่น ยอดซื้อสัปดาห์นี้ไม่ตรงกับที่เห็นใน FMH'];
@@ -333,13 +347,21 @@ function openSupportForm(opts = {}) {
     e.preventDefault();
     const out = root.querySelector('.sup-msg-out');
     const btn = form.querySelector('button[type=submit]');
-    if (form.message.value.trim().length < 5) { out.innerHTML = '<div class="error-msg">บอกหน่อยว่าเกิดอะไรขึ้น (อย่างน้อย 5 ตัวอักษร)</div>'; form.message.focus(); return; }
+    if (form.message.value.trim().length < 5) {
+      const ask = { wish: 'บอกหน่อยว่าอยากเห็นข้อมูลอะไร (อย่างน้อย 5 ตัวอักษร)', feedback: 'พิมพ์ความเห็นอย่างน้อย 5 ตัวอักษร' }[form.kind.value] || 'บอกหน่อยว่าเกิดอะไรขึ้น (อย่างน้อย 5 ตัวอักษร)';
+      out.innerHTML = `<div class="error-msg">${esc(ask)}</div>`;
+      form.message.focus();
+      return;
+    }
     btn.disabled = true;
     try {
       const sent = { ...ctx, ...(suggested.length ? { suggested: suggested.join(' · ') } : {}) };
       await api('/api/support', { method: 'POST', body: JSON.stringify({ kind: form.kind.value, message: form.message.value, context: sent }) });
+      fbClearDraft();
       const wish = ['wish', 'feedback'].includes(form.kind.value);
-      root.querySelector('.modal-card').innerHTML = `<h2 id="sup-title">${wish ? 'ขอบคุณที่บอกเรา' : 'ส่งให้ทีมงานแล้ว'}</h2><p>${wish ? 'ทีม KSS อ่านทุกเรื่อง และจะตอบว่าทำได้เมื่อไหร่ ดูคำตอบได้ที่ ตั้งค่า › สถานะระบบ' : 'ทีมงาน KSS จะดูเรื่องนี้ และตอบกลับที่หน้า ตั้งค่า › สถานะระบบ'}</p><div class="row-actions"><button type="button" class="btn primary" data-close>ปิด</button></div>`;
+      // every customer user can read the reply: the bell lights up, and "เรื่องที่แจ้งไว้" lists it
+      root.querySelector('.modal-card').innerHTML = `<h2 id="sup-title">${wish ? 'ขอบคุณที่บอกเรา' : 'ส่งให้ทีมงานแล้ว'}</h2><p>${wish ? 'ทีม KSS อ่านทุกเรื่อง และจะตอบว่าทำได้ไหมและเมื่อไหร่' : 'ทีมงาน KSS จะดูเรื่องนี้และตอบกลับ'}<br>เมื่อทีมตอบ กระดิ่งด้านบนจะขึ้นเตือน และดูได้ที่ “เรื่องที่แจ้งไว้”</p><div class="row-actions"><button type="button" class="btn primary" data-close>ปิด</button><button type="button" class="btn ghost sup-mine2">เรื่องที่แจ้งไว้</button></div>`;
+      root.querySelector('.sup-mine2').addEventListener('click', () => { close(); fbOpenMine(); });
       root.querySelector('[data-close]').focus();
       if (opts.onSent) opts.onSent();
     } catch (err) {

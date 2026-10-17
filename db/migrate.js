@@ -322,6 +322,11 @@ async function upgradeSupportKinds() {
     await pool.query(`ALTER TABLE support_requests MODIFY kind ENUM('data','connect','howto','billing','other','wish','feedback') NOT NULL DEFAULT 'other'`);
     console.log('  support_requests: added kinds wish, feedback');
   }
+  // the bell lights up when KSS answers: a reply the customer has not opened yet
+  if (!(await columnInfo('support_requests', 'reply_unseen'))) {
+    await pool.query(`ALTER TABLE support_requests ADD COLUMN reply_unseen BOOLEAN NOT NULL DEFAULT FALSE`);
+    console.log('  support_requests: added reply_unseen');
+  }
 }
 
 async function upgradeLineQuota() {
