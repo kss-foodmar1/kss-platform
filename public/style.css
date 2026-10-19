@@ -1476,3 +1476,12 @@ body.arranging-on .ai-fab { display: none; }
 @media (max-width: 700px) {
   .notif-panel { position: fixed; top: calc(64px + env(safe-area-inset-top, 0px)); left: 16px; right: 16px; width: auto; max-height: calc(100dvh - 96px); }
 }
+
+.sup-here { font-size: 12.5px; color: var(--status-good); font-weight: 700; }
+.mine-focus { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 10px; }
+.notif-replies { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 4px; }
+.notif-reply-item { display: flex; flex-direction: column; gap: 2px; width: 100%; min-height: 44px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+.notif-reply-item:hover { border-color: var(--line-strong); }
+.notif-reply-item:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.notif-reply-item span { color: var(--ink-2); line-height: 1.45; }
+.notif-more { margin: 4px 0 8px; font-size: 13px; color: var(--ink-2); }

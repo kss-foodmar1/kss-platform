@@ -111,11 +111,25 @@ customerRouter.get(
     // Would it show numbers for this company? A widget that needs a POS file the
     // shop has not uploaded is still listed, with why, so nobody adds an empty one.
     const starter = require('../lib/starter');
-    const facts = req.user.company_id ? await starter.companyFacts(req.user.company_id) : null;
+    const cid = req.user.company_id;
+    const facts = cid ? await starter.companyFacts(cid) : null;
+    // Which of this person's dashboards already show each widget: "it's already here, go to it"
+    // beats "add it". A company admin sees every dashboard of the company; anyone else the ones shared with them.
+    const on = new Map();
+    if (cid) {
+      const own = req.user.role === 'company_admin';
+      const [use] = await pool.query(
+        `SELECT DISTINCT w.widget_template_id AS tid, d.id AS did FROM dashboard_widgets w JOIN dashboards d ON d.id = w.dashboard_id
+          ${own ? '' : 'JOIN user_dashboard_access a ON a.dashboard_id = d.id AND a.user_id = ?'}
+          WHERE d.company_id = ? AND d.active = TRUE`,
+        own ? [cid] : [req.user.id, cid]
+      );
+      use.forEach((u) => { if (!on.has(u.tid)) on.set(u.tid, []); on.get(u.tid).push(u.did); });
+    }
     res.json({
       list: rows.map(({ default_config_json, report_source, ...t }) => {
         const why = facts ? starter.whyNotReady({ report_source, default_config_json }, facts) : null;
-        return { ...t, needs: why && why !== 'FMH ยังไม่มีข้อมูลรายงานนี้' ? why : null, empty: why === 'FMH ยังไม่มีข้อมูลรายงานนี้' };
+        return { ...t, on: on.get(t.id) || [], needs: why && why !== 'FMH ยังไม่มีข้อมูลรายงานนี้' ? why : null, empty: why === 'FMH ยังไม่มีข้อมูลรายงานนี้' };
       }),
     });
   })

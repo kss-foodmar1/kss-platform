@@ -3665,8 +3665,9 @@ function renderNotifPanel() {
     <div class="notif-head"><strong>มีอะไรใหม่</strong><button type="button" class="icon-mini notif-close" aria-label="ปิด">✕</button></div>
     ${(notif.replies || []).length ? `<article class="notif-item unread notif-reply">
         <div class="notif-meta"><span class="notif-new">ทีม KSS ตอบแล้ว</span></div>
-        ${notif.replies.slice(0, 3).map((x) => `<p><b>${esc(x.message.slice(0, 80))}${x.message.length > 80 ? '…' : ''}</b><br>${esc(x.note || OPS_STATUS[x.status] || '')}</p>`).join('')}
-        <button type="button" class="btn small ghost notif-mine">ดูเรื่องที่แจ้งไว้ →</button>
+        <ul class="notif-replies">${notif.replies.slice(0, 3).map((x) => `<li><button type="button" class="notif-reply-item" data-id="${x.id}"><b>${esc(x.message.slice(0, 80))}${x.message.length > 80 ? '…' : ''}</b><span>${esc(x.note || OPS_STATUS[x.status] || '')}</span></button></li>`).join('')}</ul>
+        ${notif.replies.length > 3 ? `<p class="notif-more">และอีก ${notif.replies.length - 3} เรื่อง</p>` : ''}
+        <button type="button" class="btn small ghost notif-mine">ดูเรื่องที่แจ้งไว้ทั้งหมด →</button>
       </article>` : ''}
     ${
       notif.items.length
@@ -3692,6 +3693,7 @@ function renderNotifPanel() {
   panel.querySelector('.notif-close').addEventListener('click', () => toggleNotif(false));
   const mineBtn = panel.querySelector('.notif-mine');
   if (mineBtn) mineBtn.addEventListener('click', () => { toggleNotif(false); fbOpenMine(); });
+  panel.querySelectorAll('.notif-reply-item').forEach((b) => b.addEventListener('click', () => { toggleNotif(false); fbOpenMine(Number(b.dataset.id)); }));
   panel.querySelectorAll('.notif-add').forEach((b) =>
     b.addEventListener('click', () => {
       toggleNotif(false);

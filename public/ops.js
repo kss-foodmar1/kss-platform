@@ -322,11 +322,20 @@ function openSupportForm(opts = {}) {
     const found = typeof fbSuggest === 'function' ? await fbSuggest(form.message.value) : [];
     suggested = found.map((x) => x.t.name);
     const canAdd = isCompanyAdmin();
+    const where = found.map((x) => fbWhere(x.t));
+    const have = where.some(Boolean);
     sugBox.innerHTML = found.length
-      ? `<p class="sup-sug-h"><b>อาจใกล้เคียง</b> ${canAdd ? 'ลองดู widget เหล่านี้ก่อน ถ้าใช่ เพิ่มลง dashboard ได้เลย' : 'ลองดู widget เหล่านี้ก่อน ให้แอดมินของร้านเพิ่มให้ได้'}</p>
-         <ul class="sup-sug">${found.map((x, i) => `<li><span><b>${esc(x.t.name)}</b><span class="muted">${esc(fbWidgetLine(x.t))}</span>${x.t.needs ? `<span class="sup-needs">${esc(x.t.needs)}</span>` : ''}</span>${canAdd ? `<button type="button" class="btn small ghost" data-sug="${i}">ดูใน คลัง Widget</button>` : ''}</li>`).join('')}</ul>
+      ? `<p class="sup-sug-h"><b>${have ? 'อาจมีอยู่แล้ว' : 'อาจใกล้เคียง'}</b> ${have ? 'widget ที่ติ๊กไว้อยู่บน dashboard ของคุณแล้ว กดไปดูได้เลย' : canAdd ? 'ลองดู widget เหล่านี้ก่อน ถ้าใช่ เพิ่มลง dashboard ได้เลย' : 'ลองดู widget เหล่านี้ก่อน ให้แอดมินของร้านเพิ่มให้ได้'}</p>
+         <ul class="sup-sug">${found.map((x, i) => `<li><span><b>${esc(x.t.name)}</b><span class="muted">${esc(fbWidgetLine(x.t))}</span>${where[i] ? `<span class="sup-here">✓ ${esc(fbWhereLabel(where[i]))}</span>` : x.t.needs ? `<span class="sup-needs">${esc(x.t.needs)}</span>` : ''}</span>${where[i] ? `<button type="button" class="btn small primary" data-go="${i}">ไปที่ widget นี้</button>` : canAdd ? `<button type="button" class="btn small ghost" data-sug="${i}">ดูใน คลัง Widget</button>` : ''}</li>`).join('')}</ul>
          <p class="muted sup-sug-f">ถ้าไม่ใช่สิ่งที่อยากเห็น ส่งให้ทีมงานได้เลย</p>`
       : '';
+    sugBox.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => {
+      const t = found[Number(b.dataset.go)].t;
+      fbSaveDraft({ kind: form.kind.value, message: form.message.value });
+      close();
+      fbGoTo(t);
+      fbDraftBar();
+    }));
     sugBox.querySelectorAll('[data-sug]').forEach((b) => b.addEventListener('click', () => {
       const t = found[Number(b.dataset.sug)].t;
       // keep what they typed: if the widget is not it, the request is one tap away

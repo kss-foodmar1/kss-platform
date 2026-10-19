@@ -6,11 +6,17 @@
 // nothing fits, or they still want something else, does it go to KSS as a
 // support request of kind "wish" (routes/ops.js), with what the chat was asked
 // and what was suggested attached, so KSS sees the gap rather than a guess.
-const fb = { widgets: null, loading: null };
+const fb = { widgets: null, loading: null, at: 0 };
 
+// Kept half a minute: which dashboards show a widget changes when someone adds one.
 async function fbLoadWidgets() {
-  if (fb.widgets) return fb.widgets;
-  if (!fb.loading) fb.loading = api('/api/support/widgets').then((r) => (fb.widgets = r.list || [])).catch(() => (fb.widgets = []));
+  if (fb.widgets && Date.now() - fb.at < 30000) return fb.widgets;
+  if (!fb.loading) {
+    fb.loading = api('/api/support/widgets')
+      .then((r) => { fb.at = Date.now(); return (fb.widgets = r.list || []); })
+      .catch(() => (fb.widgets = fb.widgets || []))
+      .finally(() => { fb.loading = null; });
+  }
   return fb.loading;
 }
 
@@ -49,7 +55,8 @@ async function fbSuggest(text, n = 3) {
   const list = await fbLoadWidgets();
   const ask = (t) => (typeof LIB_QUESTIONS !== 'undefined' && LIB_QUESTIONS[t.template_key]) || '';
   const scored = list
-    .filter((t) => !t.empty) // FMH has nothing for it in this company
+    // FMH has nothing for it in this company, unless it is already on one of their dashboards
+    .filter((t) => !t.empty || (t.on && t.on.length))
     .map((t) => {
       const words = [ask(t), t.name, t.description].join(' ');
       const own = fbTopicsOf(words);
@@ -59,9 +66,11 @@ async function fbSuggest(text, n = 3) {
       const doc = fbGrams(words);
       let hit = 0;
       q.forEach((g) => { if (doc.has(g)) hit++; });
-      return { t, score: hit / q.size };
+      // a widget already on one of their dashboards wins a close call: going to it beats adding another
+      const mine = t.on && t.on.length ? 0.2 : 0;
+      return { t, score: hit / q.size + mine, raw: hit / q.size };
     })
-    .filter((x) => x && x.score >= 0.45)
+    .filter((x) => x && x.raw >= (x.score > x.raw ? 0.3 : 0.45))
     .sort((a, b) => b.score - a.score);
   const best = scored.length ? scored[0].score : 0;
   return scored.filter((x) => x.score >= best * 0.8).slice(0, n);
@@ -69,6 +78,40 @@ async function fbSuggest(text, n = 3) {
 
 // One line for a suggested widget: the question it answers when the library has one.
 const fbWidgetLine = (t) => (typeof LIB_QUESTIONS !== 'undefined' && LIB_QUESTIONS[t.template_key]) || t.description || t.name;
+
+// ---------- already on a dashboard: go there instead of suggesting it ----------
+// { here: true, widget } on the open dashboard, { dashboardId, name } on another one
+// this person can open, or null.
+function fbWhere(t) {
+  const v = state.currentView;
+  if (v && !v.preview) {
+    const w = (v.widgets || []).find((x) => x.template_key === t.template_key);
+    if (w) return { here: true, widget: w };
+  }
+  const d = (t.on || []).map((id) => (state.dashboards || []).find((x) => x.id === id)).find(Boolean);
+  return d ? { dashboardId: d.id, name: d.display_name } : null;
+}
+const fbWhereLabel = (where) => (where.here ? 'อยู่บนหน้านี้แล้ว' : `อยู่ใน “${where.name}” แล้ว`);
+
+// Brings the widget into view (switching dashboard first if needed) and gives it focus.
+function fbGoTo(t) {
+  const where = fbWhere(t);
+  if (!where) return false;
+  const show = (tries = 0) => {
+    const v = state.currentView;
+    const w = v && (v.widgets || []).find((x) => x.template_key === t.template_key);
+    const card = w && document.querySelector(`.widget-card[data-wid="${w.id}"]`);
+    if (!card) { if (tries < 40) setTimeout(() => show(tries + 1), 150); return; }
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    card.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' });
+    if (!card.hasAttribute('tabindex')) card.tabIndex = -1;
+    setTimeout(() => card.focus({ preventScroll: true }), still ? 0 : 350);
+    card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 2200);
+  };
+  if (!where.here) goDashboard(where.dashboardId);
+  show();
+  return true;
+}
 
 // "Is there a widget for this?" Opens the library on that widget for someone who
 // can add it; tells anyone else who can.
@@ -108,7 +151,7 @@ const fbClearDraft = () => { try { sessionStorage.removeItem(FB_DRAFT); } catch 
 
 // ---------- "เรื่องที่แจ้งไว้": the customer's own requests and KSS's replies ----------
 // For every customer user (a viewer cannot open Settings), from the bell or the form.
-async function fbOpenMine() {
+async function fbOpenMine(focusId) {
   const prev = document.activeElement;
   const root = document.createElement('div');
   root.className = 'modal-overlay';
@@ -126,8 +169,11 @@ async function fbOpenMine() {
   try {
     const r = await api('/api/support/mine');
     root.querySelector('.mine-body').innerHTML = r.list.length
-      ? `<ul class="ops-mine">${r.list.map((x) => `<li class="${x.reply_unseen ? 'mine-new-reply' : ''}"><div class="ops-sup-head"><span class="ops-kind">${esc(OPS_KIND[x.kind] || x.kind)}</span><span class="muted">${esc(x.who || '')} · ${esc(opsAgo(x.created_at))}</span><span class="ops-status ops-st-${x.status}">${esc(OPS_STATUS[x.status])}</span>${x.reply_unseen ? '<span class="notif-new">ตอบใหม่</span>' : ''}</div><p class="ops-msg">${esc(x.message)}</p>${x.note ? `<p class="ops-reply"><b>ทีม KSS ตอบ:</b> ${esc(x.note)}</p>` : ''}</li>`).join('')}</ul>`
+      ? `<ul class="ops-mine">${r.list.map((x) => `<li class="${x.reply_unseen ? 'mine-new-reply' : ''}" data-id="${x.id}" tabindex="-1"><div class="ops-sup-head"><span class="ops-kind">${esc(OPS_KIND[x.kind] || x.kind)}</span><span class="muted">${esc(x.who || '')} · ${esc(opsAgo(x.created_at))}</span><span class="ops-status ops-st-${x.status}">${esc(OPS_STATUS[x.status])}</span>${x.reply_unseen ? '<span class="notif-new">ตอบใหม่</span>' : ''}</div><p class="ops-msg">${esc(x.message)}</p>${x.note ? `<p class="ops-reply"><b>ทีม KSS ตอบ:</b> ${esc(x.note)}</p>` : ''}</li>`).join('')}</ul>`
       : '<p class="ops-empty">ยังไม่เคยแจ้งเรื่องหรือขอข้อมูล</p>';
+    // opened from one reply in the bell: that one, in view and focused
+    const li = focusId && root.querySelector(`li[data-id="${Number(focusId)}"]`);
+    if (li) { li.classList.add('mine-focus'); li.scrollIntoView({ block: 'center' }); li.focus({ preventScroll: true }); }
     if (r.unseen) { api('/api/support/seen', { method: 'POST' }).catch(() => {}); if (typeof loadNotifications === 'function') setTimeout(loadNotifications, 300); }
   } catch (err) {
     root.querySelector('.mine-body').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
