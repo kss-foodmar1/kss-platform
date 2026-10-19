@@ -66,13 +66,15 @@ async function fbSuggest(text, n = 3) {
       const doc = fbGrams(words);
       let hit = 0;
       q.forEach((g) => { if (doc.has(g)) hit++; });
-      // a widget already on one of their dashboards wins a close call: going to it beats adding another
-      const mine = t.on && t.on.length ? 0.2 : 0;
-      return { t, score: hit / q.size + mine, raw: hit / q.size };
+      return { t, score: hit / q.size };
     })
-    .filter((x) => x && x.raw >= (x.score > x.raw ? 0.3 : 0.45))
+    .filter((x) => x && x.score >= 0.45)
     .sort((a, b) => b.score - a.score);
-  const best = scored.length ? scored[0].score : 0;
+  // A widget already on one of their dashboards wins only a near tie (within 0.05):
+  // a better match they do not have yet must not be pushed out by one they do.
+  const onDash = (x) => !!(x.t.on && x.t.on.length);
+  scored.sort((a, b) => (Math.abs(a.score - b.score) <= 0.05 && onDash(a) !== onDash(b) ? (onDash(a) ? -1 : 1) : b.score - a.score));
+  const best = scored.length ? Math.max(...scored.map((x) => x.score)) : 0;
   return scored.filter((x) => x.score >= best * 0.8).slice(0, n);
 }
 
@@ -80,35 +82,50 @@ async function fbSuggest(text, n = 3) {
 const fbWidgetLine = (t) => (typeof LIB_QUESTIONS !== 'undefined' && LIB_QUESTIONS[t.template_key]) || t.description || t.name;
 
 // ---------- already on a dashboard: go there instead of suggesting it ----------
-// { here: true, widget } on the open dashboard, { dashboardId, name } on another one
-// this person can open, or null.
+// Every copy of the widget this person can open: [{ wid, did, title, here, dash }],
+// the open dashboard first. `title` is what the card says (a renamed copy keeps its name).
 function fbWhere(t) {
-  const v = state.currentView;
-  if (v && !v.preview) {
-    const w = (v.widgets || []).find((x) => x.template_key === t.template_key);
-    if (w) return { here: true, widget: w };
-  }
-  const d = (t.on || []).map((id) => (state.dashboards || []).find((x) => x.id === id)).find(Boolean);
-  return d ? { dashboardId: d.id, name: d.display_name } : null;
+  const out = [];
+  (t.on || []).forEach((o) => {
+    const d = (state.dashboards || []).find((x) => x.id === o.did);
+    if (!d) return;
+    const here = o.did === state.activeDashboardId;
+    const w = here && state.currentView ? (state.currentView.widgets || []).find((x) => x.id === o.wid) : null;
+    out.push({ wid: o.wid, did: o.did, title: (w && w.title) || o.title || t.name, here, dash: d.display_name });
+  });
+  return out.sort((a, b) => b.here - a.here);
 }
-const fbWhereLabel = (where) => (where.here ? 'อยู่บนหน้านี้แล้ว' : `อยู่ใน “${where.name}” แล้ว`);
+const fbWhereLabel = (loc) => (loc.here ? 'อยู่บนหน้านี้แล้ว' : `อยู่ใน “${loc.dash}” แล้ว`);
 
-// Brings the widget into view (switching dashboard first if needed) and gives it focus.
-function fbGoTo(t) {
-  const where = fbWhere(t);
-  if (!where) return false;
+// A short message that goes away on its own.
+function fbToast(text) {
+  document.querySelectorAll('.fb-toast').forEach((x) => x.remove());
+  const n = document.createElement('div');
+  n.className = 'fb-toast';
+  n.setAttribute('role', 'status');
+  n.textContent = text;
+  document.body.appendChild(n);
+  setTimeout(() => n.remove(), 6000);
+}
+
+// Brings one copy into view (switching dashboard first if needed) and gives it focus.
+function fbGoTo(loc) {
+  if (!loc) return false;
   const show = (tries = 0) => {
-    const v = state.currentView;
-    const w = v && (v.widgets || []).find((x) => x.template_key === t.template_key);
-    const card = w && document.querySelector(`.widget-card[data-wid="${w.id}"]`);
-    if (!card) { if (tries < 40) setTimeout(() => show(tries + 1), 150); return; }
+    const card = document.querySelector(`.widget-card[data-wid="${loc.wid}"]`);
+    if (!card) {
+      if (tries < 40) return setTimeout(() => show(tries + 1), 150);
+      return fbToast(`ไม่พบ widget “${loc.title}” บนหน้านี้ ลองเปิด dashboard “${loc.dash}” อีกครั้ง`);
+    }
     const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
     card.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' });
     if (!card.hasAttribute('tabindex')) card.tabIndex = -1;
     setTimeout(() => card.focus({ preventScroll: true }), still ? 0 : 350);
     card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 2200);
+    // arrived: the "back to your request" bar steps aside after a moment
+    setTimeout(() => document.querySelectorAll('.fb-draftbar').forEach((x) => x.classList.add('quiet')), 4000);
   };
-  if (!where.here) goDashboard(where.dashboardId);
+  if (!loc.here) goDashboard(loc.did);
   show();
   return true;
 }

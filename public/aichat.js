@@ -184,7 +184,7 @@ function aiRender() {
 function aiGo(act) {
   aiToggle(false);
   if (act === 'library' && typeof openLibrary === 'function') openLibrary();
-  else if (act.startsWith('goto:') && typeof fbGoTo === 'function') { const t = (fb.widgets || []).find((x) => x.template_key === act.slice(5)); if (t) fbGoTo(t); }
+  else if (act.startsWith('goto:') && typeof fbGoTo === 'function') { const [wid, did] = act.slice(5).split(':').map(Number); const d = (state.dashboards || []).find((x) => x.id === did); fbGoTo({ wid, did, here: did === state.activeDashboardId, title: '', dash: d ? d.display_name : '' }); }
   else if (act.startsWith('widget:') && typeof openLibrary === 'function') openLibrary({ dashboardId: aiChat.dashboardId, templateId: Number(act.slice(7)) });
   else if (act.startsWith('settings:') && typeof openCompanySettings === 'function') openCompanySettings(act.slice(9));
 }
@@ -285,14 +285,23 @@ async function aiFindWidget(question, msgs) {
   const canAdd = aiCanSettings();
   // already on one of their dashboards: say so and take them there, rather than suggest adding it
   const where = found.map((x) => fbWhere(x.t));
-  const hereI = where.findIndex((w) => w && w.here);
-  const haveI = hereI >= 0 ? hereI : where.findIndex(Boolean);
-  if (haveI >= 0) {
-    const t = found[haveI].t;
+  // The best match is one they already have: say it is probably there, take them to it,
+  // and still list the other close ones (one they do not have yet may fit better).
+  if (found.length && where[0].length) {
+    const loc = where[0][0];
+    const rest = found.slice(1);
     msgs.push({
       role: 'model', source: 'find', q: question, wish: true,
-      text: `${where[haveI].here ? 'มีอยู่บนหน้านี้แล้วครับ' : `มีอยู่ใน dashboard “${where[haveI].name}” แล้วครับ`}: **${t.name}** ${fbWidgetLine(t)}\nถ้ายังไม่ใช่ที่อยากเห็น ส่งคำขอให้ทีม KSS ได้`,
-      go: [{ label: 'ไปที่ widget นี้', act: `goto:${t.template_key}` }],
+      text: [
+        loc.here ? 'น่าจะมีอยู่บนหน้านี้แล้วครับ' : `น่าจะมีอยู่ใน dashboard “${loc.dash}” แล้วครับ`,
+        `**${loc.title}** ${fbWidgetLine(found[0].t)}${found[0].t.empty ? ' (ยังไม่มีข้อมูลจาก FMH สำหรับร้านนี้)' : ''}`,
+        ...(rest.length ? ['widget อื่นที่อาจใกล้เคียง', ...rest.map((x, i) => `- **${x.t.name}** ${fbWidgetLine(x.t)}${where[i + 1].length ? ` (${fbWhereLabel(where[i + 1][0])})` : ''}`)] : []),
+        'ถ้ายังไม่ใช่ที่อยากเห็น ส่งคำขอให้ทีม KSS ได้',
+      ].join('\n'),
+      go: [
+        ...where[0].map((l) => ({ label: where[0].length > 1 ? `ไปที่ “${l.title}”` : 'ไปที่ widget นี้', act: `goto:${l.wid}:${l.did}` })),
+        ...rest.map((x, i) => (where[i + 1].length ? { label: `ไปที่ “${where[i + 1][0].title}”`, act: `goto:${where[i + 1][0].wid}:${where[i + 1][0].did}` } : canAdd ? { label: `ดู “${x.t.name}”`, act: `widget:${x.t.id}` } : null)).filter(Boolean),
+      ],
     });
     aiRender();
     return;

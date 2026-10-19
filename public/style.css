@@ -1485,3 +1485,9 @@ body.arranging-on .ai-fab { display: none; }
 .notif-reply-item:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .notif-reply-item span { color: var(--ink-2); line-height: 1.45; }
 .notif-more { margin: 4px 0 8px; font-size: 13px; color: var(--ink-2); }
+
+.sup-acts { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; flex: none; }
+.fb-toast { position: fixed; left: 50%; top: calc(72px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); z-index: 70; max-width: calc(100% - 32px); padding: 10px 14px; border-radius: 10px; background: var(--ink); color: var(--surface); font-size: 13.5px; box-shadow: 0 8px 24px rgba(var(--shadow-ink), .2); }
+.fb-draftbar.quiet { opacity: .85; transform: translateX(-50%) scale(.96); }
+/* phones: keep the bar clear of the "ถาม AI" button in the corner */
+@media (max-width: 700px) { .fb-draftbar { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); } }

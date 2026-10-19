@@ -323,17 +323,19 @@ function openSupportForm(opts = {}) {
     suggested = found.map((x) => x.t.name);
     const canAdd = isCompanyAdmin();
     const where = found.map((x) => fbWhere(x.t));
-    const have = where.some(Boolean);
+    const locs = [];
+    const goBtns = (i) => where[i].map((loc) => { locs.push(loc); return `<button type="button" class="btn small primary" data-go="${locs.length - 1}">${where[i].length > 1 ? `ไปที่ “${esc(loc.title)}”` : 'ไปที่ widget นี้'}</button>`; }).join('');
+    const have = where.some((w) => w.length);
     sugBox.innerHTML = found.length
-      ? `<p class="sup-sug-h"><b>${have ? 'อาจมีอยู่แล้ว' : 'อาจใกล้เคียง'}</b> ${have ? 'widget ที่ติ๊กไว้อยู่บน dashboard ของคุณแล้ว กดไปดูได้เลย' : canAdd ? 'ลองดู widget เหล่านี้ก่อน ถ้าใช่ เพิ่มลง dashboard ได้เลย' : 'ลองดู widget เหล่านี้ก่อน ให้แอดมินของร้านเพิ่มให้ได้'}</p>
-         <ul class="sup-sug">${found.map((x, i) => `<li><span><b>${esc(x.t.name)}</b><span class="muted">${esc(fbWidgetLine(x.t))}</span>${where[i] ? `<span class="sup-here">✓ ${esc(fbWhereLabel(where[i]))}</span>` : x.t.needs ? `<span class="sup-needs">${esc(x.t.needs)}</span>` : ''}</span>${where[i] ? `<button type="button" class="btn small primary" data-go="${i}">ไปที่ widget นี้</button>` : canAdd ? `<button type="button" class="btn small ghost" data-sug="${i}">ดูใน คลัง Widget</button>` : ''}</li>`).join('')}</ul>
+      ? `<p class="sup-sug-h"><b>${have ? 'อาจมีอยู่แล้ว' : 'อาจใกล้เคียง'}</b> ${have ? 'widget ที่มีเครื่องหมาย ✓ อยู่บน dashboard ของคุณแล้ว กดไปดูได้เลย' : canAdd ? 'ลองดู widget เหล่านี้ก่อน ถ้าใช่ เพิ่มลง dashboard ได้เลย' : 'ลองดู widget เหล่านี้ก่อน ให้แอดมินของร้านเพิ่มให้ได้'}</p>
+         <ul class="sup-sug">${found.map((x, i) => `<li><span><b>${esc(where[i].length === 1 ? where[i][0].title : x.t.name)}</b><span class="muted">${esc(fbWidgetLine(x.t))}</span>${where[i].length ? `<span class="sup-here"><span aria-hidden="true">✓ </span>${esc(fbWhereLabel(where[i][0]))}</span>` : ''}${x.t.empty ? '<span class="sup-needs">ยังไม่มีข้อมูลจาก FMH สำหรับร้านนี้</span>' : x.t.needs ? `<span class="sup-needs">${esc(x.t.needs)}</span>` : ''}</span><span class="sup-acts">${where[i].length ? goBtns(i) : canAdd ? `<button type="button" class="btn small ghost" data-sug="${i}">ดูใน คลัง Widget</button>` : ''}</span></li>`).join('')}</ul>
          <p class="muted sup-sug-f">ถ้าไม่ใช่สิ่งที่อยากเห็น ส่งให้ทีมงานได้เลย</p>`
       : '';
     sugBox.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => {
-      const t = found[Number(b.dataset.go)].t;
+      const loc = locs[Number(b.dataset.go)];
       fbSaveDraft({ kind: form.kind.value, message: form.message.value });
       close();
-      fbGoTo(t);
+      fbGoTo(loc);
       fbDraftBar();
     }));
     sugBox.querySelectorAll('[data-sug]').forEach((b) => b.addEventListener('click', () => {

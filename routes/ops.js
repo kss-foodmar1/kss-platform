@@ -119,12 +119,13 @@ customerRouter.get(
     if (cid) {
       const own = req.user.role === 'company_admin';
       const [use] = await pool.query(
-        `SELECT DISTINCT w.widget_template_id AS tid, d.id AS did FROM dashboard_widgets w JOIN dashboards d ON d.id = w.dashboard_id
+        `SELECT w.id AS wid, w.widget_template_id AS tid, d.id AS did, w.title FROM dashboard_widgets w JOIN dashboards d ON d.id = w.dashboard_id
           ${own ? '' : 'JOIN user_dashboard_access a ON a.dashboard_id = d.id AND a.user_id = ?'}
           WHERE d.company_id = ? AND d.active = TRUE`,
         own ? [cid] : [req.user.id, cid]
       );
-      use.forEach((u) => { if (!on.has(u.tid)) on.set(u.tid, []); on.get(u.tid).push(u.did); });
+      // every copy: the same widget can sit on two dashboards, or twice with different scopes
+      use.forEach((u) => { if (!on.has(u.tid)) on.set(u.tid, []); on.get(u.tid).push({ wid: u.wid, did: u.did, title: u.title || null }); });
     }
     res.json({
       list: rows.map(({ default_config_json, report_source, ...t }) => {
