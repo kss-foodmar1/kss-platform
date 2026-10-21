@@ -2999,7 +2999,7 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
   const all = cfg.columns && cfg.columns.length ? cfg.columns : Object.keys(rows[0] || {}).map((field) => ({ field }));
   const label = (c) => c.label || c.field.replace(/_/g, ' ');
   const byField = new Map(all.map((c) => [c.field, c]));
-  const blank = () => ({ order: all.map((c) => c.field), hidden: [...(cu.default_hidden || [])], pins: [], pin_cats: [], pinned_only: false });
+  const blank = () => ({ order: all.map((c) => c.field), hidden: [...(cu.default_hidden || [])], pins: [], pin_cats: [], pinned_only: false, branch: '' });
   const load = () => {
     const p = (ctx.widget && ctx.widget.my_prefs) || null;
     const b = blank();
@@ -3007,7 +3007,7 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
     // columns added to the widget later show up at the end, visible
     const order = (p.order || []).filter((f) => byField.has(f));
     all.forEach((c) => { if (!order.includes(c.field)) order.push(c.field); });
-    return { order, hidden: (p.hidden || []).filter((f) => byField.has(f)), pins: p.pins || [], pin_cats: p.pin_cats || [], pinned_only: !!p.pinned_only };
+    return { order, hidden: (p.hidden || []).filter((f) => byField.has(f)), pins: p.pins || [], pin_cats: p.pin_cats || [], pinned_only: !!p.pinned_only, branch: p.branch || '' };
   };
   let prefs = load();
   let saveTimer = null;
@@ -3024,6 +3024,10 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
   const catOf = (r) => (cu.category ? String(r[cu.category] ?? '') : '');
   const nameOf = (r) => String((cu.pin_label && r[cu.pin_label]) || keyOf(r));
   const pinned = (r) => prefs.pins.includes(keyOf(r)) || (catOf(r) && prefs.pin_cats.includes(catOf(r)));
+  // the widget's own branch choice (remembered per person), on top of the page's branch filter
+  const BF = cu.branch_field || null;
+  const branches = BF ? [...new Set(rows.map((r) => String(r[BF] ?? '')).filter(Boolean))].sort((a, b) => (CK_NAME.test(b) - CK_NAME.test(a)) || a.localeCompare(b, 'th')) : [];
+  if (prefs.branch && !branches.includes(prefs.branch)) prefs.branch = '';
   const cats = cu.category ? [...new Set(rows.map(catOf).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'th')) : [];
   let sort = cfg.sort_by ? { ...cfg.sort_by } : null;
   let query = '';
@@ -3034,6 +3038,7 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
 
   body.insertAdjacentHTML('beforeend', `
     <div class="ct-tools">
+      ${branches.length > 1 ? `<label class="ct-branch"><span class="sr-only">สาขา</span><select>${['', ...branches].map((b) => `<option value="${esc(b)}"${b === prefs.branch ? ' selected' : ''}>${b ? esc(b) : 'ทุกสาขา'}</option>`).join('')}</select></label>` : ''}
       ${cu.search ? `<label class="ct-search"><span class="sr-only">ค้นหาสินค้า</span><input type="search" placeholder="ค้นหาชื่อหรือรหัสสินค้า" autocomplete="off"></label>` : ''}
       <button type="button" class="btn small ghost ct-only" aria-pressed="false"></button>
       <button type="button" class="btn small ghost ct-open" aria-expanded="false" aria-controls="${pid}">ปรับตาราง</button>
@@ -3052,6 +3057,7 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
 
   function dataNow() {
     let data = rows;
+    if (BF && prefs.branch) data = data.filter((r) => String(r[BF] ?? '') === prefs.branch);
     if (query) {
       const q = query.toLowerCase();
       data = data.filter((r) => [].concat(cu.search || []).some((f) => String(r[f] ?? '').toLowerCase().includes(q)));
@@ -3077,7 +3083,7 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
   }
 
   function drawTools() {
-    const n = rows.filter(pinned).length;
+    const n = rows.filter((r) => pinned(r) && (!BF || !prefs.branch || String(r[BF] ?? '') === prefs.branch)).length;
     const only = $('.ct-only');
     only.setAttribute('aria-pressed', String(prefs.pinned_only));
     only.textContent = `เฉพาะที่ปักหมุด (${n})`;
@@ -3220,6 +3226,8 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
   });
   $('.ct-only').addEventListener('click', () => { prefs.pinned_only = !prefs.pinned_only; expanded = false; save(); drawTools(); drawTable(); $('.ct-only').focus(); });
   $('.ct-csv').addEventListener('click', () => exportCsv(dataNow(), visible()));
+  const bsel = body.querySelector('.ct-branch select');
+  if (bsel) bsel.addEventListener('change', () => { prefs.branch = bsel.value; expanded = false; msg.textContent = prefs.branch ? `แสดงเฉพาะ ${prefs.branch}` : 'แสดงทุกสาขา'; save(); drawTools(); drawTable(); });
   const search = body.querySelector('.ct-search input');
   if (search) search.addEventListener('input', () => { query = search.value.trim(); expanded = false; drawTable(); });
   drawPanel(); drawTools(); drawTable();

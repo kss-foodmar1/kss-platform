@@ -217,6 +217,7 @@ router.put(
       pins: strList(p.pins, 500),
       pin_cats: strList(p.pin_cats, 100),
       pinned_only: !!p.pinned_only,
+      branch: typeof p.branch === 'string' ? p.branch.slice(0, 200) : '',
     };
     await pool.query(
       `INSERT INTO widget_user_prefs (user_id, widget_id, prefs_json) VALUES (?, ?, ?)

@@ -1521,6 +1521,9 @@ body.arranging-on .ai-fab { display: none; }
 .ct-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
 .ct-tools .btn.small { min-height: 38px; }
 .ct-search { flex: 1 1 220px; min-width: 0; }
+.ct-branch select { min-height: 38px; max-width: 220px; padding: 0 10px; border: 1.5px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; }
+.ct-branch select:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+@media (max-width: 700px) { .ct-branch, .ct-branch select { width: 100%; max-width: none; min-height: 44px; } }
 .ct-search input { width: 100%; min-height: 38px; padding: 0 12px; border: 1.5px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; }
 .ct-search input:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .ct-only[aria-pressed="true"] { background: var(--primary-soft); border-color: var(--primary-line); color: var(--primary); }
