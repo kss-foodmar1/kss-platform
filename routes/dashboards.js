@@ -187,11 +187,11 @@ router.get(
       const byId = new Map(prefs.map((p) => [p.widget_id, p.prefs_json]));
       widgets.forEach((w) => { try { w.my_prefs = byId.has(w.id) ? JSON.parse(byId.get(w.id)) : null; } catch (e) { w.my_prefs = null; } });
     }
-    const [[co]] = await pool.query(`SELECT data_source, onboarding_json FROM companies WHERE id = ?`, [dashboard.company_id]);
+    const [[co]] = await pool.query(`SELECT data_source, onboarding_json, auto_sync FROM companies WHERE id = ?`, [dashboard.company_id]);
     // the first-run answers pick which findings lead the page (public/app.js renderInsights)
     let profile = null;
     try { profile = co && co.onboarding_json ? JSON.parse(co.onboarding_json) : null; } catch (e) { /* none */ }
-    res.json({ dashboard: { ...dashboard, data_source: co ? co.data_source : 'fmh', profile }, widgets, sources });
+    res.json({ dashboard: { ...dashboard, data_source: co ? co.data_source : 'fmh', auto_sync: co ? !!co.auto_sync : true, profile }, widgets, sources });
   })
 );
 
@@ -303,11 +303,14 @@ async function serveData(req, res, companyId, widgets) {
     });
   }
   if (!cached) {
-    const [[company]] = await pool.query(`SELECT fmh_api_key_enc, data_source FROM companies WHERE id = ?`, [companyId]);
+    const [[company]] = await pool.query(`SELECT fmh_api_key_enc, data_source, auto_sync FROM companies WHERE id = ?`, [companyId]);
     const connected = company && (company.fmh_api_key_enc || company.data_source === 'demo');
+    const manualOnly = company && company.data_source !== 'demo' && !company.auto_sync;
     return res.status(409).json({
       error: connected
-        ? 'ยังไม่มีข้อมูล — ระบบจะ sync ให้ตอนตี 1 หรือกด Refresh ด่วนได้เลย'
+        ? manualOnly
+          ? 'ยังไม่มีข้อมูล — ปิดการดึงข้อมูลอัตโนมัติอยู่ กด “ดึงข้อมูลใหม่” เพื่อดึงครั้งแรก'
+          : 'ยังไม่มีข้อมูล — ระบบจะ sync ให้ตอนตี 1 หรือกด Refresh ด่วนได้เลย'
         : 'ยังไม่ได้ตั้งค่า FMH API Key ของบริษัทนี้',
       code: connected ? 'FMH_NOT_SYNCED' : 'FMH_KEY_MISSING',
       health,

@@ -1579,3 +1579,9 @@ table.report-table.ct-table td { vertical-align: middle; }
   /* room under the panel and the list for the floating "ถาม AI" button */
   .widget-card:has(.ct-table) .widget-body { padding-bottom: 64px; }
 }
+
+/* Auto-fetch switch under the FMH key form. */
+.auto-sync-row { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line, rgba(127,127,127,.25)); }
+.auto-sync-row .check-row { display: flex; gap: 8px; align-items: center; font-size: 14px; font-weight: 600; margin: 0; cursor: pointer; }
+.auto-sync-row .check-row input { width: 18px; height: 18px; flex: 0 0 auto; margin: 0; }
+.auto-sync-row .auto-sync-help { margin: 6px 0 0 26px; max-width: 70ch; }

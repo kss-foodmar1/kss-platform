@@ -104,6 +104,10 @@ async function upgradeLine() {
 }
 
 async function upgradeCompanies() {
+  if (!(await columnInfo('companies', 'auto_sync'))) {
+    await pool.query(`ALTER TABLE companies ADD COLUMN auto_sync BOOLEAN NOT NULL DEFAULT TRUE`);
+    console.log('  companies: added auto_sync');
+  }
   if (!(await columnInfo('companies', 'data_source'))) {
     await pool.query(`ALTER TABLE companies ADD COLUMN data_source ENUM('fmh','demo') NOT NULL DEFAULT 'fmh'`);
     // The sales-demo company runs on generated data from now on: no FMH key,

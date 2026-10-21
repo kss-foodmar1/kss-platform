@@ -1542,6 +1542,7 @@ window.I18N_EN = {
     ['{0} · ช่วงวันที่นับจากวันนั้น ไม่ดึงข้อมูลใหม่จาก FMH', '{0} · date ranges count from that day; no new data is pulled from FMH'],
     ['· ดึงไว้เมื่อ {0}', '· pulled {0}'],
     ['ข้อมูลล่าสุด: {0} · ระบบอัปเดตอัตโนมัติทุกวันตี 1', 'Last updated: {0} · refreshes automatically every day at 1am'],
+    ['ข้อมูลล่าสุด: {0} · ปิดการดึงอัตโนมัติ กด “ดึงข้อมูลใหม่” เมื่อต้องการ', 'Last updated: {0} · auto-fetch is off, press “Refresh now” when you need it'],
     ['อัปเดตข้อมูลจาก FMH ครั้งล่าสุดไม่สำเร็จ ({0}) — ตัวเลขที่เห็นเป็นชุดก่อนหน้า {1}', 'The last FMH update failed ({0}) — figures shown are the previous set {1}'],
     ['อัปเดตข้อมูลจาก FMH ครั้งล่าสุดไม่สำเร็จ ({0}) — ตัวเลขที่เห็นเป็นชุดก่อนหน้า', 'The last FMH update failed ({0}) — figures shown are the previous set'],
     ['อัปเดตข้อมูลจาก FMH ครั้งล่าสุดไม่สำเร็จ — ตัวเลขที่เห็นเป็นชุดก่อนหน้า {0}', 'The last FMH update failed — figures shown are the previous set {0}'],

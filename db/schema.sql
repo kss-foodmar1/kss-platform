@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS companies (
   onboarding_json TEXT NULL,
   self_serve BOOLEAN NOT NULL DEFAULT FALSE,
   data_purged_at TIMESTAMP NULL,
+  -- Nightly (1am) and boot-time FMH pulls for this company. Off = pull only when
+  -- someone presses 'ดึงข้อมูลใหม่' (the monthly row quota is the limit).
+  auto_sync BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) DEFAULT CHARSET=utf8mb4;
 

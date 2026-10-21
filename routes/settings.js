@@ -27,9 +27,26 @@ router.get(
   wrap(async (req, res) => {
     const companyId = resolveCompanyId(req);
     if (!companyId) return res.status(400).json({ error: 'company_id required' });
-    const [[c]] = await pool.query(`SELECT fmh_api_key_enc, fmh_key_updated_at FROM companies WHERE id = ?`, [companyId]);
+    const [[c]] = await pool.query(`SELECT fmh_api_key_enc, fmh_key_updated_at, auto_sync FROM companies WHERE id = ?`, [companyId]);
     if (!c) return res.status(404).json({ error: 'Company not found' });
-    res.json({ configured: !!c.fmh_api_key_enc, updated_at: c.fmh_key_updated_at });
+    res.json({ configured: !!c.fmh_api_key_enc, updated_at: c.fmh_key_updated_at, auto_sync: !!c.auto_sync });
+  })
+);
+
+// Switch the automatic (1am) FMH pull on or off for a company. The data source
+// stays FMH either way; off only stops the scheduled pulls, and the
+// 'ดึงข้อมูลใหม่' button still works.
+router.put(
+  '/auto-sync',
+  requireAuth,
+  requireCompanyAdmin,
+  wrap(async (req, res) => {
+    const companyId = resolveCompanyId(req);
+    if (!companyId) return res.status(400).json({ error: 'company_id required' });
+    const enabled = !!(req.body && req.body.enabled);
+    const [result] = await pool.query(`UPDATE companies SET auto_sync = ? WHERE id = ?`, [enabled, companyId]);
+    if (!result.affectedRows) return res.status(404).json({ error: 'Company not found' });
+    res.json({ ok: true, auto_sync: enabled });
   })
 );
 

@@ -8,7 +8,7 @@
 async function renderFmhKeyPanel(container, companyId, onSaved) {
   const qs = isSuper() ? `?company_id=${companyId}` : '';
   container.innerHTML = '<p class="muted">กำลังโหลด...</p>';
-  const { configured, updated_at } = await api(`/api/settings/fmh-key${qs}`);
+  const { configured, updated_at, auto_sync } = await api(`/api/settings/fmh-key${qs}`);
   container.innerHTML = `
     <p class="status-line">${
       configured
@@ -20,7 +20,13 @@ async function renderFmhKeyPanel(container, companyId, onSaved) {
       <input type="password" class="fmh-key-input" placeholder="${configured ? 'ใส่ Key ใหม่เพื่อเปลี่ยน' : 'fmh_rpt_...'}" autocomplete="off" aria-label="FMH API Key">
       <button type="submit" class="btn small primary">บันทึก Key</button>
       ${configured ? '<button type="button" class="btn small danger fmh-remove">ลบ Key</button>' : ''}
-    </form>`;
+    </form>
+    ${configured ? `<div class="auto-sync-row">
+      <label class="check-row"><input type="checkbox" class="auto-sync-cb"${auto_sync ? ' checked' : ''}> ดึงข้อมูลจาก FMH อัตโนมัติทุกวันตี 1</label>
+      <p class="helper-text auto-sync-help">${auto_sync
+        ? 'เปิดอยู่: ข้อมูลอัปเดตเองทุกคืน (ใช้โควตาแถวของ FMH ทุกคืน)'
+        : 'ปิดอยู่: ระบบไม่ดึงเอง ข้อมูลจะเก่าลงเรื่อยๆ จนกว่าจะกด “ดึงข้อมูลใหม่” ในหน้า dashboard ตัวเตือนและ LINE จะใช้ข้อมูลที่ดึงไว้ล่าสุด'}</p>
+    </div>` : ''}`;
   const msg = container.querySelector('.form-msg');
   container.querySelector('form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -36,6 +42,23 @@ async function renderFmhKeyPanel(container, companyId, onSaved) {
       msg.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
     }
   });
+  const autoCb = container.querySelector('.auto-sync-cb');
+  if (autoCb) {
+    autoCb.addEventListener('change', async () => {
+      autoCb.disabled = true;
+      try {
+        const on = autoCb.checked;
+        await api(`/api/settings/auto-sync${qs}`, { method: 'PUT', body: JSON.stringify({ enabled: on }) });
+        await renderFmhKeyPanel(container, companyId, onSaved);
+        container.querySelector('.form-msg').innerHTML = `<div class="ok-msg">${on ? 'เปิดการดึงข้อมูลอัตโนมัติแล้ว' : 'ปิดการดึงข้อมูลอัตโนมัติแล้ว'}</div>`;
+        if (onSaved) onSaved();
+      } catch (err) {
+        autoCb.checked = !autoCb.checked;
+        autoCb.disabled = false;
+        msg.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+      }
+    });
+  }
   const remove = container.querySelector('.fmh-remove');
   if (remove) {
     remove.addEventListener('click', async () => {
