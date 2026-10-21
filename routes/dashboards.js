@@ -14,7 +14,7 @@ const express = require('express');
 const pool = require('../db/pool');
 const { requireAuth } = require('../middleware/auth');
 const { wrap, isSuperadmin, resolveCompanyId, getDashboardForUser } = require('../lib/access');
-const { FMH_REPORTS, getCached, getSaved, getSyncHealth, syncOne, cacheKeyFor, pullsForWidget, touchCompanyView } = require('../lib/fmhCache');
+const { FMH_REPORTS, getCached, getSaved, getSyncHealth, syncOne, cacheKeyFor, pullsForWidget } = require('../lib/fmhCache');
 const { withTrigger } = require('../lib/fmhUsage');
 const { listWidgets } = require('../lib/widgetCatalog');
 const fmhFiles = require('../lib/fmhFiles');
@@ -245,8 +245,6 @@ async function serveData(req, res, companyId, widgets) {
   const allowed = new Set();
   widgets.forEach((w) => pullsForWidget(w.report_source, w.config).forEach((p) => allowed.add(p.source)));
   if (!allowed.has(source)) return res.status(404).json({ error: 'dashboard นี้ไม่ได้ใช้รายงานนี้' });
-  // KSS staff browsing a company don't count as the company using it.
-  const view = isSuperadmin(req.user) ? { catchingUp: false } : await touchCompanyView(companyId);
 
   // ?saved=1: the last pull that had rows ("use saved data" for demos). Falls
   // back to the live cache for a report that has never been saved.
@@ -323,7 +321,6 @@ async function serveData(req, res, companyId, widgets) {
       from_saved: !!saved,
       health,
       grouping,
-      catching_up: view.catchingUp || undefined,
       date_field: grouping ? null : cfg.dateField || null,
       // Where uploaded FMH files fill in before the API window.
       history: (cached.quota && cached.quota.history) || null,

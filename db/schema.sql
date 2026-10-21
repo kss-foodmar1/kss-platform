@@ -22,9 +22,6 @@ CREATE TABLE IF NOT EXISTS companies (
   onboarding_json TEXT NULL,
   self_serve BOOLEAN NOT NULL DEFAULT FALSE,
   data_purged_at TIMESTAMP NULL,
-  -- Last time one of the company's own people opened a dashboard. The nightly
-  -- FMH sync skips a company nobody has looked at for FMH_ACTIVE_DAYS.
-  last_viewed_at TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) DEFAULT CHARSET=utf8mb4;
 

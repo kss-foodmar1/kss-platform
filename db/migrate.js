@@ -104,12 +104,6 @@ async function upgradeLine() {
 }
 
 async function upgradeCompanies() {
-  if (!(await columnInfo('companies', 'last_viewed_at'))) {
-    await pool.query(`ALTER TABLE companies ADD COLUMN last_viewed_at TIMESTAMP NULL`);
-    // Everyone starts "just seen": no company is cut off from the nightly sync on the day this ships.
-    await pool.query(`UPDATE companies SET last_viewed_at = NOW()`);
-    console.log('  companies: added last_viewed_at');
-  }
   if (!(await columnInfo('companies', 'data_source'))) {
     await pool.query(`ALTER TABLE companies ADD COLUMN data_source ENUM('fmh','demo') NOT NULL DEFAULT 'fmh'`);
     // The sales-demo company runs on generated data from now on: no FMH key,
