@@ -995,7 +995,7 @@ async function renderCompanyDetail(main, companyId, tab) {
 // ---------- FMH quota: where the rows went ----------
 const TRIGGER_LABEL = {
   cron: 'Sync อัตโนมัติตี 1', boot: 'ตอน deploy', refresh: 'ปุ่ม Refresh ของผู้ใช้', admin: 'Sync จาก Admin',
-  warm: 'เพิ่ม widget ใหม่', key_saved: 'ตอนใส่ API key', probe: 'Diagnostics', other: 'อื่น ๆ',
+  warm: 'เพิ่ม widget ใหม่', return: 'กลับมาเปิดหลังไม่ได้ใช้หลายวัน', key_saved: 'ตอนใส่ API key', probe: 'Diagnostics', other: 'อื่น ๆ',
 };
 async function renderUsage(container, companyId) {
   let u;

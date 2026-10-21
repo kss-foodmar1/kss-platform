@@ -1727,6 +1727,7 @@ class DashboardView {
     const bar = document.createElement('div');
     bar.className = 'fmh-status-bar';
     const oldest = fmtDateTime(syncedTimes[0]);
+    const catchingUp = ok.some((r) => r.meta && r.meta.catching_up);
     const all = Object.values(this.results).filter(Boolean);
     const healthOf = (r) => (r.meta && r.meta.health) || r.health || {};
     const savedAvailable = all.some((r) => healthOf(r).saved_synced_at);
@@ -1755,7 +1756,7 @@ class DashboardView {
                      ? '<strong>ตัวเลขเป็นข้อมูลตัวอย่าง ไม่ใช่ของร้านคุณ</strong> <span class="hide-m">ลองจัด dashboard ให้ถูกใจได้เต็มที่ widget และการจัดวางจะอยู่ครบเมื่อสลับเป็นข้อมูลจริง</span>'
                      : 'ตัวเลขนี้เป็นข้อมูลตัวอย่าง ไม่ใช่ข้อมูลจริงของร้าน'
                  }</span>`
-               : oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
+               : catchingUp ? `ข้อมูลล่าสุด: ${esc(oldest)} · กำลังอัปเดตข้อมูลให้ เปิดหน้านี้ใหม่ในอีกสักครู่` : oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
            }</span>
            <span class="sync-actions">${this.dashboard.data_source === 'demo' ? '' : toggle}${this.dashboard.data_source === 'demo' && isCompanyAdmin() && !this.preview ? '<button type="button" class="btn small primary use-real-btn">พร้อมใช้ข้อมูลจริงแล้ว</button>' : ''}${keyMissing || this.dashboard.data_source === 'demo' ? '' : '<button type="button" class="btn small ghost fmh-refresh-btn">ดึงข้อมูลใหม่</button>'}</span>
          </div>
