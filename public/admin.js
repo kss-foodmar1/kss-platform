@@ -604,6 +604,8 @@ const PROBE_LIST = [
     d: 'ลองส่ง date_range สี่แบบ เพื่อดูว่าแบบที่แอปใช้อยู่ถูกต้องไหม และเลือกฟิลด์วันที่ฝั่ง server ได้หรือเปล่า' },
   { k: 'ck_sales', n: 'ยอดขาย CK ที่ FMH ส่งมา เทียบกับที่ Dashboard เก็บไว้',
     d: 'ดึงยอดขายครัวกลางตามช่วงเวลาจาก FMH ตรง ๆ แล้ววางข้างข้อมูลที่ sync ไว้ ใช้ตอบว่ายอดขายหายเพราะ FMH, เพราะ sync ไม่สำเร็จ หรือเพราะวิธีรวมเป็นช่วง กินโควตาไม่กี่แถว' },
+  { k: 'stock_balance', n: 'ยอดคงเหลือรายสินค้า: snapshot หรือขึ้นกับวันที่ และหน่วยอื่น / par อยู่ฟิลด์ไหน',
+    d: 'ใช้ตัดสินใจ widget "ยอดคงเหลือรายสินค้า": ถามยอด 5 แถวเดียวกันแบบไม่ส่งช่วงวัน ส่ง 14 วันล่าสุด และส่งช่วงเมื่อ 45 วันก่อน ถ้าเหมือนกันแปลว่าเป็นยอด ณ ตอนนี้ แล้วแสดงฟิลด์และตัวอย่าง 3 แถวของรายงาน stock_balance เพื่อหาหน่วยอื่น (เช่นลัง) และ par level กินโควตาราว 20 แถว' },
   { k: 'group_by', n: 'จัดกลุ่มฝั่ง server ประหยัดโควตาได้แค่ไหน',
     d: 'เทียบจำนวนแถวระหว่างดึงแบบรายการกับจัดกลุ่มตามสาขา ซัพพลายเออร์ หมวด และสินค้า' },
 ];
@@ -674,6 +676,15 @@ function fmhProbeView(r, key) {
       </div>`;
     }).join('')}
     <p class="muted">ช่วงที่ทดสอบ ${esc(r.window.start)} ถึง ${esc(r.window.end)} · อ่านแบบจัดกลุ่มตามสินค้า จึงกินโควตาหลักสิบแถว</p>`;
+  }
+  if (key === 'stock_balance') {
+    const part = (name, x) => `<p><b>${esc(name)}</b> ${x.ok ? `<span class="probe-good">ผ่าน</span> · ${x.rows.length} แถว` : `<span class="probe-bad">HTTP ${x.status} ${esc(x.message)}</span>`}</p>
+      ${x.fields.length ? `<p class="muted">ฟิลด์: ${x.fields.map((f) => `<code>${esc(f)}</code>`).join(' ')}</p><pre>${esc(JSON.stringify(x.rows.slice(0, 3), null, 1))}</pre>` : ''}`;
+    return `<p class="${r.snapshot === null ? 'probe-bad' : 'probe-good'}">${esc(r.verdict)}</p>
+      ${part('stock_balance_product · ไม่ส่งช่วงวัน', r.product.none)}
+      ${part('stock_balance_product · 14 วันล่าสุด', r.product.recent)}
+      ${part('stock_balance_product · ช่วงเมื่อ 45–59 วันก่อน', r.product.old)}
+      ${part('stock_balance (มีหน่วย / par level?)', r.balance)}`;
   }
   if (key === 'date_filter') {
     return `<table class="probe-table"><thead><tr><th>รูปแบบที่ส่ง</th><th>ผล</th><th>แถว</th><th>ข้อความจาก FMH</th></tr></thead><tbody>

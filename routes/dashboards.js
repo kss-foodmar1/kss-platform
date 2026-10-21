@@ -5,6 +5,7 @@
 //   GET  /api/dashboards/:id/data/:source cached data for one report source
 //                                         (?group= for a server-side grouping)
 //   POST /api/dashboards/:id/refresh      on-demand FMH re-sync of its sources
+//   PUT  /api/dashboards/:id/widgets/:wid/prefs  this viewer's own table layout and pins
 //
 // Visibility: KSS staff see any company's dashboards (pass ?company_id=);
 // company_admin sees all of their own company's; client sees only the ones
@@ -177,11 +178,53 @@ router.get(
     if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
     const widgets = await listWidgets(dashboard.id);
     const sources = describeWidgets(widgets);
+    // this viewer's own arrangement of each table (columns, order, pins)
+    if (widgets.length) {
+      const [prefs] = await pool.query(
+        `SELECT widget_id, prefs_json FROM widget_user_prefs WHERE user_id = ? AND widget_id IN (?)`,
+        [req.user.id, widgets.map((w) => w.id)]
+      ).catch(() => [[]]);
+      const byId = new Map(prefs.map((p) => [p.widget_id, p.prefs_json]));
+      widgets.forEach((w) => { try { w.my_prefs = byId.has(w.id) ? JSON.parse(byId.get(w.id)) : null; } catch (e) { w.my_prefs = null; } });
+    }
     const [[co]] = await pool.query(`SELECT data_source, onboarding_json FROM companies WHERE id = ?`, [dashboard.company_id]);
     // the first-run answers pick which findings lead the page (public/app.js renderInsights)
     let profile = null;
     try { profile = co && co.onboarding_json ? JSON.parse(co.onboarding_json) : null; } catch (e) { /* none */ }
     res.json({ dashboard: { ...dashboard, data_source: co ? co.data_source : 'fmh', profile }, widgets, sources });
+  })
+);
+
+// One viewer's arrangement of one table widget: { order, hidden, pins, pin_cats, pinned_only }.
+// Anyone who can see the dashboard may arrange it for themselves; it changes nothing for others.
+const strList = (v, max) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.length <= 200).slice(0, max) : []);
+router.put(
+  '/:id/widgets/:wid/prefs',
+  requireAuth,
+  wrap(async (req, res) => {
+    const dashboard = await getDashboardForUser(req.user, req.params.id);
+    if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
+    const [[w]] = await pool.query(`SELECT id FROM dashboard_widgets WHERE id = ? AND dashboard_id = ?`, [req.params.wid, dashboard.id]);
+    if (!w) return res.status(404).json({ error: 'ไม่พบ widget นี้' });
+    const p = (req.body && req.body.prefs) || {};
+    if (p === null || req.body.reset) {
+      await pool.query(`DELETE FROM widget_user_prefs WHERE user_id = ? AND widget_id = ?`, [req.user.id, w.id]);
+      return res.json({ ok: true, prefs: null });
+    }
+    const clean = {
+      order: strList(p.order, 60),
+      hidden: strList(p.hidden, 60),
+      pins: strList(p.pins, 500),
+      pin_cats: strList(p.pin_cats, 100),
+      pinned_only: !!p.pinned_only,
+      branch: typeof p.branch === 'string' ? p.branch.slice(0, 200) : '',
+    };
+    await pool.query(
+      `INSERT INTO widget_user_prefs (user_id, widget_id, prefs_json) VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE prefs_json = VALUES(prefs_json)`,
+      [req.user.id, w.id, JSON.stringify(clean)]
+    );
+    res.json({ ok: true, prefs: clean });
   })
 );
 
