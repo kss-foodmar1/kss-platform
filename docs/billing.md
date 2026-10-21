@@ -21,7 +21,7 @@ KSS ยังตั้งบริษัท/Dashboard ให้ลูกค้�
 |---|---|
 | `OMISE_SECRET_KEY` | `skey_test_...` บน staging, `skey_...` บน production |
 | `OMISE_WEBHOOK_SECRET` | secret (base64) ของ webhook endpoint ใน Omise dashboard — ไม่ใส่ก็ใช้งานได้ ตรวจสถานะเองทุก 10 นาที |
-| `PUBLIC_BASE_URL` | เช่น `https://kss-platform-staging.up.railway.app` (ถ้าไม่ใส่ใช้ host ของ request) |
+| `PUBLIC_BASE_URL` | production: `https://dashboard.kinsupplyandservice.com` (staging: `https://kss-platform-staging.up.railway.app`) ถ้าไม่ใส่ใช้ host ของ request. ตั้ง `CANONICAL_REDIRECT=on` เพื่อ redirect หน้าเว็บจาก host เก่าไปโดเมนนี้ (ไม่แตะ /api) |
 | `BILLING_ENFORCE` | `1` เพื่อเปิดระงับอัตโนมัติ |
 | `BILLING_GRACE_DAYS` | ผ่อนผันหลังหมดอายุ (ค่าเริ่มต้น 14) |
 

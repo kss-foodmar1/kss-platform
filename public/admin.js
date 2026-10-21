@@ -588,6 +588,8 @@ async function renderNews(main, editId = null, flash = '') {
 // key. Each probe is read-only but spends a little of their monthly row quota,
 // so nothing runs until the button is pressed.
 const PROBE_LIST = [
+  { k: 'widget_fields', n: 'widget ทุกตัวใช้ฟิลด์ที่ FMH ส่งมาจริงไหม',
+    d: 'ดึง 1 แถวจากทุก pull แล้วเทียบกับฟิลด์ที่ widget แต่ละตัวอ่าน ชี้ widget ที่จะว่างหรือเป็น 0 เพราะชื่อฟิลด์ไม่ตรงกับที่ FMH ส่งมา สำคัญที่สุดกับ widget แบบจัดกลุ่มฝั่ง server ซึ่ง catalog ของ FMH ไม่ได้บอกชื่อฟิลด์ไว้' },
   { k: 'sources', n: 'ชุดข้อมูลไหนมีจริง ชุดไหนว่าง',
     d: 'ไล่ทุก (source, grouping) ที่แอปใช้ โดยส่ง request ชุดเดียวกับที่ sync ส่งจริง ขอแค่แถวเดียวต่อ pull — ใช้ตอบว่า widget ที่ขึ้นว่าไม่พบข้อมูล เป็นเพราะบัญชีนี้ไม่มีข้อมูล หรือแอปเรียกผิด' },
   { k: 'catalog', n: 'รายงานทั้งหมดที่บัญชีนี้เรียกได้',
@@ -620,6 +622,14 @@ function fmhProbeView(r, key) {
         <td>${x.groupBy.length ? x.groupBy.map((v) => `<code>${esc(v)}</code>`).join(' ') : '—'}</td>
         <td>${x.hasStatuses ? 'มี' : '—'}</td></tr>`).join('')}
       </tbody></table>`;
+  }
+  if (key === 'widget_fields') {
+    const c = r.counts || {};
+    const miss = (m) => m.map((x) => `<code>${esc(x.alts.join(' / '))}</code> <span class="muted">ใน ${esc(x.pull)}</span>`).join('<br>');
+    return `<p class="${c.bad ? 'probe-bad' : 'probe-good'}">${esc(r.verdict || '')}</p>
+      <p>${c.total} widget · ใช้ได้ ${c.ok} · ฟิลด์ไม่ตรง ${c.bad} · ตรวจไม่ได้ ${c.unchecked}</p>
+      ${r.bad.length ? `<table class="probe-table"><thead><tr><th>widget</th><th>ฟิลด์ที่ไม่มีใน FMH</th></tr></thead><tbody>${r.bad.map((x) => `<tr><td><code>${esc(x.key)}</code><br><span class="muted">${esc(x.name)}</span></td><td>${miss(x.missing)}</td></tr>`).join('')}</tbody></table>` : ''}
+      ${r.unchecked.length ? `<details><summary>ตรวจไม่ได้ (${r.unchecked.length}) เพราะ pull ว่าง</summary><table class="probe-table"><tbody>${r.unchecked.map((x) => `<tr><td><code>${esc(x.key)}</code> ${esc(x.name)}</td><td class="muted">${x.unknown.map(esc).join(', ')}</td></tr>`).join('')}</tbody></table></details>` : ''}`;
   }
   if (key === 'sources') {
     const c = r.counts || {};

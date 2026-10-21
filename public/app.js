@@ -93,8 +93,11 @@ const compactFmt = new Intl.NumberFormat('en', { notation: 'compact', maximumFra
 function fmtValue(v, format) {
   const n = Number(v) || 0;
   switch (format) {
-    case 'currency':
-      return '฿' + Math.round(n).toLocaleString('th-TH');
+    case 'currency': {
+      // "−฿11,485", never "฿-11,485" or "฿-0"
+      const r = Math.round(n);
+      return (r < 0 ? '−฿' : '฿') + Math.abs(r).toLocaleString('th-TH');
+    }
     case 'pct':
       return n.toFixed(1) + '%';
     case 'pct_signed':
@@ -106,7 +109,7 @@ function fmtValue(v, format) {
   }
 }
 function fmtAxis(v, format) {
-  if (format === 'currency') return '฿' + compactFmt.format(v);
+  if (format === 'currency') return (v < 0 ? '−฿' : '฿') + compactFmt.format(Math.abs(v));
   if (format === 'pct' || format === 'pct_signed') return v + '%';
   return compactFmt.format(v);
 }
@@ -235,6 +238,12 @@ function keyOf(row, spec) {
     const v = bucketOf(pick(row, spec.field), spec.bucket);
     return v;
   }
+  // The same outlet is written "Company - Outlet" in one FMH report and "Outlet" in
+  // another: line them up on the outlet part, ignoring case and spacing.
+  if (spec.short) {
+    const v = pick(row, spec.field);
+    return isBlank(v) ? null : partyShort(v).toLowerCase().replace(/\s+/g, ' ');
+  }
   const v = pick(row, spec.field || spec);
   return v === undefined || v === null || v === '' ? null : String(v).trim();
 }
@@ -258,7 +267,7 @@ function pivotRows(rowsByAlias, cfg) {
   const out = [...buckets.entries()].map(([key, byAlias]) => {
     const row = { [spec.key_field || 'key']: key };
     (spec.columns || []).forEach((c) => {
-      const side = byAlias[c.from] || [];
+      const side = c.from_any ? c.from_any.flatMap((a) => byAlias[a] || []) : byAlias[c.from] || [];
       // `first` carries a label across (a product name next to its code);
       // everything else is an aggregate over that side's rows.
       if (c.first) {
@@ -299,6 +308,7 @@ function evalRow(expr, row) {
   if (typeof expr === 'number') return expr;
   if (typeof expr === 'string') return num(row[expr]);
   if (expr.const !== undefined) return expr.const;
+  if (expr.text !== undefined && expr.op === undefined) return expr.text;
   if (expr.field !== undefined) return num(pick(row, expr.field));
   const a = () => evalRow(expr.a, row);
   const b = () => evalRow(expr.b, row);
@@ -308,6 +318,15 @@ function evalRow(expr, row) {
     case 'mul': return a() * b();
     case 'div': { const d = b(); return d ? a() / d : 0; }
     case 'pct_of': { const d = b(); return d ? (a() / d) * 100 : 0; }
+    // Text instead of a number when the gate field is zero: "not recorded" must not
+    // read as 0%. `a` is the number shown otherwise.
+    // `then` (a number) instead of `text` keeps such rows sortable.
+    case 'if0': return evalRow(expr.gate, row) === 0 ? (expr.then !== undefined ? evalRow(expr.then, row) : expr.text) : a();
+    // gate not zero -> then, else -> else (each a number or { text })
+    case 'if': return evalRow(expr.gate, row) !== 0 ? evalRow(expr.then, row) : evalRow(expr.else, row);
+    case 'gte': return a() >= b() ? 1 : 0;
+    // 1 when the field matches a pattern (case-insensitive): "ครัวกลาง", "Central Kitchen"
+    case 'match': return new RegExp(expr.re, 'i').test(String(pick(row, expr.from) ?? '')) ? 1 : 0;
     case 'abs': return Math.abs(a());
     case 'max0': return Math.max(0, a());
     // Wilson score lower bound of a rate k/n, as a percent. Ranks suppliers by
@@ -388,7 +407,8 @@ function rowMatches(rule, row) {
     case 'gte': return evalRow(rule.a, row) >= evalRow(rule.b, row);
     case 'lt': return evalRow(rule.a, row) < evalRow(rule.b, row);
     case 'lte': return evalRow(rule.a, row) <= evalRow(rule.b, row);
-    case 'matches': return new RegExp(rule.pattern).test(String(pick(row, rule.field) ?? ''));
+    // flags: 'i' for a name in any case ("Central Kitchen")
+    case 'matches': return new RegExp(rule.pattern, rule.flags || '').test(String(pick(row, rule.field) ?? ''));
     // The last N days counting today (1 = today only), in the viewer's calendar.
     case 'within_days': {
       const d = dateOnly(pick(row, rule.field));
@@ -406,7 +426,8 @@ function applyRowLayer(rows, cfg) {
   let out = derived.length
     ? rows.map((r) => {
         const copy = { ...r };
-        derived.forEach((d) => { copy[d.field] = evalRow(d.expr, r); });
+        // in order, so a derived field can use the ones before it
+        derived.forEach((d) => { copy[d.field] = evalRow(d.expr, copy); });
         return copy;
       })
     : rows;
@@ -660,10 +681,11 @@ function renderSideNav() {
     ${coName ? `<div class="side-company"><span class="side-co-mark" aria-hidden="true">${esc(coName.trim().charAt(0) || 'K')}</span><span class="side-co-text"><b>${esc(coName)}</b>${state.user.company_code ? `<span>${esc(state.user.company_code)}</span>` : ''}</span></div>` : ''}
     <div class="side-group">${link('data-go="back"', 'back', 'กลับไปดู Dashboard', false)}</div>
     <div class="side-group"><div class="side-title">ตั้งค่า</div>${settings.map(([k, ic, label]) => link(`data-settings="${k}"`, ic, label, cur.kind === 'settings' && cur.tab === k)).join('')}</div>
-    <div class="side-group">${link('data-go="library"', 'library', 'คลัง Widget', cur.kind === 'library')}${link('data-go="support"', 'help', 'แจ้งทีมงาน', false)}</div>`;
+    <div class="side-group">${link('data-go="library"', 'library', 'คลัง Widget', cur.kind === 'library')}${link('data-go="support"', 'help', 'แจ้งทีมงาน', false)}${link('data-go="wish"', 'library', 'ขอข้อมูลเพิ่ม / ความเห็น', false)}</div>`;
   nav.querySelector('[data-go="back"]').addEventListener('click', () => goDashboard(state.activeDashboardId || (state.dashboards[0] || {}).id));
   nav.querySelector('[data-go="library"]').addEventListener('click', () => openLibrary());
   nav.querySelector('[data-go="support"]').addEventListener('click', () => openSupportForm());
+  nav.querySelector('[data-go="wish"]').addEventListener('click', () => openSupportForm({ kind: 'wish' }));
   nav.querySelectorAll('[data-settings]').forEach((b) => b.addEventListener('click', () => openCompanySettings(b.dataset.settings)));
 }
 
@@ -892,73 +914,225 @@ function showRealConfirm(bar, dashboardId, force = false) {
 }
 
 // First login of a company admin with no dashboard: a guided start in place of
-// a blank page. Pick a starter, one click makes the dashboard and fills it;
-// if no data is connected yet, the first step is connecting it.
+// a blank page. Three short questions (the shape of the business, who is
+// looking, what they want to find out) pick and rank the starter packs, so the
+// first dashboard already answers their question. One click then makes it.
+// If no data is connected yet, the first step is connecting it.
 async function renderFirstRun(wrap, cid) {
   wrap.innerHTML = '<div class="dash-empty starter firstrun"><p class="muted">กำลังเตรียมหน้าเริ่มต้น...</p></div>';
   const box = wrap.firstElementChild;
   let options;
+  let choices;
   let sample = false;
   try {
     // Nothing connected yet: start on sample data so the first look has numbers.
     ({ sample } = await api('/api/settings/start-sample', { method: 'POST', body: JSON.stringify({}) }));
-    ({ options } = await api(`/api/admin/companies/${cid}/starter-options`));
+    ({ options, choices } = await api(`/api/admin/companies/${cid}/starter-options`));
   } catch (err) {
-    box.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    box.innerHTML = `<div class="error-msg">${esc(err.message)}<div><button type="button" class="btn ghost fr-retry">ลองอีกครั้ง</button></div></div>`;
+    box.querySelector('.fr-retry').addEventListener('click', () => renderFirstRun(wrap, cid));
     return;
   }
-  const anyReady = options.some((o) => o.ready.length);
-  let pick = (options.find((o) => o.key === 'basic' && o.ready.length) || options.find((o) => o.ready.length) || {}).key || null;
   const name = (state.user && state.user.company_name) || '';
-  const step = (n, label, state_) => `<li class="fr-step ${state_}"><span class="fr-n">${state_ === 'done' ? '✓' : n}</span>${esc(label)}</li>`;
-  box.innerHTML = `
-    <p class="starter-role">เริ่มต้นใช้งาน</p>
-    <h2 class="starter-h">ยินดีต้อนรับ${name ? ` ${esc(name)}` : ''} — มาตั้ง dashboard แรกกัน</h2>
-    <ol class="fr-steps" aria-label="ขั้นตอนเริ่มต้น">
-      ${sample
-        ? `${step(1, 'เลือกชุดและดูข้อมูลตัวอย่าง', 'now')}${step(2, 'เชื่อมข้อมูลจริงของร้านคุณ', 'todo')}${step(3, 'ปรับแต่งและเชิญทีม', 'todo')}`
-        : `${step(1, 'เชื่อมข้อมูล (FMH / ไฟล์ POS)', anyReady ? 'done' : 'now')}${step(2, 'เลือกชุด dashboard', anyReady ? 'now' : 'todo')}${step(3, 'ปรับแต่งและเชิญทีม', 'todo')}`}
-    </ol>
-    ${anyReady
-      ? `<p class="muted starter-lead">${sample ? 'ช่วงแรกคุณจะได้ลองกับ<b>ข้อมูลตัวอย่าง</b> ยังไม่ต้องเชื่อมอะไร ลองดู widget ต่างๆ และจัด dashboard ให้ถูกใจ ' : ''}เลือกชุดที่ตรงกับบทบาทของคุณ แล้วกด “สร้างให้เลย” ระบบสร้าง dashboard และใส่ widget ให้ทันที พอพร้อมใช้ข้อมูลจริง กดปุ่ม “พร้อมใช้ข้อมูลจริงแล้ว” ที่แถบด้านบน dashboard widget และการจัดวางที่ทำไว้จะอยู่ครบ</p>`
-      : '<div class="fr-connect"><b>ยังไม่มีข้อมูลให้แสดง</b><span class="muted">ใส่ FMH API Key หรืออัปโหลดไฟล์ POS ก่อน แล้ว dashboard จะมีตัวเลขจริงตั้งแต่เปิดครั้งแรก</span><button type="button" class="btn primary fr-data">เชื่อมข้อมูลตอนนี้</button></div>'}
-    ${!anyReady ? '' : `<div class="starter-grid" role="radiogroup" aria-label="ชุดเริ่มต้น">
-      ${options.map((o) => `<label class="starter-opt${o.ready.length ? '' : ' off'}${o.key === pick ? ' on' : ''}">
-        <input type="radio" name="fr-pick" value="${esc(o.key)}"${o.key === pick ? ' checked' : ''}${o.ready.length ? '' : ' disabled'}>
-        <span class="starter-role">${esc(o.role || 'แนะนำ')}</span>
-        <b class="starter-title">${esc(o.title)}</b>
-        <span class="starter-desc">${esc(o.description)}</span>
-        <span class="starter-count">${o.ready.length ? `พร้อมแสดง ${o.ready.length} widget` : 'ยังไม่มีข้อมูลสำหรับชุดนี้'}</span>
-      </label>`).join('')}
-    </div>`}
-    <div class="starter-actions fr-actions">
-      ${anyReady ? `<button type="button" class="btn primary fr-go"${pick ? '' : ' disabled'}>สร้างให้เลย</button>` : ''}
-      <button type="button" class="btn ghost fr-empty">เริ่มจาก dashboard ว่าง</button>
-    </div>
-    <div class="starter-msg" role="status"></div>`;
-  box.querySelectorAll('input[name="fr-pick"]').forEach((r) =>
-    r.addEventListener('change', () => {
-      pick = r.value;
-      box.querySelectorAll('.starter-opt').forEach((l) => l.classList.toggle('on', l.querySelector('input').value === pick));
-    }));
-  const dataBtn = box.querySelector('.fr-data');
-  if (dataBtn) dataBtn.addEventListener('click', () => openCompanySettings('data'));
-  const run = async (btn, body, busy, idle) => {
+  const anyReady = options.some((o) => o.ready.length);
+  const ans = { setup: null, role: null, goals: [] };
+  const wizard = ['setup', 'role', 'goals'];
+
+  const head = (kicker, title) => `<p class="starter-role">${esc(kicker)}</p><h2 class="starter-h" tabindex="-1">${title}</h2>`;
+  const sampleNote = sample
+    ? '<p class="muted starter-lead">ช่วงแรกคุณจะได้ลองกับข้อมูลตัวอย่าง ยังไม่ต้องเชื่อมอะไร ลองดู widget ต่างๆ และจัด dashboard ให้ถูกใจ พอพร้อมใช้ข้อมูลจริง กดปุ่ม “พร้อมใช้ข้อมูลจริงแล้ว” ที่แถบด้านบน dashboard และการจัดวางที่ทำไว้จะอยู่ครบ</p>'
+    : '';
+
+  // No data to show anything with: connect first, questions come after.
+  if (!anyReady) {
+    box.innerHTML = `${head('เริ่มต้นใช้งาน', `ยินดีต้อนรับ${name ? ` ${esc(name)}` : ''}`)}
+      <div class="fr-connect"><b>ยังไม่มีข้อมูลให้แสดง</b><span class="muted">ใส่ FMH API Key หรืออัปโหลดไฟล์ POS ก่อน แล้ว dashboard จะมีตัวเลขจริงตั้งแต่เปิดครั้งแรก</span><button type="button" class="btn primary fr-data">เชื่อมข้อมูลตอนนี้</button></div>
+      <div class="starter-actions fr-actions"><button type="button" class="btn ghost fr-empty">เริ่มจาก dashboard ว่าง</button></div>
+      <div class="starter-msg" role="status"></div>`;
+    box.querySelector('.fr-data').addEventListener('click', () => openCompanySettings('data'));
+    const e0 = box.querySelector('.fr-empty');
+    e0.addEventListener('click', () => create(e0, { empty: true }, 'เริ่มจาก dashboard ว่าง'));
+    return;
+  }
+
+  async function create(btn, body, idle) {
     box.querySelectorAll('button').forEach((b) => (b.disabled = true));
-    btn.textContent = busy;
+    btn.textContent = body.empty ? 'กำลังสร้าง...' : 'กำลังเตรียมตัวเลขของร้านคุณ...';
     try {
-      const r = await api(`/api/admin/companies/${cid}/first-dashboard`, { method: 'POST', body: JSON.stringify(body) });
+      const r = await api(`/api/admin/companies/${cid}/first-dashboard`, { method: 'POST', body: JSON.stringify({ ...body, profile: ans }) });
+      // The dashboard opens with a "ready" strip naming what it was built from (DashboardView.renderInsights).
+      if (!body.empty) {
+        const chosen = (window.__frList || []).find((o) => o.key === body.key);
+        const said = [ans.setup && choices.setups[ans.setup], ans.role && choices.roles[ans.role], ...ans.goals.map((g) => choices.goals[g])].filter(Boolean);
+        try { sessionStorage.setItem(`kss_welcome_${r.id}`, JSON.stringify({ title: chosen ? chosen.title : '', said })); } catch (e) { /* private window */ }
+      }
       await loadDashboards(r.id);
     } catch (err) {
       box.querySelectorAll('button').forEach((b) => (b.disabled = false));
       btn.textContent = idle;
       box.querySelector('.starter-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
     }
+  }
+
+  // Which choices make sense for the answers so far.
+  const info = () => (choices.setupInfo || {})[ans.setup] || { branches: true, ck: true };
+  const rolesFor = () => Object.keys(choices.roles).filter((r) =>
+    (r !== 'ck' || info().ck) && (r !== 'branch' || info().branches));
+  const goalsFor = () => Object.keys(choices.goals).filter((g) => g !== 'branch' || info().branches);
+  const hints = {
+    single: 'มีหน้าร้านเดียว ซื้อวัตถุดิบเข้ามาขายเอง',
+    multi: 'หลายสาขา แต่แต่ละสาขาซื้อเองหรือไม่มีครัวกลางผลิตให้',
+    ck: 'ครัวกลางหรือศูนย์กระจายวัตถุดิบผลิตหรือจัดของส่งให้สาขา',
+    hotel: 'หลายห้องอาหารหรือเอาท์เล็ต ใช้ครัวใหญ่หรือฝ่ายจัดซื้อกลางของโรงแรม',
+    cloud: 'ครัวเดียวทำหลายแบรนด์ ขายผ่านแอปเดลิเวอรี่เป็นหลัก',
   };
-  const go = box.querySelector('.fr-go');
-  if (go) go.addEventListener('click', () => run(go, { key: pick }, 'กำลังสร้าง...', 'สร้างให้เลย'));
-  const emp = box.querySelector('.fr-empty');
-  emp.addEventListener('click', () => run(emp, { empty: true }, 'กำลังสร้าง...', 'เริ่มจาก dashboard ว่าง'));
+
+  function renderQuestion(step, focus = false) {
+    const key = wizard[step];
+    const multi = key === 'goals';
+    const items = key === 'setup' ? Object.keys(choices.setups) : key === 'role' ? rolesFor() : goalsFor();
+    const labels = choices[key === 'setup' ? 'setups' : key === 'role' ? 'roles' : 'goals'];
+    const titles = {
+      setup: 'ร้านของคุณเป็นแบบไหน',
+      role: 'คุณดูแลงานด้านไหน',
+      goals: 'อยากรู้อะไรจาก dashboard มากที่สุด',
+    };
+    const sel = (v) => (multi ? ans.goals.includes(v) : ans[key] === v);
+    const done = () => (multi ? ans.goals.length > 0 : !!ans[key]);
+    box.innerHTML = `
+      <p class="starter-role">เริ่มต้นใช้งาน · คำถามที่ ${step + 1} จาก 3</p>
+      <div class="fr-progress" aria-hidden="true">${wizard.map((_, i) => `<i class="${i <= step ? 'on' : ''}"></i>`).join('')}</div>
+      <h2 class="starter-h" tabindex="-1">${step === 0 && name ? `ยินดีต้อนรับ ${esc(name)} — ` : ''}${titles[key]}</h2>
+      ${step === 0 ? sampleNote : ''}
+      ${multi ? '<p class="starter-lead fr-cap" role="status"></p>' : ''}
+      <div class="starter-grid fr-q" role="${multi ? 'group' : 'radiogroup'}" aria-label="${esc(titles[key])}">
+        ${items.map((v) => `<label class="starter-opt${sel(v) ? ' on' : ''}${multi && !sel(v) && ans.goals.length >= 2 ? ' off' : ''}">
+          <input type="${multi ? 'checkbox' : 'radio'}" name="fr-q" value="${esc(v)}"${sel(v) ? ' checked' : ''}${multi && !sel(v) && ans.goals.length >= 2 ? ' aria-disabled="true"' : ''}>
+          <b class="starter-title">${esc(labels[v])}</b>
+          ${key === 'setup' ? `<span class="starter-desc">${esc(hints[v])}</span>` : ''}
+        </label>`).join('')}
+      </div>
+      <div class="starter-actions fr-actions">
+        <button type="button" class="btn primary fr-next"${done() ? '' : ' disabled'}>${step === 2 ? 'ดูชุดที่แนะนำ' : 'ต่อไป'}</button>
+        ${step > 0 ? '<button type="button" class="btn ghost fr-back">ย้อนกลับ</button>' : ''}
+        <button type="button" class="btn link fr-skip">ข้ามคำถาม</button>
+      </div>
+      <div class="starter-msg" role="status"></div>`;
+    const next = box.querySelector('.fr-next');
+    // One line says how many are picked and what to do at the limit.
+    const capLine = (refused = false) => {
+      const cap = box.querySelector('.fr-cap');
+      if (!cap) return;
+      const names = ans.goals.map((g) => choices.goals[g]).join(' · ');
+      cap.classList.toggle('full', ans.goals.length >= 2);
+      cap.textContent = (refused ? 'เลือกครบ 2 ข้อแล้ว — ' : '') + (ans.goals.length >= 2 ? `เลือกแล้ว: ${names} — กดติ๊กออกจากข้อใดข้อหนึ่งเพื่อเปลี่ยน` : ans.goals.length ? `เลือกแล้ว: ${names} — เลือกได้อีก 1 ข้อ` : 'เลือกได้สูงสุด 2 ข้อ');
+    };
+    capLine();
+    // A third pick is refused, not disabled: the option stays reachable by keyboard,
+    // and refusing it points at the line that says why (outlined, scrolled into view,
+    // re-announced), which works with reduced motion too.
+    let nudgeTimer;
+    const nudge = () => {
+      const cap = box.querySelector('.fr-cap');
+      if (!cap) return;
+      capLine(true);
+      cap.classList.remove('flash'); void cap.offsetWidth; cap.classList.add('flash');
+      const top = cap.getBoundingClientRect().top;
+      if (top < 0 || top > window.innerHeight - 40) cap.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      clearTimeout(nudgeTimer);
+      nudgeTimer = setTimeout(() => cap.classList.remove('flash'), 1800);
+    };
+    if (focus) box.querySelector('.starter-h').focus({ preventScroll: true });
+    box.querySelectorAll('input[name="fr-q"]').forEach((r) =>
+      r.addEventListener('change', () => {
+        if (multi) {
+          const v = r.value;
+          if (r.checked && ans.goals.length >= 2) { r.checked = false; nudge(); return; }
+          ans.goals = r.checked ? [...ans.goals, v] : ans.goals.filter((g) => g !== v);
+        } else {
+          ans[key] = r.value;
+          if (key === 'setup') { // roles / goals that no longer fit are dropped
+            if (!rolesFor().includes(ans.role)) ans.role = null;
+            ans.goals = ans.goals.filter((g) => goalsFor().includes(g));
+          }
+        }
+        box.querySelectorAll('.starter-opt').forEach((l) => {
+          const inp = l.querySelector('input');
+          inp.checked = sel(inp.value);
+          const full = multi && !inp.checked && ans.goals.length >= 2;
+          if (full) inp.setAttribute('aria-disabled', 'true'); else inp.removeAttribute('aria-disabled');
+          l.classList.toggle('on', inp.checked);
+          l.classList.toggle('off', full);
+        });
+        capLine();
+        next.disabled = !done();
+      }));
+    next.addEventListener('click', () => (step === 2 ? renderResult() : renderQuestion(step + 1, true)));
+    const back = box.querySelector('.fr-back');
+    if (back) back.addEventListener('click', () => renderQuestion(step - 1, true));
+    box.querySelector('.fr-skip').addEventListener('click', () => renderResult());
+  }
+
+  async function renderResult() {
+    box.innerHTML = '<p class="muted">กำลังเลือกชุดที่เหมาะกับคุณ...</p>';
+    let list;
+    try {
+      const qs = new URLSearchParams({ setup: ans.setup || '', role: ans.role || '', goals: ans.goals.join(',') });
+      ({ options: list } = await api(`/api/admin/companies/${cid}/starter-options?${qs}`));
+      window.__frList = list;
+    } catch (err) {
+      box.innerHTML = `<div class="error-msg">${esc(err.message)}<div><button type="button" class="btn ghost fr-retry">ลองอีกครั้ง</button></div></div>`;
+      box.querySelector('.fr-retry').addEventListener('click', renderResult);
+      return;
+    }
+    const answered = !!(ans.setup || ans.role || ans.goals.length);
+    // Packs with nothing to show come last and never as a recommendation.
+    const usable = list.filter((o) => o.ready.length);
+    const shown = usable.slice(0, 3);
+    const more = usable.slice(3);
+    let pick = shown.length ? shown[0].key : null;
+    // A card says what the customer will find out, not which widgets it holds.
+    // The first (recommended) one is large: why it was chosen, three things you will see.
+    // The others are short, so the choice is obvious.
+    const said = [ans.setup && choices.setups[ans.setup], ans.role && choices.roles[ans.role], ...ans.goals.map((g) => choices.goals[g])].filter(Boolean);
+    const sees = (o) => (o.highlights && o.highlights.length ? o.highlights : [o.description]);
+    const card = (o, i) => {
+      const hero = answered && i === 0;
+      return `<label class="starter-opt${o.key === pick ? ' on' : ''}${hero ? ' top fr-hero' : ''}">
+        <input type="radio" name="fr-pick" value="${esc(o.key)}"${o.key === pick ? ' checked' : ''}>
+        <span class="starter-role">${hero ? 'แนะนำสำหรับคุณ' : esc(o.role || 'ทั่วไป')}</span>
+        <b class="starter-title">${esc(o.title)}</b>
+        ${hero && said.length ? `<span class="fr-why">เพราะคุณบอกว่า: ${esc(said.join(' · '))}</span>` : ''}
+        ${hero
+          ? `<span class="fr-sees-h">คุณจะเห็น</span><ul class="fr-sees">${sees(o).slice(0, 3).map((h) => `<li>${esc(h)}</li>`).join('')}</ul>`
+          : `<span class="starter-desc">${esc(sees(o)[0])}</span>`}
+        <span class="starter-count">${o.ready.length} widget พร้อมตัวเลข</span>
+      </label>`;
+    };
+    box.innerHTML = `
+      ${head(answered ? 'เลือกให้ตามคำตอบของคุณ' : 'เริ่มต้นใช้งาน', answered ? 'ชุดที่น่าจะตอบโจทย์คุณ' : `ยินดีต้อนรับ${name ? ` ${esc(name)}` : ''} — เลือกชุดเริ่มต้น`)}
+      ${answered ? '' : `<p class="muted starter-lead">ยังไม่ได้ตอบคำถาม จึงแสดงชุดทั่วไปโดยไม่จัดอันดับ กด “ตอบคำถาม” ให้ระบบเลือกชุดที่ตรงกับคุณ</p>${sampleNote}`}
+      <div class="starter-grid" role="radiogroup" aria-label="ชุดเริ่มต้น">${shown.map(card).join('')}</div>
+      ${more.length ? `<button type="button" class="btn link fr-more">ดูชุดอื่นอีก ${more.length} ชุด</button><div class="starter-grid fr-morebox" hidden>${more.map((o, i) => card(o, i + 3)).join('')}</div>` : ''}
+      <div class="starter-actions fr-actions">
+        <button type="button" class="btn primary fr-go"${pick ? '' : ' disabled'}>สร้าง dashboard ของฉัน</button>
+        <button type="button" class="btn ghost fr-redo">${answered ? 'แก้คำตอบ' : 'ตอบคำถาม'}</button>
+      </div>
+      <div class="fr-emptyrow"><button type="button" class="btn link fr-empty">เริ่มจาก dashboard ว่าง</button></div>
+      <div class="starter-msg" role="status"></div>`;
+    const sync = () => box.querySelectorAll('.starter-opt').forEach((l) => l.classList.toggle('on', l.querySelector('input').value === pick));
+    box.querySelectorAll('input[name="fr-pick"]').forEach((r) => r.addEventListener('change', () => { pick = r.value; sync(); }));
+    const moreBtn = box.querySelector('.fr-more');
+    if (moreBtn) moreBtn.addEventListener('click', () => { box.querySelector('.fr-morebox').hidden = false; moreBtn.remove(); });
+    box.querySelector('.fr-redo').addEventListener('click', () => renderQuestion(0, true));
+    box.querySelector('.starter-h').focus({ preventScroll: true });
+    const go = box.querySelector('.fr-go');
+    go.addEventListener('click', () => create(go, { key: pick }, 'สร้าง dashboard ของฉัน'));
+    const emp = box.querySelector('.fr-empty');
+    emp.addEventListener('click', () => create(emp, { empty: true }, 'เริ่มจาก dashboard ว่าง'));
+  }
+
+  renderQuestion(0);
 }
 
 function renderTabs() {
@@ -1114,9 +1288,11 @@ class DashboardView {
         ${this.dashboard.description ? `<p class="dash-desc">${esc(this.dashboard.description)}</p>` : ''}
       </div>
       <div class="dash-controls">
+        ${!this.preview && !isSuper() && !isCompanyAdmin() && state.user && state.user.company_id ? '<div class="dash-actions"><button type="button" class="btn small ghost dash-wish" title="บอกทีม KSS ว่าอยากเห็นข้อมูลอะไรเพิ่ม">ขอข้อมูลเพิ่ม</button></div>' : ''}
         ${
           !this.preview && (isSuper() || isCompanyAdmin())
             ? `<div class="dash-actions">
+                 ${isCompanyAdmin() ? '<button type="button" class="btn small ghost dash-wish" title="บอกทีม KSS ว่าอยากเห็นข้อมูลอะไรเพิ่ม">ขอข้อมูลเพิ่ม</button>' : ''}
                  <button type="button" class="btn small ghost dash-edit"><svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="18" height="7" rx="1.5"/></svg>จัดเรียง</button>
                  <button type="button" class="btn small primary dash-add">+ เพิ่ม Widget</button>
                </div>`
@@ -1138,6 +1314,8 @@ class DashboardView {
       </div>`;
     this.wrap.appendChild(header);
     if (!this.preview) bindDashSwitcher(header.querySelector('.dash-switch-wrap'), this.dashboard.id);
+    const wishBtn = header.querySelector('.dash-wish');
+    if (wishBtn) wishBtn.addEventListener('click', () => openSupportForm({ kind: 'wish' }));
     const editBtn = header.querySelector('.dash-edit');
     if (editBtn) {
       editBtn.addEventListener('click', () => this.arrange());
@@ -1157,6 +1335,13 @@ class DashboardView {
       this.wrap.appendChild(this.statusEl);
     }
     if (!this.preview) {
+      this.insightEl = document.createElement('section');
+      this.insightEl.className = 'insight-card';
+      this.insightEl.setAttribute('aria-label', 'เราเจอให้คุณ');
+      // a reserved space while the numbers load, so the page does not jump when the cards arrive
+      this.insightEl.className = 'insight-card loading';
+      this.insightEl.innerHTML = '<div class="ins-skel" aria-hidden="true"></div>';
+      this.wrap.appendChild(this.insightEl);
       this.todayEl = document.createElement('section');
       this.todayEl.className = 'today-card';
       this.todayEl.hidden = true;
@@ -1213,7 +1398,7 @@ class DashboardView {
       const card = document.createElement('section');
       card.className = `widget-card size-${w.config.size || 'half'} widget-${w.chart_type}${[2, 3].includes(Number(w.config.rows)) ? ` rows-${w.config.rows}` : ''}`;
       card.dataset.wid = w.id;
-      card.innerHTML = `<div class="widget-head"><h3 class="widget-title">${esc(w.title)}</h3>${
+      card.innerHTML = `<div class="widget-head"><h3 class="widget-title">${esc(w.title)}</h3>${this.dashboard.data_source === 'demo' ? '<span class="demo-pill widget-sample">ตัวอย่าง</span>' : ''}${
         this.preview ? '' : '<button type="button" class="widget-explain" aria-expanded="false" title="กราฟนี้บอกอะไร"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>อธิบาย</button>'
       }</div><div class="explain-box" hidden></div><div class="widget-body">${SKELETON}</div>`;
       grid.appendChild(card);
@@ -1501,18 +1686,22 @@ class DashboardView {
     return notes.length ? `<p class="widget-foot coverage-note">${notes.map(esc).join('<br>')}</p>` : '';
   }
 
-  rowsFor(key, widget) {
+  // dateOverride: a widget that lines two reports up by date filters a pull on a
+  // field the page does not use for that report (its other widgets want it whole).
+  rowsFor(key, widget, dateOverride, minStart) {
     const r0 = this.results[key];
     if (!r0 || r0.error) return null;
     // Exception lists (unreceived lines, over-billing…) are about now: archived history keeps the last
     // status a line had in FMH's window, so it would list lines that were settled later.
     const r = widget && RECENT_ONLY.has(widget.category) && r0.data.some((x) => x._arch) ? { ...r0, data: r0.data.filter((x) => !x._arch) } : r0;
-    const dateField = this.sources[key] && this.sources[key].date_field;
+    const dateField = dateOverride || (this.sources[key] && this.sources[key].date_field);
     const active = Object.entries(this.filters).filter(([, v]) => v !== null && v !== undefined);
     const byFilter = (rows) => (active.length ? rows.filter((row) => active.every(([f, v]) => !(f in row) || String(row[f]) === v)) : rows);
     if (!dateField || !this.hasDateSource) return byFilter(r.data);
-    const { start, end } = this.range;
-    if (this.sources[key].date_is_bucket) return byFilter(keepOverlappingBuckets(r.data, dateField, start, end));
+    const { end } = this.range;
+    // minStart: a widget whose pulls reach back different lengths cuts them all to the shorter one
+    const start = minStart && (!this.range.start || this.range.start < minStart) ? minStart : this.range.start;
+    if (!dateOverride && this.sources[key].date_is_bucket) return byFilter(keepOverlappingBuckets(r.data, dateField, start, end));
     return byFilter(r.data).filter((row) => {
       const d = row[dateField] ? String(row[dateField]).slice(0, 10) : null;
       return d && (!start || d >= start) && (!end || d <= end);
@@ -1558,7 +1747,7 @@ class DashboardView {
              this.dashboard.data_source === 'demo'
                ? `<span class="demo-pill">ข้อมูลตัวอย่าง</span> <span class="muted">${
                    isCompanyAdmin() && !this.preview
-                     ? 'ลองจัด dashboard ให้ถูกใจได้เต็มที่ — widget และการจัดวางจะอยู่ครบเมื่อสลับเป็นข้อมูลจริง'
+                     ? '<strong>ตัวเลขเป็นข้อมูลตัวอย่าง ไม่ใช่ของร้านคุณ</strong> <span class="hide-m">ลองจัด dashboard ให้ถูกใจได้เต็มที่ widget และการจัดวางจะอยู่ครบเมื่อสลับเป็นข้อมูลจริง</span>'
                      : 'ตัวเลขนี้เป็นข้อมูลตัวอย่าง ไม่ใช่ข้อมูลจริงของร้าน'
                  }</span>`
                : oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
@@ -1678,10 +1867,12 @@ class DashboardView {
     const taken = data.items.filter((i) => i.ack_status);
     if (!data.items.length) { box.hidden = true; return; }
     box.hidden = false;
-    const fold = `kss_today_fold_${this.dashboard.id}_${data.day}`;
+    // A slim warning line by default: the page leads with what the numbers found, and the
+    // to-do list opens when someone wants it (remembered for the day).
+    const fold = `kss_today_open_${this.dashboard.id}_${data.day}`;
     const phone = matchMedia('(max-width: 700px)').matches;
-    let folded = false;
-    try { const v = localStorage.getItem(fold); folded = v === '1'; } catch (e) { /* private window */ }
+    let folded = true;
+    try { folded = localStorage.getItem(fold) !== '1'; } catch (e) { /* private window */ }
     // Deep link from the LINE digest button (/?alerts=1): open the card and bring it into view once.
     let deepLink = false;
     try { deepLink = !this.deepLinked && new URLSearchParams(location.search).get('alerts') === '1'; } catch (e) { /* no URL */ }
@@ -1707,20 +1898,26 @@ class DashboardView {
         <form class="today-assign" hidden><label class="sr-only" for="ta-${i}">มอบหมายให้</label><input id="ta-${i}" list="today-people-${this.dashboard.id}" placeholder="ชื่อผู้รับผิดชอบ" maxlength="80" required><button type="submit" class="btn small primary">มอบหมาย</button></form>
       </li>`;
     const all = [...open, ...taken];
-    box.innerHTML = `<div class="today-head">
-        <div><h2>เช้านี้ต้องทำ${sampleMode ? ' <span class="demo-pill">ตัวอย่าง</span>' : ''}</h2>${sampleMode ? '<p class="muted">รายการนี้สร้างจากข้อมูลตัวอย่าง ไม่ใช่งานค้างจริงของร้านคุณ ปุ่มรับทราบ/มอบหมายจะใช้ได้เมื่อเป็นข้อมูลจริง</p>' : ''}<p>${open.length ? `${open.length} เรื่องยังไม่มีคนรับ${crit ? ` · วิกฤต ${crit}` : ''}${sumOpen ? ` · ยอดค้าง ฿${Math.round(sumOpen).toLocaleString('th-TH')}` : ''}` : 'ทุกเรื่องมีคนรับแล้ว'}${taken.length ? ` · รับแล้ว ${taken.length}` : ''}</p></div>
-        <button type="button" class="btn small ghost today-fold" aria-expanded="${!folded}" aria-label="${folded ? 'แสดงรายการเช้านี้ต้องทำ' : 'ย่อรายการเช้านี้ต้องทำ'}">${folded ? 'แสดง' : 'ย่อ'}</button>
-      </div>
-      <div class="today-body"${folded ? ' hidden' : ''}>
+    box.classList.toggle('folded', folded);
+    box.classList.toggle('has-crit', crit > 0);
+    const summary = open.length ? `${open.length} เรื่องยังไม่มีคนรับ${crit ? ` · วิกฤต ${crit}` : ''}${sumOpen ? ` · ยอดค้าง ฿${Math.round(sumOpen).toLocaleString('th-TH')}` : ''}` : 'ทุกเรื่องมีคนรับแล้ว';
+    box.innerHTML = `<button type="button" class="today-bar today-fold" aria-expanded="${!folded}" aria-controls="today-body-${this.dashboard.id}">
+        <span class="today-ico" aria-hidden="true">!</span>
+        <b>เช้านี้ต้องทำ</b>${sampleMode ? ' <span class="demo-pill">ตัวอย่าง</span>' : ''}
+        <span class="today-sum">${summary}${taken.length ? ` · รับแล้ว ${taken.length}` : ''}</span>
+        <span class="today-toggle">${folded ? 'ดูรายการ' : 'ย่อ'}</span>
+      </button>
+      <div class="today-body" id="today-body-${this.dashboard.id}"${folded ? ' hidden' : ''}>
+        ${sampleMode ? '<p class="muted today-note">รายการนี้สร้างจากข้อมูลตัวอย่าง ไม่ใช่งานค้างจริงของร้านคุณ ปุ่มรับทราบ/มอบหมายจะใช้ได้เมื่อเป็นข้อมูลจริง</p>' : ''}
         <ul class="today-list">${open.slice(0, SHOW).map((it) => item(it, all.indexOf(it))).join('') || '<li class="today-empty">ไม่มีเรื่องค้างที่ยังไม่มีคนรับ</li>'}</ul>
-        ${open.length > SHOW ? `<p class="today-more">และอีก ${open.length - SHOW} เรื่องในตารางตัวเตือนด้านล่าง</p>` : ''}
+        ${open.length > SHOW ? `<p class="today-more">และอีก ${open.length - SHOW} เรื่อง${this.widgets.some((w) => /^watch_/.test(w.template_key || '')) ? 'ในตารางตัวเตือนด้านล่าง' : ''}</p>` : ''}
         ${taken.length ? `<details class="today-taken"><summary>รับแล้ว ${taken.length} เรื่อง</summary><ul class="today-list">${taken.map((it) => item(it, all.indexOf(it))).join('')}</ul></details>` : ''}
         <datalist id="today-people-${this.dashboard.id}">${people.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
         <p class="today-msg" role="status"></p>
       </div>`;
     box.querySelector('.today-fold').addEventListener('click', () => {
-      try { localStorage.setItem(fold, folded ? '0' : '1'); } catch (e) { /* private window */ }
-      this.renderToday();
+      try { localStorage.setItem(fold, folded ? '1' : '0'); } catch (e) { /* private window */ }
+      this.renderToday().then(() => { const b = box.querySelector('.today-fold'); if (b) b.focus({ preventScroll: true }); });
     });
     const send = async (it, body) => {
       try {
@@ -1938,7 +2135,7 @@ class DashboardView {
         const byAlias = {};
         widget.pulls.forEach((p) => {
           const r = this.results[p.key];
-          byAlias[p.as] = r && !r.error ? this.rowsFor(p.key, widget) || [] : null;
+          byAlias[p.as] = r && !r.error ? this.rowsFor(p.key, widget, p.date_field) || [] : null;
         });
         this.explainData.set(widget.id, { panels: true });
         try {
@@ -1965,10 +2162,21 @@ class DashboardView {
           return;
         }
         const byAlias = {};
-        widget.pulls.forEach((p) => { byAlias[p.as] = this.rowsFor(p.key, widget) || []; });
+        const minStart = cfg.max_range_days ? daysAgoIso(cfg.max_range_days - 1) : null;
+        widget.pulls.forEach((p) => {
+          let rows = this.rowsFor(p.key, widget, p.date_field, minStart) || [];
+          // a source narrowed to some rows (only the kitchen's purchases); with fallback, all rows
+          // when none match, and the widget says so
+          if (p.where) {
+            const kept = rows.filter((r) => rowMatches(p.where, r));
+            if (kept.length || !p.where_fallback) rows = kept;
+            else (this.whereFell ||= new Set()).add(widget.id);
+          }
+          byAlias[p.as] = rows;
+        });
         raw = pivotRows(byAlias, cfg) || [];
       } else {
-        raw = this.rowsFor(key, widget);
+        raw = this.rowsFor(key, widget, cfg.row_date_field);
       }
       const rows = applyRowLayer(raw, cfg);
       if (!rows.length) {
@@ -2044,8 +2252,16 @@ class DashboardView {
         if (skipped.length) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">widget นี้ไม่มีข้อมูล${esc(skipped.map((f) => ({ customer: 'ลูกค้า', branch: 'สาขา', supplier: 'ซัพพลายเออร์' })[f] || f).join(', '))} จึงแสดงทั้งหมด ไม่ได้กรองตามตัวเลือกด้านบน</p>`);
         // A note on how to read the widget. Renderers that place it themselves
         // (range) are left alone.
-        if (cfg.foot && widget.chart_type !== 'range') body.insertAdjacentHTML('beforeend', `<p class="widget-foot widget-note">${esc(cfg.foot)}</p>`);
+        // A widget that needs a long span to mean anything says so when the range is shorter.
+        const span = this.range.start && this.range.end ? (Date.parse(this.range.end) - Date.parse(this.range.start)) / 86400000 + 1 : null;
+        const cut = cfg.max_range_days ? daysAgoIso(cfg.max_range_days - 1) : null;
+        if (cut && this.range.start && this.range.start < cut) body.insertAdjacentHTML('beforeend', `<p class="widget-foot warn-msg">ข้อมูลของเสียจาก FMH ย้อนหลังได้ ${cfg.max_range_days} วัน widget นี้จึงนับทั้งสองฝั่งตั้งแต่ ${esc(dayLabel(cut))}</p>`);
+        if (cfg.min_range_days && span && span < cfg.min_range_days) body.insertAdjacentHTML('beforeend', `<p class="widget-foot warn-msg">ช่วงที่เลือกสั้นกว่า ${cfg.min_range_days} วัน ตัวเลขอาจแกว่งมาก ลองเลือก ${cfg.min_range_days} วันขึ้นไป</p>`);
+        if (cfg.foot && widget.chart_type !== 'range') body.insertAdjacentHTML('beforeend', `<p class="widget-foot widget-note">${esc(cfg.foot).replace(/\n/g, '<br>')}</p>`);
         body.insertAdjacentHTML('beforeend', this.coverageNote(widget));
+        const clippedPull = (widget.pulls ? widget.pulls.map((p) => p.key) : [key]).some((k) => { const r = this.results[k]; return r && r.meta && r.meta.quota && r.meta.quota.truncated; });
+        if (this.whereFell && this.whereFell.has(widget.id) && cfg.where_fallback_note) body.insertAdjacentHTML('beforeend', `<p class="widget-foot warn-msg">${esc(cfg.where_fallback_note)}</p>`);
+        if (clippedPull) body.insertAdjacentHTML('beforeend', '<p class="widget-foot warn-msg">ข้อมูลของ widget นี้ถูกตัดเพราะยาวเกินที่ดึงได้ ตัวเลขยังไม่ครบทั้งช่วง ลองเลือกช่วงวันให้สั้นลง</p>');
       } catch (err) {
         console.error('Widget render failed', widget, err);
         body.innerHTML = `<p class="muted">แสดงผล widget นี้ไม่สำเร็จ (${esc(err.message)})</p>`;
@@ -2055,7 +2271,369 @@ class DashboardView {
     (this.cards || []).forEach(({ widget, box }) => {
       if (box && !box.hidden) box.innerHTML = explainWidget(widget, this.explainData.get(widget.id));
     });
+    this.renderInsights();
   }
+
+  // ---- "เราเจอให้คุณ": the page opens with what the numbers found, in baht ----
+  // Built from the pulls the page already loaded (no extra FMH rows), for the
+  // range on screen. The first-run goals decide which findings lead.
+  renderInsights() {
+    const el = this.insightEl;
+    if (!el) return;
+    el.classList.remove('loading');
+    const get = (key, dateField) => {
+      const r = this.results[key];
+      return r && !r.error ? this.rowsFor(key, null, dateField) || [] : null;
+    };
+    const onPage = (keys) => {
+      for (const k of keys) { const w = this.widgets.find((x) => x.template_key === k); if (w) return w; }
+      return null;
+    };
+    const profile = this.dashboard.profile || {};
+    const found = findInsights(get, onPage, profile.goals || [], { start: this.range.start, end: this.range.end, today: todayIso() });
+    // the finding behind a widget also heads that widget, so % tables say what they mean in baht
+    this.wrap.querySelectorAll('.widget-headline').forEach((x) => x.remove());
+    found.all.forEach((f) => {
+      if (!f.widget || !f.headline) return;
+      const card = this.wrap.querySelector(`.widget-card[data-wid="${f.widget.id}"] .widget-body`);
+      if (card) card.insertAdjacentHTML('afterbegin', `<p class="widget-headline">${esc(f.headline)}</p>`);
+    });
+    // a ranking whose values barely differ says so, so equal outlets are not read as a problem
+    (this.cards || []).forEach(({ widget }) => {
+      const c = widget.config || {};
+      const d = this.explainData && this.explainData.get(widget.id);
+      if (!c.flat_within || !d || !d.rows || !d.rows.length) return;
+      const keyF = [].concat(c.group_by_field || [])[0];
+      if (!keyF) return;
+      const groups = new Map();
+      d.rows.forEach((r) => { const k = pick(r, keyF); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r); });
+      if (groups.size < 2) return;
+      const vals = [...groups.values()].map((rs) => evalMetric(c.value, rs));
+      const gap = Math.max(...vals) - Math.min(...vals);
+      if (gap >= c.flat_within) return;
+      const body = this.wrap.querySelector(`.widget-card[data-wid="${widget.id}"] .widget-body`);
+      if (body) body.insertAdjacentHTML('afterbegin', `<p class="widget-headline">ทุกสาขาใกล้เคียงกัน ต่างกันไม่ถึง ${c.flat_within} จุด ยังไม่มีสาขาไหนผิดปกติ</p>`);
+    });
+    let welcome = null;
+    try { welcome = JSON.parse(sessionStorage.getItem(`kss_welcome_${this.dashboard.id}`) || 'null'); } catch (e) { /* none */ }
+    const top = found.top;
+    const lead = found.lead || top[0];
+    // findings past the three cards stay reachable: one line, each to its widget
+    const rest = found.all.filter((f) => !top.includes(f)).sort((a, b) => b.baht - a.baht);
+    if (!top.length && !welcome) { el.hidden = true; el.innerHTML = ''; return; }
+    el.hidden = false;
+    const sample = this.dashboard.data_source === 'demo';
+    const money = (v) => fmtValue(v, 'currency');
+    // announced once, not on every range or filter change
+    const announce = welcome && !this.welcomeAnnounced;
+    if (welcome) this.welcomeAnnounced = true;
+    const hid = `ins-h-${this.dashboard.id}`;
+    const bid = `ins-body-${this.dashboard.id}`;
+    // A slim line like "เช้านี้ต้องทำ": the biggest finding shows folded, the cards open on demand.
+    // Opens by itself on the first visit after setup (the welcome strip), remembered for the day.
+    const foldKey = `kss_ins_open_${this.dashboard.id}_${todayIso()}`;
+    let folded = !welcome;
+    try {
+      const v = localStorage.getItem(foldKey);
+      if (v !== null) folded = v !== '1';
+      else if (welcome && top.length) localStorage.setItem(foldKey, '1'); // stays open after the welcome is closed
+    } catch (e) { /* private window */ }
+    el.setAttribute('aria-labelledby', hid);
+    el.removeAttribute('aria-label');
+    el.innerHTML = `
+      ${welcome ? `<div class="ins-welcome"${announce ? ' role="status"' : ''}>
+        <div><b>Dashboard ของคุณพร้อมแล้ว</b>${welcome.said && welcome.said.length ? `<span class="ins-said">จัดให้ตามที่คุณบอก: ${esc(welcome.said.join(' · '))}</span>` : ''}</div>
+        <button type="button" class="btn small ghost ins-close" aria-label="ปิดข้อความต้อนรับ">ปิด</button>
+      </div>` : ''}
+      ${top.length ? `<div class="ins-fold-card${folded ? ' folded' : ''}">
+      <h2 class="ins-h"><button type="button" class="ins-bar" aria-expanded="${!folded}" aria-controls="${bid}">
+        <span class="ins-ico" aria-hidden="true">฿</span>
+        <b class="ins-title" id="${hid}">เราเจอให้คุณ</b>${sample ? '<span class="demo-pill">ตัวอย่าง</span>' : ''}
+        <span class="ins-count">พบ ${found.all.length} เรื่อง</span>
+        ${folded ? `<span class="ins-top tone-${lead.tone || 'warn'}">${lead.kind ? `<span class="ins-kind">${esc(lead.kind)}</span>` : ''}<span class="ins-top-baht">${money(lead.baht)}</span> <span>${esc(lead.text)}</span>${lead.caveat ? `<span class="ins-caveat">${esc(lead.caveat)}</span>` : ''}</span>` : ''}
+        <span class="ins-toggle">${folded ? (found.all.length > top.length ? `ดู ${top.length} เรื่องสำคัญ` : `ดูทั้ง ${top.length} เรื่อง`) : 'ย่อ'}</span>
+      </button></h2>
+      <div class="ins-body" id="${bid}"${folded ? ' hidden' : ''}>
+      <div class="ins-grid">${top.map((f, i) => `<article class="ins-card tone-${f.tone || 'warn'}">
+          <span class="ins-tag">${esc(f.tag || { warn: 'เงินที่เสียหรือควรทวง', good: 'โอกาสประหยัด', info: 'รอดำเนินการ' }[f.tone || 'warn'])}</span>
+          <span class="ins-baht">${money(f.baht)}</span>
+          <b class="ins-text">${esc(f.text)}</b>
+          ${f.sub ? `<span class="ins-sub">${esc(f.sub)}</span>` : ''}
+          ${f.note ? `<span class="ins-note">${esc(f.note)}</span>` : ''}
+          ${f.widget
+            ? `<button type="button" class="btn small ghost ins-go" data-i="${i}">ดูรายละเอียด</button>`
+            : f.how ? `<details class="ins-how"><summary>ตัวเลขนี้คิดอย่างไร</summary><p>${esc(f.how)}</p></details>` : ''}
+        </article>`).join('')}</div>
+      ${rest.length ? `<p class="ins-more">อีก ${rest.length} เรื่อง: ${rest.map((f, j) => {
+        const label = `<span>${esc(f.kind || f.text)}</span> <span>${money(f.baht)}</span>`;
+        return f.widget ? `<button type="button" class="link-btn ins-more-go" data-j="${j}">${label}</button>` : `<span>${label}</span>`;
+      }).join(' · ')}</p>` : ''}
+      ${!isSuper() && state.user && state.user.company_id ? '<p class="ins-ask">อยากเห็นข้อมูลอื่นที่ยังไม่มีในหน้านี้? <button type="button" class="link-btn ins-wish">บอกเรา</button></p>' : ''}
+      </div></div>` : ''}`;
+    const bar = el.querySelector('.ins-bar');
+    if (bar) bar.addEventListener('click', () => {
+      try { localStorage.setItem(foldKey, folded ? '1' : '0'); } catch (e) { /* private window */ }
+      this.renderInsights();
+      const b = el.querySelector('.ins-bar');
+      if (b) b.focus({ preventScroll: true });
+    });
+    const wishLink = el.querySelector('.ins-wish');
+    if (wishLink) wishLink.addEventListener('click', () => openSupportForm({ kind: 'wish' }));
+    const close = el.querySelector('.ins-close');
+    if (close) close.addEventListener('click', () => {
+      try { sessionStorage.removeItem(`kss_welcome_${this.dashboard.id}`); } catch (e) { /* none */ }
+      this.renderInsights();
+      const b = el.querySelector('.ins-bar');
+      if (b) b.focus({ preventScroll: true });
+    });
+    const goTo = (f) => {
+      const card = this.wrap.querySelector(`.widget-card[data-wid="${f.widget.id}"]`);
+      if (!card) return;
+      const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      card.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' });
+      // keyboard and screen-reader users land on the widget, not back on the card
+      if (!card.hasAttribute('tabindex')) card.tabIndex = -1;
+      setTimeout(() => card.focus({ preventScroll: true }), still ? 0 : 350);
+      card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 1600);
+    };
+    el.querySelectorAll('.ins-go').forEach((b) => b.addEventListener('click', () => goTo(top[Number(b.dataset.i)])));
+    el.querySelectorAll('.ins-more-go').forEach((b) => b.addEventListener('click', () => goTo(rest[Number(b.dataset.j)])));
+  }
+}
+
+// ---------- findings ----------
+// Each finder reads rows the page already has and returns a money finding or
+// null. get(key, dateField) -> rows on the page's range (null = not loaded);
+// onPage(templateKeys) -> the first of those widgets on the page.
+// Every number here is the same number the widget it points to shows.
+const CK_NAME = /ครัวกลาง|central\s*kitchen|commissary|\bck\b/i;
+// ISO week key, so prices are only compared within the same week
+const weekKey = (d) => { const t = new Date(String(d).slice(0, 10) + 'T00:00:00Z'); if (isNaN(t)) return ''; const day = (t.getUTCDay() + 6) % 7; t.setUTCDate(t.getUTCDate() - day); return t.toISOString().slice(0, 10); };
+function findInsights(get, onPage, goals, span = {}) {
+  const out = [];
+  const add = (f) => { if (f && f.baht >= 100) out.push(f); };
+  const baht = (v) => fmtValue(v, 'currency');
+  const pa = get('purchase-analysis');
+  const keyOfLine = (r) => `${r.product_code || r.product_name}|${r.uom || ''}`;
+
+  if (pa && pa.length) {
+    // 1. price moves: paid above / below the window's first price (the pc_movers definition),
+    //    rises and falls both shown, so the headline agrees with the by-category chart
+    const byP = new Map();
+    pa.forEach((r) => { if (!isBlank(r.price) && num(r.qty)) { const k = keyOfLine(r); if (!byP.has(k)) byP.set(k, []); byP.get(k).push(r); } });
+    let up = 0; let down = 0; let worst = null;
+    byP.forEach((rs) => {
+      if (rs.length < 2) return;
+      rs.sort((a, b) => String(a.order_date).localeCompare(String(b.order_date)));
+      const first = num(rs[0].price);
+      const extra = rs.reduce((s, r) => s + (num(r.price) - first) * num(r.qty), 0);
+      if (extra < 0) { down += -extra; return; }
+      if (extra === 0) return;
+      up += extra;
+      // the average paid against the first price: the move that cost the money
+      const q = rs.reduce((x, r) => x + num(r.qty), 0);
+      const avg = q ? rs.reduce((x, r) => x + num(r.price) * num(r.qty), 0) / q : first;
+      if (!worst || extra > worst.extra) worst = { extra, name: rs[0].product_name, pct: first ? ((avg - first) / first) * 100 : 0 };
+    });
+    const wPrice = onPage(['pc_movers', 'pc_extra_by_product', 'pc_extra_by_category', 'watch_price']);
+    const moves = `ขึ้น ${baht(up)} · ลง ${baht(down)} · สุทธิ ${baht(up - down)}`;
+    const how = 'เทียบราคาที่จ่ายแต่ละครั้งกับราคาครั้งแรกในช่วงที่เลือก คูณจำนวนที่ซื้อ แยกตามสินค้าและหน่วย';
+    // net up: what the rises cost. Net down: prices fell overall, which is news too, not a loss.
+    if (worst && up > down) add({
+      id: 'price_up', goals: ['price', 'profit'], baht: up - down, text: 'จ่ายเพิ่มสุทธิเพราะราคาวัตถุดิบขึ้น',
+      sub: `${moves} · มากสุด ${worst.name} ${baht(worst.extra)} (ราคาเฉลี่ยสูงกว่าครั้งแรก ${fmtValue(worst.pct, 'pct_signed')})`,
+      widget: wPrice, headline: `ราคาขึ้นทำให้จ่ายเพิ่ม ${baht(up)} · ราคาลงประหยัด ${baht(down)} · สุทธิ ${baht(up - down)}`, how,
+    });
+    else if (down > up && down - up >= 100) add({
+      id: 'price_down', goals: ['price'], tone: 'good', tag: 'ข่าวดี', baht: down - up, text: 'ราคาวัตถุดิบโดยรวมลดลง',
+      sub: `${moves}${worst ? ` · แต่ ${worst.name} ยังทำให้จ่ายเพิ่ม ${baht(worst.extra)}` : ''}`,
+      widget: wPrice, headline: `ราคาขึ้นทำให้จ่ายเพิ่ม ${baht(up)} · ราคาลงประหยัด ${baht(down)} · สุทธิ ${baht(up - down)}`, how,
+    });
+
+    // 2. the same item cheaper from another supplier the same week. A supplier that often
+    //    delivers short (more than 15% of its invoiced lines) is never the "cheaper" one.
+    const shortRate = new Map();
+    pa.forEach((r) => {
+      if (isBlank(r.invoice_quantity) || !num(r.po_qty)) return;
+      const o = shortRate.get(r.supplier) || { n: 0, s: 0 };
+      o.n++; if (num(r.invoice_quantity) < num(r.po_qty) * 0.98) o.s++;
+      shortRate.set(r.supplier, o);
+    });
+    const reliable = (sup) => { const o = shortRate.get(sup); return !o || o.n < 5 || o.s / o.n <= 0.15; };
+    let save = 0; let best = null;
+    byP.forEach((rs) => {
+      const byWeek = new Map();
+      rs.forEach((r) => { const w = weekKey(r.order_date); if (!byWeek.has(w)) byWeek.set(w, []); byWeek.get(w).push(r); });
+      byWeek.forEach((ws) => {
+        const bySup = new Map();
+        ws.forEach((r) => { const o = bySup.get(r.supplier) || { v: 0, q: 0 }; o.v += num(r.price) * num(r.qty); o.q += num(r.qty); bySup.set(r.supplier, o); });
+        if (bySup.size < 2) return;
+        const avgs = [...bySup.entries()].filter(([, o]) => o.q > 0).map(([sup, o]) => ({ sup, avg: o.v / o.q }));
+        const cheap = avgs.filter((a) => reliable(a.sup));
+        if (avgs.length < 2 || !cheap.length) return;
+        const min = cheap.reduce((a, b) => (b.avg < a.avg ? b : a));
+        ws.forEach((r) => {
+          const over = Math.max(0, num(r.price) - min.avg) * num(r.qty);
+          if (over <= 0 || r.supplier === min.sup) return;
+          save += over;
+          if (!best || over > best.over) best = { over, name: r.product_name, cheap: min.sup, dear: r.supplier, pct: ((num(r.price) - min.avg) / min.avg) * 100 };
+        });
+      });
+    });
+    if (best) add({
+      id: 'cheaper', goals: ['price', 'supplier', 'profit'], tone: 'good', baht: save,
+      text: 'ส่วนต่างราคาระหว่างเจ้า (ประหยัดได้สูงสุด)',
+      sub: `${best.name}: ${partyShort(best.cheap)} ถูกกว่า ${partyShort(best.dear)} ${best.pct.toFixed(0)}% ในสัปดาห์เดียวกัน`,
+      note: 'ไม่นับเจ้าที่ส่งขาดบ่อย ควรดูว่าเจ้าที่ถูกกว่ารับปริมาณได้พอด้วย',
+      widget: onPage(['price_compare_suppliers', 'price_variance_top']),
+      headline: `ถ้าซื้อจากเจ้าที่ถูกกว่าในสัปดาห์เดียวกัน จะประหยัดได้สูงสุด ${baht(save)} · มากสุด ${best.name}`,
+      how: 'สินค้าและหน่วยเดียวกันที่ซื้อจากหลายเจ้าในสัปดาห์เดียวกัน: ส่วนที่จ่ายเกินราคาเฉลี่ยของเจ้าที่ถูกที่สุดในสัปดาห์นั้น คูณจำนวน ไม่นับเจ้าที่ส่งขาดเกิน 15% ของบรรทัดที่วางบิล',
+    });
+
+    // 3. billed above what was received, less credit notes already issued
+    //    (the sq_overbill_credit definition: invoice + product, quantity over × invoice price)
+    const lines = new Map();
+    pa.forEach((r) => {
+      if (isBlank(r.invoice_number) || !(num(r.invoice_quantity) > num(r.grn_quantity))) return;
+      const k = `${r.invoice_number}|${r.product_code}`;
+      const o = lines.get(k) || { sup: r.supplier, over: 0, cn: 0 };
+      o.over += (num(r.invoice_quantity) - num(r.grn_quantity)) * num(r.invoice_price);
+      lines.set(k, o);
+    });
+    if (lines.size) {
+      const cn = get('credit-notes');
+      if (cn) cn.forEach((c) => { const o = lines.get(`${c.invoice_number}|${c.product_code}`); if (o) o.cn += num(c.total !== undefined ? c.total : c.credit_note_amount); });
+      const bySup = new Map();
+      lines.forEach((o) => { const left = Math.max(0, o.over - o.cn); if (left > 0) bySup.set(o.sup, (bySup.get(o.sup) || 0) + left); });
+      const owed = [...bySup.values()].reduce((a, b) => a + b, 0);
+      const topS = [...bySup.entries()].sort((a, b) => b[1] - a[1])[0];
+      if (topS) add({
+        id: 'overbilled', goals: ['bills', 'supplier'], baht: owed,
+        text: cn ? `บิลเกินที่ยังไม่ได้ใบลดหนี้คืน ${bySup.size} เจ้า` : `ซัพพลายเออร์ ${bySup.size} เจ้าวางบิลเกินของที่รับจริง`,
+        sub: `มากสุด ${partyShort(topS[0])} ${baht(topS[1])} ควรทวงใบลดหนี้`,
+        note: cn ? '' : 'ยังไม่ได้หักใบลดหนี้ เพิ่ม widget "บิลเกินของที่รับ ได้ใบลดหนี้คืนแล้วหรือยัง" เพื่อดูยอดที่ค้างจริง',
+        widget: onPage(cn ? ['sq_overbill_credit', 'ita_overbilled'] : ['ita_overbilled', 'sq_overbill_credit', 'pa_kpis']),
+        how: '(จำนวนในบิล − จำนวนที่รับจริง) × ราคาในบิล ต่อเลขบิลและสินค้า หักใบลดหนี้ของบิลและสินค้าเดียวกัน',
+      });
+    }
+
+    // 4. received, no invoice yet (the ita_grn_not_invoiced definition) — a bill to come, aged by GRN date
+    const wait = pa.filter((r) => !isBlank(r.grn_number) && isBlank(r.invoice_number));
+    if (wait.length) {
+      const v = wait.reduce((s, r) => s + num(r.grn_total), 0);
+      const ref = span.today || todayIso();
+      const age = (r) => (Date.parse(ref) - Date.parse(String(r.grn_date || r.order_date).slice(0, 10))) / 86400000;
+      const old = wait.filter((r) => age(r) > 15).reduce((s, r) => s + num(r.grn_total), 0);
+      const older = wait.filter((r) => age(r) > 30).reduce((s, r) => s + num(r.grn_total), 0);
+      add({
+        id: 'waiting', goals: ['bills', 'supplier'], tone: 'info', baht: v, text: 'รับของแล้ว ยังรอใบแจ้งหนี้',
+        sub: [old ? `รอเกิน 15 วัน ${baht(old)}` : '', older ? `เกิน 30 วัน ${baht(older)}` : '', `${new Set(wait.map((r) => r.supplier)).size} ซัพพลายเออร์`].filter(Boolean).join(' · '),
+        widget: onPage(['ita_grn_not_invoiced', 'pa_kpis']),
+        how: 'มูลค่ารับของของบรรทัดที่มีใบรับของแล้วแต่ยังไม่มีเลขใบแจ้งหนี้ อายุนับจากวันที่รับของ',
+      });
+    }
+  }
+
+  // 5. counted short. FMH groups stock counts by product over the whole synced window
+  //    (about 80 days), so this does not follow the range picker and says so.
+  const sc = get('stock-count|product');
+  if (sc && sc.length) {
+    const neg = sc.filter((r) => num(r.variance_value) < 0);
+    if (neg.length) {
+      const short = -neg.reduce((s, r) => s + num(r.variance_value), 0);
+      const extra = sc.filter((r) => num(r.variance_value) > 0).reduce((s, r) => s + num(r.variance_value), 0);
+      const w = neg.reduce((a, b) => (num(b.variance_value) < num(a.variance_value) ? b : a));
+      add({
+        id: 'count_short', goals: ['waste', 'branch', 'profit'], baht: short, text: 'นับสต็อกขาด',
+        sub: `${w.product} ตัวเดียว ${baht(-num(w.variance_value))} · นับเกิน ${baht(extra)} · สุทธิขาด ${baht(short - extra)}`,
+        note: '80 วันล่าสุดที่ดึงจาก FMH ไม่ตามช่วงที่เลือก',
+        widget: onPage(['stock_count_variance']),
+        how: 'ผลรวมมูลค่าที่นับได้ต่ำกว่าในระบบ ต่อสินค้า จากการนับสต็อกใน FMH',
+      });
+    }
+  }
+
+  // 6. waste, against what each outlet bought when both are on the page
+  const wl = get('wastage-lines', 'wastage_date');
+  const wb = wl || get('wastage-top-branches');
+  if (wb && wb.length) {
+    const val = (r) => num(r.wastage_value !== undefined ? r.wastage_value : r.total_wastage_value);
+    const v = wb.reduce((s, r) => s + val(r), 0);
+    let sub = '';
+    if (wl && pa && pa.length) {
+      const by = new Map();
+      const k = (n) => partyShort(n || '').toLowerCase();
+      pa.forEach((r) => { if (CK_NAME.test(r.branch || '')) return; const o = by.get(k(r.branch)) || { n: partyShort(r.branch), p: 0, w: 0 }; o.p += num(r.total); by.set(k(r.branch), o); });
+      wl.forEach((r) => { const o = by.get(k(r.branch)); if (o) o.w += val(r); });
+      const rates = [...by.values()].filter((o) => o.p > 0 && o.w > 0).map((o) => ({ ...o, pct: (o.w / o.p) * 100 })).sort((a, b) => b.pct - a.pct);
+      if (rates.length >= 2) sub = `${rates[0].n} ทิ้ง ${rates[0].pct.toFixed(1)}% ของยอดซื้อ · ${rates[rates.length - 1].n} ${rates[rates.length - 1].pct.toFixed(1)}%`;
+    }
+    if (!sub) {
+      const byB = new Map();
+      wb.forEach((r) => byB.set(r.branch || r.product || '', (byB.get(r.branch || r.product || '') || 0) + val(r)));
+      const t = [...byB.entries()].sort((a, b) => b[1] - a[1])[0];
+      if (t && t[0]) sub = `มากสุด ${partyShort(t[0])} ${baht(t[1])}`;
+    }
+    add({
+      id: 'waste', goals: ['waste', 'branch'], baht: v, text: 'ของเสียที่บันทึกไว้', sub,
+      note: wl ? '' : '80 วันล่าสุดที่ดึงจาก FMH ไม่ตามช่วงที่เลือก',
+      widget: onPage(['wastage_pct_by_branch', 'wastage_top_branches', 'wastage_top_products', 'wastage_by_category', 'wastage_trend']),
+      how: 'มูลค่าของเสียที่สาขาบันทึกใน FMH',
+    });
+  }
+
+  // 7. the central kitchen paid more than its recipes say its sales used. Only the kitchen's
+  //    own purchases count (an outlet buying direct is not kitchen cost), over the same
+  //    months as the sales buckets.
+  const ck = get('cogs-trend');
+  const wCk = onPage(['ck_margin_kpi', 'ck_margin_table', 'ck_margin_trend']);
+  if (ck && ck.length && pa && pa.length && wCk) {
+    const own = pa.filter((r) => CK_NAME.test(r.branch || ''));
+    const from = ck.map((r) => String(r.period || '').slice(0, 10)).filter(Boolean).sort()[0];
+    const bought = own.filter((r) => !from || String(r.order_date).slice(0, 10) >= from).reduce((s, r) => s + num(r.total), 0);
+    const sales = ck.reduce((s, r) => s + num(r.sales), 0);
+    const recipe = ck.reduce((s, r) => s + num(r.cogs), 0);
+    const open = span.today && ck.some((r) => String(r.period || '').slice(0, 7) === String(span.today).slice(0, 7));
+    if (own.length && sales > 0 && bought > recipe) {
+      add({
+        id: 'ck_gap', goals: ['profit'], baht: bought - recipe, text: 'ครัวกลางจ่ายซื้อเกินต้นทุนตามสูตร',
+        sub: `กำไรขั้นต้นจากที่จ่ายจริง ${(((sales - bought) / sales) * 100).toFixed(1)}% เทียบตามสูตร ${(((sales - recipe) / sales) * 100).toFixed(1)}%`,
+        note: `ยอดซื้อไม่เท่ากับของที่ใช้ ของที่ยังอยู่ในสต็อกก็นับรวม${open ? ' · เดือนนี้ยังไม่จบ ตัวเลขยังแกว่ง' : ''}`,
+        unsure: !!open, widget: wCk,
+        how: 'ยอดซื้อของสาขาครัวกลางในเดือนเดียวกับยอดขาย ลบต้นทุนตามสูตรของสิ่งที่ครัวกลางขาย',
+      });
+    }
+  }
+
+  return finishInsights(out, goals);
+}
+
+// Ranks the findings, names their kind and caveat, and picks the one the folded bar leads with.
+function finishInsights(out, goals) {
+  // Order: what the customer said they care about, then the rest; within each, money to act
+  // on before money that is waiting or unsure (an unfinished month), then by size.
+  const wanted = new Set(goals || []);
+  const rank = (f) => (wanted.size && f.goals.some((g) => wanted.has(g)) ? 0 : 2) + (f.tone === 'info' || f.unsure ? 1 : 0);
+  let top = [...out].sort((a, b) => rank(a) - rank(b) || b.baht - a.baht).slice(0, 3);
+  // A word for what kind of money it is (the folded bar has no room for the card's tag),
+  // and the caveat that must travel with the number.
+  const KIND = { overbilled: 'ควรทวง', price_up: 'จ่ายเพิ่มไปแล้ว', count_short: 'ของขาด', waste: 'ของเสีย', ck_gap: 'ต้นทุนเกิน', price_down: 'ข่าวดี', cheaper: 'ประหยัดได้', waiting: 'รอบิล' };
+  out.forEach((f) => {
+    f.kind = KIND[f.id] || '';
+    f.caveat = f.unsure ? 'เดือนนี้ยังไม่จบ'
+      : /80 วันล่าสุด/.test(f.note || '') ? '80 วันล่าสุด ไม่ตามช่วงที่เลือก'
+      : f.id === 'cheaper' ? 'ตัวเลขสูงสุด'
+      : f.id === 'ck_gap' ? 'รวมของที่ยังอยู่ในสต็อก'
+      : f.id === 'overbilled' && f.note ? 'ยอดก่อนหักใบลดหนี้' : '';
+  });
+  // The folded bar leads with money to act on: money to claim back first, then money lost,
+  // and good news or bills still to come only when nothing is being lost.
+  const lead = [...out].sort((a, b) => {
+    const w = (f) => (f.tone === 'good' || f.tone === 'info' ? 4 : f.unsure ? 2 : f.id === 'overbilled' ? 0 : 1);
+    return w(a) - w(b) || b.baht - a.baht;
+  })[0];
+  if (lead) top = [lead, ...top.filter((f) => f !== lead)].slice(0, 3);
+  return { top, all: out, lead };
 }
 
 // ---------- widget renderers ----------
@@ -2724,7 +3302,7 @@ function renderPanels(body, byAlias, cfg) {
     }
     renderer(inner, rows, panel);
   });
-  if (cfg.foot) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">${esc(cfg.foot)}</p>`);
+  if (cfg.foot) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">${esc(cfg.foot).replace(/\n/g, '<br>')}</p>`);
 }
 
 // ---- pareto: ranked bars plus a cumulative share line ----
@@ -3120,12 +3698,16 @@ const notif = { items: [], open: false };
 
 async function loadNotifications() {
   try {
-    const r = await api('/api/announcements');
+    // KSS replies to what this person reported or asked for count with the posts
+    const mine = state.user && state.user.company_id && !isSuper() ? api('/api/support/mine').catch(() => null) : Promise.resolve(null);
+    const [r, m] = await Promise.all([api('/api/announcements'), mine]);
     notif.items = r.items;
+    notif.replies = m ? m.list.filter((x) => x.reply_unseen) : [];
+    const unread = r.unread + notif.replies.length;
     const badge = el('notif-badge');
-    badge.textContent = r.unread > 9 ? '9+' : String(r.unread);
-    badge.classList.toggle('hidden', !r.unread);
-    el('notif-btn').setAttribute('aria-label', r.unread ? `มีอะไรใหม่ (${r.unread} ยังไม่ได้อ่าน)` : 'มีอะไรใหม่');
+    badge.textContent = unread > 9 ? '9+' : String(unread);
+    badge.classList.toggle('hidden', !unread);
+    el('notif-btn').setAttribute('aria-label', unread ? `มีอะไรใหม่ (${unread} ยังไม่ได้อ่าน)` : 'มีอะไรใหม่');
   } catch (err) {
     /* the bell is a nicety; never block the app on it */
   }
@@ -3138,6 +3720,11 @@ function renderNotifPanel() {
   const canAdd = isCompanyAdmin() || isSuper();
   panel.innerHTML = `
     <div class="notif-head"><strong>มีอะไรใหม่</strong><button type="button" class="icon-mini notif-close" aria-label="ปิด">✕</button></div>
+    ${(notif.replies || []).length ? `<article class="notif-item unread notif-reply">
+        <div class="notif-meta"><span class="notif-new">ทีม KSS ตอบแล้ว</span></div>
+        <ul class="notif-replies">${notif.replies.slice(0, 3).map((x) => `<li><button type="button" class="notif-reply-item" data-id="${x.id}"><b>${esc(x.message.slice(0, 80))}${x.message.length > 80 ? '…' : ''}</b><span>${esc(x.note || OPS_STATUS[x.status] || '')}</span></button></li>`).join('')}</ul>
+        <button type="button" class="btn small ghost notif-mine">${notif.replies.length > 3 ? `ดูทั้งหมด (อีก ${notif.replies.length - 3} เรื่อง) →` : 'ดูเรื่องที่แจ้งไว้ทั้งหมด →'}</button>
+      </article>` : ''}
     ${
       notif.items.length
         ? notif.items
@@ -3160,6 +3747,9 @@ function renderNotifPanel() {
         : '<p class="muted notif-empty">ยังไม่มีประกาศ</p>'
     }`;
   panel.querySelector('.notif-close').addEventListener('click', () => toggleNotif(false));
+  const mineBtn = panel.querySelector('.notif-mine');
+  if (mineBtn) mineBtn.addEventListener('click', () => { toggleNotif(false); fbOpenMine(); });
+  panel.querySelectorAll('.notif-reply-item').forEach((b) => b.addEventListener('click', () => { toggleNotif(false); fbOpenMine(Number(b.dataset.id)); }));
   panel.querySelectorAll('.notif-add').forEach((b) =>
     b.addEventListener('click', () => {
       toggleNotif(false);

@@ -136,6 +136,13 @@ async function upgradeCompanies() {
     await pool.query(`ALTER TABLE companies ADD COLUMN suspended_reason VARCHAR(20) NULL`);
     console.log('  companies: added suspended_reason');
   }
+  // What the first admin told us in the first-run questions (shape of the
+  // business, role, interests): picks the starter pack, and tells KSS who the
+  // customer is.
+  if (!(await columnInfo('companies', 'onboarding_json'))) {
+    await pool.query(`ALTER TABLE companies ADD COLUMN onboarding_json TEXT NULL`);
+    console.log('  companies: added onboarding_json');
+  }
 }
 
 // Which POS a file came from, once more than one POS can be uploaded.
@@ -308,6 +315,20 @@ async function upgradeAiFeedback() {
   }
 }
 
+async function upgradeSupportKinds() {
+  // "อยากเห็นข้อมูลเพิ่ม" (wish) and "ความเห็น" (feedback) joined the support kinds.
+  const ci = await columnInfo('support_requests', 'kind');
+  if (ci && !/'wish'/.test(ci.COLUMN_TYPE)) {
+    await pool.query(`ALTER TABLE support_requests MODIFY kind ENUM('data','connect','howto','billing','other','wish','feedback') NOT NULL DEFAULT 'other'`);
+    console.log('  support_requests: added kinds wish, feedback');
+  }
+  // the bell lights up when KSS answers: a reply the customer has not opened yet
+  if (!(await columnInfo('support_requests', 'reply_unseen'))) {
+    await pool.query(`ALTER TABLE support_requests ADD COLUMN reply_unseen BOOLEAN NOT NULL DEFAULT FALSE`);
+    console.log('  support_requests: added reply_unseen');
+  }
+}
+
 async function upgradeLineQuota() {
   // LINE counts a group push once per member, against the OA's monthly quota: track what we used.
   if (!(await columnInfo('company_line', 'quota_used'))) {
@@ -392,6 +413,7 @@ async function main() {
   await upgradeHomeBranch();
   await upgradeLineQuota();
   await upgradeLineSummary();
+  await upgradeSupportKinds();
   // First run with the saved-data fallback: every cache that has rows today
   // becomes the "last good" copy, so the fallback works before the next sync.
   const [bf] = await pool.query(

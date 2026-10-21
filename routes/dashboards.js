@@ -51,7 +51,8 @@ function describeWidgets(widgets) {
       ? w.config.sources.map((sc) => {
           const c = FMH_REPORTS[sc.source];
           const g = c && sc.group_by && c.groupings.includes(sc.group_by) ? sc.group_by : null;
-          return { as: sc.as, key: cacheKeyFor(sc.source, g) };
+          // date_field: filter this alias on that row field for this widget only
+          return { as: sc.as, key: cacheKeyFor(sc.source, g), ...(sc.date_field && !g ? { date_field: sc.date_field } : {}), ...(sc.where ? { where: sc.where, where_fallback: !!sc.where_fallback } : {}) };
         })
       : null;
   });
@@ -176,8 +177,11 @@ router.get(
     if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
     const widgets = await listWidgets(dashboard.id);
     const sources = describeWidgets(widgets);
-    const [[co]] = await pool.query(`SELECT data_source FROM companies WHERE id = ?`, [dashboard.company_id]);
-    res.json({ dashboard: { ...dashboard, data_source: co ? co.data_source : 'fmh' }, widgets, sources });
+    const [[co]] = await pool.query(`SELECT data_source, onboarding_json FROM companies WHERE id = ?`, [dashboard.company_id]);
+    // the first-run answers pick which findings lead the page (public/app.js renderInsights)
+    let profile = null;
+    try { profile = co && co.onboarding_json ? JSON.parse(co.onboarding_json) : null; } catch (e) { /* none */ }
+    res.json({ dashboard: { ...dashboard, data_source: co ? co.data_source : 'fmh', profile }, widgets, sources });
   })
 );
 

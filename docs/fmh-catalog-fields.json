@@ -1,0 +1,1134 @@
+{
+ "source": "GET /v1/public/reports/catalog, catalog version 1, pulled 2026-10-02",
+ "note": "Fields of each card as FMH documents them. Server-side groupings return other fields, not listed here: check those with FMH Diagnostics > widget_fields.",
+ "cards": {
+  "batch_tracing_table": {
+   "report": "batch_tracing",
+   "fields": [
+    "batch_number",
+    "product",
+    "supplier",
+    "received_date",
+    "expiry_date",
+    "received_qty",
+    "remaining_qty",
+    "branch",
+    "status",
+    "source_channel",
+    "uom",
+    "sku",
+    "po_number"
+   ]
+  },
+  "batch_stat_batches_received": {
+   "report": "batch_tracing",
+   "fields": [
+    "batches_received"
+   ]
+  },
+  "batch_stat_batches_with_stock": {
+   "report": "batch_tracing",
+   "fields": [
+    "batches_with_stock"
+   ]
+  },
+  "batch_stat_expiring_soon": {
+   "report": "batch_tracing",
+   "fields": [
+    "batches_expiring"
+   ]
+  },
+  "batch_received_over_time": {
+   "report": "batch_tracing",
+   "fields": [
+    "period",
+    "batches_received"
+   ]
+  },
+  "batch_top_products": {
+   "report": "batch_tracing",
+   "fields": [
+    "product",
+    "batch_count"
+   ]
+  },
+  "credit_note_table": {
+   "report": "credit_note_summary",
+   "fields": [
+    "branch_name",
+    "department_name",
+    "credit_note_number",
+    "credit_note_amount",
+    "credit_note_date",
+    "credit_note_reason",
+    "credit_note_reason_readable",
+    "invoice_number",
+    "invoice_date",
+    "product_name",
+    "product_code",
+    "quantity",
+    "price",
+    "total",
+    "do_quantity",
+    "do_price",
+    "do_total",
+    "invoice_quantity",
+    "invoice_price",
+    "invoice_total",
+    "supplier_name",
+    "status",
+    "currency",
+    "credit_note_pk"
+   ]
+  },
+  "credit_note_stat_total_amount": {
+   "report": "credit_note_summary",
+   "fields": [
+    "total_credit_amount"
+   ]
+  },
+  "credit_note_stat_unutilized_amount": {
+   "report": "credit_note_summary",
+   "fields": [
+    "unutilized_amount"
+   ]
+  },
+  "credit_note_by_status": {
+   "report": "credit_note_summary",
+   "fields": [
+    "status",
+    "total_amount"
+   ]
+  },
+  "do_summary_table": {
+   "report": "delivery_order_summary",
+   "fields": [
+    "document_number",
+    "do_date",
+    "po_number",
+    "so_number",
+    "issued_date",
+    "order_date",
+    "branch",
+    "department",
+    "supplier",
+    "supplier_branch",
+    "supplier_branch_department",
+    "order_status",
+    "split_status",
+    "total_products",
+    "total_quantity",
+    "do_price_total",
+    "do_tax",
+    "do_value"
+   ]
+  },
+  "do_stat_total_value": {
+   "report": "delivery_order_summary",
+   "fields": [
+    "do_value",
+    "do_count"
+   ]
+  },
+  "dos_over_time": {
+   "report": "delivery_order_summary",
+   "fields": [
+    "period",
+    "do_value"
+   ]
+  },
+  "grn_summary_table": {
+   "report": "grn_summary",
+   "fields": [
+    "document_number",
+    "grn_date",
+    "po_number",
+    "issued_date",
+    "order_date",
+    "branch",
+    "department",
+    "supplier",
+    "supplier_branch",
+    "supplier_branch_department",
+    "order_status",
+    "split_status",
+    "total_products",
+    "total_quantity",
+    "grn_price_total",
+    "grn_tax",
+    "grn_value"
+   ]
+  },
+  "grn_stat_value": {
+   "report": "grn_summary",
+   "fields": [
+    "grn_value",
+    "grn_count"
+   ]
+  },
+  "grns_over_time": {
+   "report": "grn_summary",
+   "fields": [
+    "period",
+    "grn_value"
+   ]
+  },
+  "halal_certificate_table": {
+   "report": "halal_certificate",
+   "fields": [
+    "supplier",
+    "product",
+    "certificate_name",
+    "issuer",
+    "level",
+    "issue_date",
+    "expiry_date",
+    "status",
+    "sku",
+    "supplier_type"
+   ]
+  },
+  "halal_stat_active_certificates": {
+   "report": "halal_certificate",
+   "fields": [
+    "active_certificates"
+   ]
+  },
+  "halal_stat_expiring_soon": {
+   "report": "halal_certificate",
+   "fields": [
+    "expiring_soon"
+   ]
+  },
+  "invoice_summary_table": {
+   "report": "invoice_summary",
+   "fields": [
+    "document_number",
+    "invoice_date",
+    "po_number",
+    "so_number",
+    "issued_date",
+    "order_date",
+    "branch",
+    "department",
+    "supplier",
+    "supplier_branch",
+    "supplier_branch_department",
+    "order_status",
+    "split_status",
+    "total_products",
+    "total_quantity",
+    "invoice_price_total",
+    "invoice_tax",
+    "discount_total",
+    "charge_total",
+    "invoice_value"
+   ]
+  },
+  "invoice_stat_total_invoiced": {
+   "report": "invoice_summary",
+   "fields": [
+    "total_invoiced",
+    "invoice_count"
+   ]
+  },
+  "invoice_invoiced_over_time": {
+   "report": "invoice_summary",
+   "fields": [
+    "period",
+    "total_invoiced"
+   ]
+  },
+  "order_summary_table": {
+   "report": "order_summary_report",
+   "fields": [
+    "product_code",
+    "product_name",
+    "category",
+    "uom",
+    "branch",
+    "department",
+    "ordered_quantity",
+    "on_hand_quantity",
+    "variance"
+   ]
+  },
+  "order_summary_stat_lines": {
+   "report": "order_summary_report",
+   "fields": [
+    "total_lines",
+    "shortfall_lines"
+   ]
+  },
+  "order_summary_top_shortfall_categories": {
+   "report": "order_summary_report",
+   "fields": [
+    "category",
+    "shortfall_count"
+   ]
+  },
+  "price_comparison_table": {
+   "report": "price_comparison",
+   "fields": [
+    "product",
+    "supplier",
+    "avg_price",
+    "min_price",
+    "max_price",
+    "last_price",
+    "purchase_count",
+    "last_purchase_date"
+   ]
+  },
+  "price_variance_top_products": {
+   "report": "price_comparison",
+   "fields": [
+    "product",
+    "variance_pct"
+   ]
+  },
+  "product_cost_history_table": {
+   "report": "product_costing",
+   "fields": [
+    "receipt_date",
+    "branch",
+    "supplier",
+    "grn_number",
+    "product",
+    "variant",
+    "qty_received",
+    "grn_unit_price",
+    "invoice_unit_price"
+   ]
+  },
+  "product_cost_stat": {
+   "report": "product_costing",
+   "fields": [
+    "latest_grn_price",
+    "avg_grn_price",
+    "receipt_count"
+   ]
+  },
+  "product_cost_over_time": {
+   "report": "product_costing",
+   "fields": [
+    "period",
+    "avg_grn_price"
+   ]
+  },
+  "product_variance_table": {
+   "report": "product_variance",
+   "fields": [
+    "product",
+    "branch",
+    "department",
+    "category",
+    "uom",
+    "theoretical_usage",
+    "actual_usage",
+    "variance_qty",
+    "variance_pct",
+    "variance_value",
+    "sku"
+   ]
+  },
+  "variance_stat_theoretical_usage_value": {
+   "report": "product_variance",
+   "fields": [
+    "theoretical_usage_value"
+   ]
+  },
+  "variance_stat_actual_usage_value": {
+   "report": "product_variance",
+   "fields": [
+    "actual_usage_value"
+   ]
+  },
+  "variance_stat_variance_value": {
+   "report": "product_variance",
+   "fields": [
+    "variance_value"
+   ]
+  },
+  "variance_value_over_time": {
+   "report": "product_variance",
+   "fields": [
+    "period",
+    "theoretical_usage_value",
+    "actual_usage_value"
+   ]
+  },
+  "variance_top_products": {
+   "report": "product_variance",
+   "fields": [
+    "product",
+    "variance_value"
+   ]
+  },
+  "purchase_analysis_table": {
+   "report": "purchase_analysis",
+   "fields": [
+    "product_name",
+    "product_code",
+    "product_tags",
+    "category_name",
+    "supplier",
+    "branch",
+    "department",
+    "po_number",
+    "order_tags",
+    "issued_date",
+    "order_date",
+    "requested_delivery_date",
+    "order_status",
+    "split_order_status",
+    "do_date",
+    "do_number",
+    "grn_date",
+    "grn_number",
+    "invoice_date",
+    "invoice_number",
+    "supplier_invoice_date",
+    "supplier_invoice_number",
+    "uom",
+    "tax_rate",
+    "po_qty",
+    "po_price",
+    "po_tax",
+    "po_total",
+    "do_quantity",
+    "do_price",
+    "do_tax",
+    "do_total",
+    "grn_quantity",
+    "grn_price",
+    "grn_tax",
+    "grn_total",
+    "invoice_quantity",
+    "invoice_price",
+    "invoice_tax",
+    "invoice_total",
+    "qty",
+    "price",
+    "discount",
+    "tax",
+    "total"
+   ]
+  },
+  "po_history_table": {
+   "report": "purchase_order_history",
+   "fields": [
+    "order_number",
+    "order_date",
+    "issued_date",
+    "branch",
+    "supplier",
+    "department",
+    "order_status",
+    "requested_delivery_date",
+    "do_date",
+    "do_number",
+    "grn_date",
+    "grn_number",
+    "invoice_date",
+    "invoice_number",
+    "supplier_invoice_date",
+    "supplier_invoice_number",
+    "line_count",
+    "subtotal",
+    "total_discount",
+    "total_charges",
+    "grand_total"
+   ]
+  },
+  "po_history_stat_total_spend": {
+   "report": "purchase_order_history",
+   "fields": [
+    "total_spend",
+    "order_count"
+   ]
+  },
+  "po_history_spend_over_time": {
+   "report": "purchase_order_history",
+   "fields": [
+    "period",
+    "total_spend"
+   ]
+  },
+  "po_history_orders_by_status": {
+   "report": "purchase_order_history",
+   "fields": [
+    "status",
+    "order_count"
+   ]
+  },
+  "po_summary_table": {
+   "report": "purchase_order_summary",
+   "fields": [
+    "document_number",
+    "order_number",
+    "branch",
+    "department",
+    "supplier",
+    "order_status",
+    "tag",
+    "issued_date",
+    "order_date",
+    "total_products",
+    "total_quantity",
+    "total_tax",
+    "total_price",
+    "invoice_total_quantity",
+    "invoice_total_tax",
+    "invoice_total_discount",
+    "invoice_total_price",
+    "currency"
+   ]
+  },
+  "po_summary_stat_total_value": {
+   "report": "purchase_order_summary",
+   "fields": [
+    "total_price",
+    "order_count"
+   ]
+  },
+  "po_summary_value_over_time": {
+   "report": "purchase_order_summary",
+   "fields": [
+    "period",
+    "total_price"
+   ]
+  },
+  "price_history_table": {
+   "report": "purchase_price_history",
+   "fields": [
+    "product",
+    "product_code",
+    "uom",
+    "product_category",
+    "supplier",
+    "branch",
+    "order_date",
+    "order_created_date",
+    "unit_price",
+    "previous_unit_price",
+    "variance_amount",
+    "variance"
+   ]
+  },
+  "price_history_avg_price_over_time": {
+   "report": "purchase_price_history",
+   "fields": [
+    "period",
+    "avg_price"
+   ]
+  },
+  "stock_adjustment_table": {
+   "report": "stock_adjustment",
+   "fields": [
+    "adjustment_date",
+    "product",
+    "branch",
+    "adjusted_by",
+    "direction",
+    "quantity_before",
+    "quantity_after",
+    "delta",
+    "value_impact",
+    "product_code",
+    "category",
+    "department",
+    "uom",
+    "document_number",
+    "batch_number",
+    "remarks",
+    "product_tags"
+   ]
+  },
+  "stock_adjustment_stat_count": {
+   "report": "stock_adjustment",
+   "fields": [
+    "adjustment_count"
+   ]
+  },
+  "stock_balance_table": {
+   "report": "stock_balance",
+   "fields": [
+    "product",
+    "sku",
+    "branch",
+    "category",
+    "uom",
+    "quantity_on_hand",
+    "unit_cost",
+    "stock_value",
+    "minimum_par_level",
+    "maximum_par_level",
+    "product_on_hand",
+    "base_uom",
+    "department",
+    "below_par"
+   ]
+  },
+  "stock_balance_stat_total_value": {
+   "report": "stock_balance",
+   "fields": [
+    "total_stock_value"
+   ]
+  },
+  "stock_balance_stat_below_par": {
+   "report": "stock_balance",
+   "fields": [
+    "below_par_items"
+   ]
+  },
+  "stock_balance_by_category": {
+   "report": "stock_balance",
+   "fields": [
+    "category",
+    "total_stock_value"
+   ]
+  },
+  "stock_balance_product_table": {
+   "report": "stock_balance_product",
+   "fields": [
+    "product",
+    "sku",
+    "branch",
+    "category",
+    "base_uom",
+    "product_tags",
+    "department",
+    "quantity_on_hand",
+    "unit_cost",
+    "stock_value"
+   ]
+  },
+  "stock_balance_product_stat_total_value": {
+   "report": "stock_balance_product",
+   "fields": [
+    "total_stock_value"
+   ]
+  },
+  "stock_balance_product_stat_item_count": {
+   "report": "stock_balance_product",
+   "fields": [
+    "products_on_hand"
+   ]
+  },
+  "stock_balance_product_by_category": {
+   "report": "stock_balance_product",
+   "fields": [
+    "category",
+    "total_stock_value"
+   ]
+  },
+  "stock_card_table": {
+   "report": "stock_card",
+   "fields": [
+    "movement_date",
+    "product",
+    "branch",
+    "movement_type",
+    "reference",
+    "batch_number",
+    "quantity_in",
+    "quantity_out",
+    "balance_after",
+    "unit_cost",
+    "total_cost",
+    "uom",
+    "product_code",
+    "department"
+   ]
+  },
+  "stock_card_stat_movements": {
+   "report": "stock_card",
+   "fields": [
+    "movement_count"
+   ]
+  },
+  "stock_card_stat_products": {
+   "report": "stock_card",
+   "fields": [
+    "products_moved"
+   ]
+  },
+  "stock_card_value_over_time": {
+   "report": "stock_card",
+   "fields": [
+    "period",
+    "value_in",
+    "value_out"
+   ]
+  },
+  "stock_count_table": {
+   "report": "stock_count",
+   "fields": [
+    "count_date",
+    "branch",
+    "product",
+    "counted_by",
+    "system_quantity",
+    "counted_quantity",
+    "variance_qty",
+    "variance_value",
+    "document_number",
+    "item_code",
+    "category",
+    "department",
+    "uom",
+    "unit_cost",
+    "count_value"
+   ]
+  },
+  "stock_count_stat_sessions": {
+   "report": "stock_count",
+   "fields": [
+    "count_sessions"
+   ]
+  },
+  "stock_transfer_history_table": {
+   "report": "stock_transfer_history",
+   "fields": [
+    "transfer_date",
+    "document_number",
+    "from_branch",
+    "to_branch",
+    "product",
+    "quantity",
+    "uom",
+    "unit_cost",
+    "total_value",
+    "initiated_by",
+    "status",
+    "operation_type",
+    "category",
+    "product_code",
+    "from_department",
+    "to_department",
+    "received_date",
+    "received_by",
+    "remarks"
+   ]
+  },
+  "stock_transfer_stat_transfer_count": {
+   "report": "stock_transfer_history",
+   "fields": [
+    "transfer_count"
+   ]
+  },
+  "stock_transfer_top_items": {
+   "report": "stock_transfer_history",
+   "fields": [
+    "product",
+    "transfer_count"
+   ]
+  },
+  "stock_transfer_over_time": {
+   "report": "stock_transfer_history",
+   "fields": [
+    "period",
+    "transfer_count",
+    "total_quantity"
+   ]
+  },
+  "wastage_table": {
+   "report": "stock_wastage",
+   "fields": [
+    "wastage_date",
+    "product",
+    "branch",
+    "category",
+    "quantity",
+    "unit_cost",
+    "wastage_value",
+    "product_code",
+    "document_number",
+    "uom",
+    "wastage_percentage",
+    "user_name",
+    "department",
+    "description",
+    "remark"
+   ]
+  },
+  "wastage_stat_total_value": {
+   "report": "stock_wastage",
+   "fields": [
+    "total_wastage_value"
+   ]
+  },
+  "wastage_over_time": {
+   "report": "stock_wastage",
+   "fields": [
+    "period",
+    "total_wastage_value"
+   ]
+  },
+  "wastage_top_products": {
+   "report": "stock_wastage",
+   "fields": [
+    "product",
+    "total_wastage_value"
+   ]
+  },
+  "wastage_top_outlets": {
+   "report": "stock_wastage",
+   "fields": [
+    "branch",
+    "total_wastage_value"
+   ]
+  },
+  "cogs_table": {
+   "report": "cogs",
+   "fields": [
+    "menu_name",
+    "sku",
+    "branch_name",
+    "category_name",
+    "total_quantity",
+    "average_selling_price",
+    "average_unit_cost",
+    "total_sales",
+    "total_yield_loss_cost",
+    "total_cost",
+    "gross_profit",
+    "gross_markup_percentage",
+    "cogs_percentage",
+    "gross_profit_percentage"
+   ]
+  },
+  "cogs_stat_total": {
+   "report": "cogs",
+   "fields": [
+    "total_cogs",
+    "total_sales",
+    "gross_profit",
+    "cogs_percentage"
+   ]
+  },
+  "cogs_stat_sales": {
+   "report": "cogs",
+   "fields": [
+    "total_sales"
+   ]
+  },
+  "cogs_stat_gross_profit": {
+   "report": "cogs",
+   "fields": [
+    "gross_profit"
+   ]
+  },
+  "cogs_stat_margin": {
+   "report": "cogs",
+   "fields": [
+    "gross_margin_percentage"
+   ]
+  },
+  "cogs_over_time": {
+   "report": "cogs",
+   "fields": [
+    "period",
+    "cogs",
+    "sales",
+    "gross_profit"
+   ]
+  },
+  "cogs_low_margin_items": {
+   "report": "cogs",
+   "fields": [
+    "menu_name",
+    "gross_margin_percentage"
+   ]
+  },
+  "recipe_table": {
+   "report": "menu_and_ingredients",
+   "fields": [
+    "branch",
+    "department",
+    "menu_name",
+    "menu_code",
+    "menu_category",
+    "ingredient_type",
+    "ingredient_name",
+    "ingredient_code",
+    "ingredient_category",
+    "ingredient_qty",
+    "ingredient_uom",
+    "yield_loss_pct",
+    "cost",
+    "yield_loss_cost",
+    "total_cost"
+   ]
+  },
+  "recipe_stat_menu_count": {
+   "report": "menu_and_ingredients",
+   "fields": [
+    "menu_count",
+    "ingredient_line_count"
+   ]
+  },
+  "recipe_stat_total_cost": {
+   "report": "menu_and_ingredients",
+   "fields": [
+    "total_recipe_cost",
+    "ingredient_line_count"
+   ]
+  },
+  "recipe_top_ingredients": {
+   "report": "menu_and_ingredients",
+   "fields": [
+    "ingredient",
+    "total_cost",
+    "total_recipe_cost",
+    "ingredient_line_count"
+   ]
+  },
+  "menu_ingredients_table": {
+   "report": "menu_ingredients",
+   "fields": [
+    "branch",
+    "menu_category",
+    "menu_code",
+    "menu_name",
+    "sales_date",
+    "sales_menu_qty",
+    "ingredient_code",
+    "ingredient_name",
+    "ingredient_category",
+    "ingredient_qty",
+    "ingredient_uom",
+    "ingredient_cost",
+    "total_cost",
+    "total_ingredient_qty"
+   ]
+  },
+  "menu_ingredients_stat_menu_units": {
+   "report": "menu_ingredients",
+   "fields": [
+    "total_menu_qty"
+   ]
+  },
+  "menu_ingredients_stat_ingredient_cost": {
+   "report": "menu_ingredients",
+   "fields": [
+    "total_ingredient_cost"
+   ]
+  },
+  "menu_ingredients_top_ingredients": {
+   "report": "menu_ingredients",
+   "fields": [
+    "ingredient",
+    "total_cost"
+   ]
+  },
+  "oibb_table": {
+   "report": "order_items_by_branch",
+   "fields": [
+    "product",
+    "product_code",
+    "uom",
+    "category",
+    "tags",
+    "branch",
+    "ck_branch",
+    "order_status",
+    "requested_delivery_date",
+    "quantity"
+   ]
+  },
+  "oibb_stat_total_quantity": {
+   "report": "order_items_by_branch",
+   "fields": [
+    "total_quantity",
+    "order_count"
+   ]
+  },
+  "oibb_quantity_over_time": {
+   "report": "order_items_by_branch",
+   "fields": [
+    "period",
+    "total_quantity"
+   ]
+  },
+  "oibb_top_products": {
+   "report": "order_items_by_branch",
+   "fields": [
+    "product",
+    "total_quantity"
+   ]
+  },
+  "oibb_top_branches": {
+   "report": "order_items_by_branch",
+   "fields": [
+    "branch",
+    "total_quantity"
+   ]
+  },
+  "picking_table": {
+   "report": "picking",
+   "fields": [
+    "issued_date",
+    "order_number",
+    "branch",
+    "department",
+    "picker",
+    "sku",
+    "product",
+    "category",
+    "uom",
+    "requested_qty",
+    "picked_qty",
+    "delivery_date",
+    "order_status",
+    "branch_code",
+    "vendor_department",
+    "requested_delivery_date",
+    "total_amount",
+    "remarks"
+   ]
+  },
+  "picking_stat_total_orders": {
+   "report": "picking",
+   "fields": [
+    "total_orders"
+   ]
+  },
+  "picking_stat_open_lines": {
+   "report": "picking",
+   "fields": [
+    "open_lines"
+   ]
+  },
+  "picking_over_time": {
+   "report": "picking",
+   "fields": [
+    "period",
+    "requested_qty",
+    "picked_qty"
+   ]
+  },
+  "production_history_table": {
+   "report": "production_history",
+   "fields": [
+    "production_date",
+    "branch",
+    "department",
+    "document_number",
+    "batch_number",
+    "product",
+    "planned_qty",
+    "produced_qty",
+    "uom",
+    "yield_pct",
+    "planned_unit_cost",
+    "actual_unit_cost",
+    "total_cost"
+   ]
+  },
+  "production_stat_runs": {
+   "report": "production_history",
+   "fields": [
+    "production_runs"
+   ]
+  },
+  "sales_analysis_table": {
+   "report": "sales_analysis",
+   "fields": [
+    "product_name",
+    "product_code",
+    "product_tags",
+    "category_name",
+    "customer",
+    "branch",
+    "department",
+    "so_number",
+    "order_tags",
+    "issued_date",
+    "order_date",
+    "requested_delivery_date",
+    "order_status",
+    "split_order_status",
+    "do_date",
+    "do_number",
+    "grn_date",
+    "grn_number",
+    "invoice_date",
+    "invoice_number",
+    "supplier_invoice_date",
+    "supplier_invoice_number",
+    "uom",
+    "tax_rate",
+    "so_qty",
+    "so_price",
+    "so_tax",
+    "so_total",
+    "do_quantity",
+    "do_price",
+    "do_tax",
+    "do_total",
+    "grn_quantity",
+    "grn_price",
+    "grn_tax",
+    "grn_total",
+    "invoice_quantity",
+    "invoice_price",
+    "invoice_tax",
+    "invoice_total",
+    "qty",
+    "price",
+    "discount",
+    "tax",
+    "total"
+   ]
+  },
+  "sales_history_table": {
+   "report": "sales_order_history",
+   "fields": [
+    "order_number",
+    "order_date",
+    "issued_date",
+    "branch",
+    "customer",
+    "department",
+    "order_status",
+    "requested_delivery_date",
+    "do_date",
+    "do_number",
+    "grn_date",
+    "grn_number",
+    "invoice_date",
+    "invoice_number",
+    "supplier_invoice_date",
+    "supplier_invoice_number",
+    "line_count",
+    "subtotal",
+    "total_discount",
+    "total_charges",
+    "grand_total"
+   ]
+  },
+  "sales_history_stat_total_spend": {
+   "report": "sales_order_history",
+   "fields": [
+    "total_spend",
+    "order_count"
+   ]
+  },
+  "sales_history_spend_over_time": {
+   "report": "sales_order_history",
+   "fields": [
+    "period",
+    "total_spend"
+   ]
+  },
+  "sales_history_orders_by_status": {
+   "report": "sales_order_history",
+   "fields": [
+    "status",
+    "order_count"
+   ]
+  }
+ }
+}

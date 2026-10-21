@@ -2,6 +2,7 @@
 //
 //   customer  POST /api/support            { kind, message, context }   report a problem from the page
 //             GET  /api/support/mine       own company's requests and where each stands
+//             GET  /api/support/widgets    widget names, for "already exists?" before a data wish
 //             GET  /api/health             Settings › สถานะระบบ (company admin)
 //   KSS       GET  /api/admin/ops/attention   companies that need looking after, worst first
 //             GET  /api/admin/ops/support      ?status=open|doing|done&company_id=
@@ -12,7 +13,8 @@ const { requireAuth, requireSuperadmin, requireCompanyAdmin } = require('../midd
 const { wrap, resolveCompanyId } = require('../lib/access');
 const { healthFor, issueScore, RANK } = require('../lib/health');
 
-const KINDS = ['data', 'connect', 'howto', 'billing', 'other'];
+// wish: data the customer wants to see that no widget shows yet. feedback: anything else they think.
+const KINDS = ['data', 'connect', 'howto', 'billing', 'other', 'wish', 'feedback'];
 const STATUSES = ['open', 'doing', 'done'];
 const DAILY_LIMIT = 8; // per user, so one stuck screen cannot flood the queue
 
@@ -36,7 +38,7 @@ async function purgeOld() {
 function cleanContext(raw) {
   const c = raw && typeof raw === 'object' ? raw : {};
   const out = {};
-  for (const [k, n] of [['page', 80], ['dashboard_name', 120], ['widget_title', 120], ['filters', 300], ['error', 300], ['date_range', 60]]) {
+  for (const [k, n] of [['page', 80], ['dashboard_name', 120], ['widget_title', 120], ['filters', 300], ['error', 300], ['date_range', 60], ['asked_ai', 300], ['suggested', 300]]) {
     if (c[k]) out[k] = clean(c[k], n);
   }
   if (Number.isInteger(Number(c.dashboard_id)) && Number(c.dashboard_id) > 0) out.dashboard_id = Number(c.dashboard_id);
@@ -73,12 +75,64 @@ customerRouter.get(
     // A company admin sees the whole company's requests; a viewer sees their own.
     const own = req.user.role === 'company_admin';
     const [rows] = await pool.query(
-      `SELECT r.id, r.kind, r.message, r.status, r.note, r.created_at, r.handled_at, u.display_name AS who
+      `SELECT r.id, r.kind, r.message, r.status, r.note, r.created_at, r.handled_at, r.reply_unseen, u.display_name AS who
          FROM support_requests r LEFT JOIN users u ON u.id = r.user_id
-        WHERE r.company_id = ? ${own ? '' : 'AND r.user_id = ?'} ORDER BY r.created_at DESC LIMIT 20`,
+        WHERE r.company_id = ? ${own ? '' : 'AND r.user_id = ?'} ORDER BY r.reply_unseen DESC, r.created_at DESC LIMIT 20`,
       own ? [req.user.company_id] : [req.user.company_id, req.user.id]
     );
-    res.json({ list: rows });
+    rows.forEach((r) => (r.reply_unseen = !!r.reply_unseen));
+    res.json({ list: rows, unseen: rows.filter((r) => r.reply_unseen).length });
+  })
+);
+
+// The customer opened their requests: replies are read.
+customerRouter.post(
+  '/seen',
+  wrap(async (req, res) => {
+    if (!req.user.company_id) return res.json({ ok: true });
+    const own = req.user.role === 'company_admin';
+    await pool.query(
+      `UPDATE support_requests SET reply_unseen = FALSE WHERE company_id = ? ${own ? '' : 'AND user_id = ?'} AND reply_unseen = TRUE`,
+      own ? [req.user.company_id] : [req.user.company_id, req.user.id]
+    );
+    res.json({ ok: true });
+  })
+);
+
+// The widget catalogue in brief, for "is there already a widget for this?" before a
+// data wish becomes a ticket (public/feedback.js scores it in the browser). Names and
+// descriptions only; anyone signed in may read it.
+customerRouter.get(
+  '/widgets',
+  wrap(async (req, res) => {
+    const [rows] = await pool.query(
+      `SELECT id, template_key, name, description, category, report_source, default_config_json FROM widget_templates WHERE active = TRUE ORDER BY sort_order, id`
+    );
+    // Would it show numbers for this company? A widget that needs a POS file the
+    // shop has not uploaded is still listed, with why, so nobody adds an empty one.
+    const starter = require('../lib/starter');
+    const cid = req.user.company_id;
+    const facts = cid ? await starter.companyFacts(cid) : null;
+    // Which of this person's dashboards already show each widget: "it's already here, go to it"
+    // beats "add it". A company admin sees every dashboard of the company; anyone else the ones shared with them.
+    const on = new Map();
+    if (cid) {
+      const own = req.user.role === 'company_admin';
+      const [use] = await pool.query(
+        `SELECT w.id AS wid, w.widget_template_id AS tid, d.id AS did, w.title FROM dashboard_widgets w JOIN dashboards d ON d.id = w.dashboard_id
+          ${own ? '' : 'JOIN user_dashboard_access a ON a.dashboard_id = d.id AND a.user_id = ?'}
+          WHERE d.company_id = ? AND d.active = TRUE`,
+        own ? [cid] : [req.user.id, cid]
+      );
+      // every copy: the same widget can sit on two dashboards, or twice with different scopes
+      use.forEach((u) => { if (!on.has(u.tid)) on.set(u.tid, []); on.get(u.tid).push({ wid: u.wid, did: u.did, title: u.title || null }); });
+    }
+    res.json({
+      list: rows.map(({ default_config_json, report_source, ...t }) => {
+        const why = facts ? starter.whyNotReady({ report_source, default_config_json }, facts) : null;
+        return { ...t, on: on.get(t.id) || [], needs: why && why !== 'FMH ยังไม่มีข้อมูลรายงานนี้' ? why : null, empty: why === 'FMH ยังไม่มีข้อมูลรายงานนี้' };
+      }),
+    });
   })
 );
 
@@ -138,6 +192,9 @@ adminRouter.get(
     const where = [], args = [];
     if (status) { where.push('r.status = ?'); args.push(status); } else { where.push(`r.status <> 'done'`); }
     if (cid) { where.push('r.company_id = ?'); args.push(cid); }
+    // ?kind=ideas: data wishes and feedback only (what customers want next), apart from problems
+    if (req.query.kind === 'ideas') where.push(`r.kind IN ('wish','feedback')`);
+    else if (req.query.kind === 'problems') where.push(`r.kind NOT IN ('wish','feedback')`);
     const [rows] = await pool.query(
       `SELECT r.id, r.company_id, c.name AS company, r.kind, r.message, r.context_json, r.status, r.note, r.created_at, r.handled_at,
               u.display_name AS who, u.email AS who_email, h.display_name AS handler
@@ -157,9 +214,13 @@ adminRouter.patch(
     const b = req.body || {};
     const status = STATUSES.includes(b.status) ? b.status : null;
     if (!status) return res.status(400).json({ error: 'status ไม่ถูกต้อง' });
+    const note = b.note == null ? null : clean(b.note, 500);
+    // the customer's bell lights up when there is something new for them to read
+    const [[before]] = await pool.query(`SELECT status, note FROM support_requests WHERE id = ?`, [req.params.id]);
+    const news = !!before && ((note || '') !== (before.note || '') || status !== before.status) && (!!note || status === 'done');
     const [r] = await pool.query(
-      `UPDATE support_requests SET status = ?, note = ?, handled_by = ?, handled_at = NOW() WHERE id = ?`,
-      [status, b.note == null ? null : clean(b.note, 500), req.user.id, req.params.id]
+      `UPDATE support_requests SET status = ?, note = ?, handled_by = ?, handled_at = NOW()${news ? ', reply_unseen = TRUE' : ''} WHERE id = ?`,
+      [status, note, req.user.id, req.params.id]
     );
     if (!r.affectedRows) return res.status(404).json({ error: 'ไม่พบรายการ' });
     res.json({ ok: true });
