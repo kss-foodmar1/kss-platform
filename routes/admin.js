@@ -835,6 +835,7 @@ const PROBES = {
   group_by: (id) => probe.probeGroupBy(id),
   ck_sales: (id) => probe.probeCkSales(id),
   widget_fields: (id) => probe.probeWidgetFields(id),
+  stock_balance: (id) => probe.probeStockBalance(id),
 };
 
 router.post(

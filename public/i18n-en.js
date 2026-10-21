@@ -271,6 +271,8 @@ window.I18N_EN = {
     'ยอดซื้อของสาขาครัวกลางในเดือนเดียวกับยอดขาย ลบต้นทุนตามสูตรของสิ่งที่ครัวกลางขาย': 'The kitchen’s purchases in the same months as its sales, minus the recipe cost of what it sold',
     'เราเจอให้คุณ': 'What we found for you',
     'ปรับตาราง': 'Arrange table',
+    'ติดลบ': 'Negative',
+    'หมด': 'Out',
     'ปักหมุด': 'Pin',
     'แสดงทั้งหมด': 'Show all',
     'ค้นหาชื่อหรือรหัสสินค้า': 'Search product name or code',
@@ -1427,6 +1429,7 @@ window.I18N_EN = {
 
   // {0}, {1}... match any text and are carried across.
   patterns: [
+    ['ยอดคงเหลือ ณ {0}', 'Stock on hand as of {0}'],
     ['เฉพาะที่ปักหมุด ({0})', 'Pinned only ({0})'],
     ['ปักหมุด {0}', 'Pin {0}'],
     ['ปักไว้ {0} รายการ', '{0} pinned'],

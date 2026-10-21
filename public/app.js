@@ -2252,7 +2252,7 @@ class DashboardView {
       const base = widget.pulls ? this.results[widget.pulls[0].key] : res;
       const skipped = this.unfilteredBy(base && base.data);
       try {
-        renderer(body, rows, useCfg, { widget, dashboardId: this.dashboard.id, persist: !this.preview });
+        renderer(body, rows, useCfg, { widget, dashboardId: this.dashboard.id, persist: !this.preview, syncedAt: res && res.meta ? res.meta.synced_at : null });
         this.explainData.set(widget.id, { rows, cfg: useCfg, range: this.range });
         if (skipped.length) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">widget นี้ไม่มีข้อมูล${esc(skipped.map((f) => ({ customer: 'ลูกค้า', branch: 'สาขา', supplier: 'ซัพพลายเออร์' })[f] || f).join(', '))} จึงแสดงทั้งหมด ไม่ได้กรองตามตัวเลือกด้านบน</p>`);
         // A note on how to read the widget. Renderers that place it themselves
@@ -3042,6 +3042,7 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
     <div class="ct-panel" id="${pid}" hidden></div>
     <p class="ct-msg" role="status"></p>
     <p class="widget-foot ct-count"></p>
+    ${ctx.syncedAt ? `<p class="ct-asof">ยอดคงเหลือ ณ ${esc(fmtDateTime(ctx.syncedAt))}</p>` : ''}
     <div class="table-scroll"></div>`);
   const $ = (s) => body.querySelector(s);
   const panel = $('.ct-panel');
@@ -3064,15 +3065,22 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
         return sort.dir === 'asc' ? cmp : -cmp;
       });
     }
-    // pinned rows lead, in the same order as the rest
-    return [...data.filter(pinned), ...data.filter((r) => !pinned(r))];
+    // pinned rows lead, each product's places together (the kitchen first), products in
+    // the order the sort puts their first row
+    const pins = data.filter(pinned);
+    const rank = new Map();
+    pins.forEach((r) => { const k = keyOf(r) || nameOf(r); if (!rank.has(k)) rank.set(k, rank.size); });
+    const placeOf = (r) => String(r.branch ?? '');
+    pins.sort((a, b) => rank.get(keyOf(a) || nameOf(a)) - rank.get(keyOf(b) || nameOf(b))
+      || (CK_NAME.test(placeOf(b)) - CK_NAME.test(placeOf(a))) || placeOf(a).localeCompare(placeOf(b), 'th'));
+    return [...pins, ...data.filter((r) => !pinned(r))];
   }
 
   function drawTools() {
     const n = rows.filter(pinned).length;
     const only = $('.ct-only');
     only.setAttribute('aria-pressed', String(prefs.pinned_only));
-    only.textContent = prefs.pinned_only ? `แสดงทั้งหมด` : `เฉพาะที่ปักหมุด (${n})`;
+    only.textContent = `เฉพาะที่ปักหมุด (${n})`;
     only.disabled = !n && !prefs.pinned_only;
     const open = !!CT_OPEN.get(wid);
     $('.ct-open').setAttribute('aria-expanded', String(open));
@@ -3100,9 +3108,12 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
         : `<button type="button" class="ct-pin${own ? ' on' : ''}" data-i="${i}" aria-pressed="${own}" aria-label="${own ? 'เลิกปักหมุด' : 'ปักหมุด'} ${esc(nameOf(r))}" title="${own ? 'เลิกปักหมุด' : 'ปักหมุดไว้บนสุด'}">${PIN_SVG}</button>`;
       const cells = cols.map((c) => {
         const v = r[c.field];
+        // stock that ran out or went below zero (issued before it was received) says so
+        const flag = cu.qty_field === c.field && typeof v === 'number' && v <= 0
+          ? ` <span class="ct-flag ${v < 0 ? 'neg' : 'zero'}">${v < 0 ? 'ติดลบ' : 'หมด'}</span>` : '';
         return typeof v === 'number'
-          ? `<td class="num" data-label="${esc(label(c))}">${esc(c.format ? fmtValue(v, c.format) : v.toLocaleString('th-TH', { maximumFractionDigits: 2 }))}</td>`
-          : `<td>${esc(v == null || v === '' ? '-' : v)}</td>`;
+          ? `<td class="num" data-label="${esc(label(c))}">${esc(c.format ? fmtValue(v, c.format) : v.toLocaleString('th-TH', { maximumFractionDigits: 2 }))}${flag}</td>`
+          : `<td class="ct-txt" data-label="${esc(label(c))}">${esc(v == null || v === '' ? '-' : v)}</td>`;
       }).join('');
       return `<tr${pinned(r) ? ' class="ct-pinned"' : ''}><td class="ct-pin-cell">${pin}</td>${cells}</tr>`;
     }).join('');
@@ -3155,8 +3166,8 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
         <div class="ct-chips">${cats.map((c) => { const on = prefs.pin_cats.includes(c); const n = rows.filter((r) => catOf(r) === c).length; return `<button type="button" class="ct-cat${on ? ' on' : ''}" data-c="${esc(c)}" aria-pressed="${on}">${on ? PIN_SVG + ' ' : ''}${esc(c)} <span class="muted">${n}</span></button>`; }).join('')}</div>
       </fieldset>` : ''}
       <div class="ct-panel-foot">
-        <button type="button" class="link-btn ct-reset">คืนค่าเริ่มต้น</button>
         <button type="button" class="btn small ct-done">เสร็จ</button>
+        <button type="button" class="link-btn ct-reset">คืนค่าเริ่มต้น</button>
       </div>`;
     const move = (f, d) => {
       const i = prefs.order.indexOf(f); const j = i + d;
