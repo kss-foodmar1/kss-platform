@@ -1420,10 +1420,10 @@ body.arranging-on .ai-fab { display: none; }
 .ins-ico { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--primary); color: var(--surface); font-size: 12px; font-weight: 800; flex: none; }
 .ins-title { font-weight: 700; }
 .ins-count { color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.ins-kind { display: inline-block; margin-right: 6px; padding: 1px 8px; border-radius: var(--pill-radius); background: var(--danger-soft, var(--surface-3)); color: var(--danger-ink); font-size: 12px; font-weight: 700; vertical-align: 1px; }
+.ins-kind { white-space: nowrap; display: inline-block; margin-right: 6px; padding: 1px 8px; border-radius: var(--pill-radius); background: var(--danger-soft, var(--surface-3)); color: var(--danger-ink); font-size: 12px; font-weight: 700; vertical-align: 1px; }
 .ins-top.tone-good .ins-kind { background: var(--surface-3); color: var(--status-good); }
 .ins-top.tone-info .ins-kind { background: var(--surface-3); color: var(--ink-2); }
-.ins-caveat { margin-left: 6px; color: var(--muted); font-size: 12.5px; }
+.ins-caveat { white-space: nowrap; margin-left: 6px; color: var(--muted); font-size: 12.5px; }
 .ins-caveat::before { content: '('; } .ins-caveat::after { content: ')'; }
 .ins-top { color: var(--ink-2); min-width: 0; flex: 1 1 220px; overflow-wrap: anywhere; }
 .ins-top-baht { font-weight: 700; color: var(--danger-ink); font-variant-numeric: tabular-nums; }

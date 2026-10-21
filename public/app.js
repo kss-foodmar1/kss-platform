@@ -2318,8 +2318,6 @@ class DashboardView {
     try { welcome = JSON.parse(sessionStorage.getItem(`kss_welcome_${this.dashboard.id}`) || 'null'); } catch (e) { /* none */ }
     const top = found.top;
     const lead = found.lead || top[0];
-    // says these are amounts found over the chosen dates, not today's open jobs (the bar below)
-    const days = Math.round((Date.parse(this.range.end) - Date.parse(this.range.start)) / 86400000); // as the range chips count
     if (!top.length && !welcome) { el.hidden = true; el.innerHTML = ''; return; }
     el.hidden = false;
     const sample = this.dashboard.data_source === 'demo';
@@ -2349,9 +2347,9 @@ class DashboardView {
       <h2 class="ins-h"><button type="button" class="ins-bar" aria-expanded="${!folded}" aria-controls="${bid}">
         <span class="ins-ico" aria-hidden="true">฿</span>
         <b class="ins-title" id="${hid}">เราเจอให้คุณ</b>${sample ? '<span class="demo-pill">ตัวอย่าง</span>' : ''}
-        <span class="ins-count">${days > 0 ? `พบ ${top.length} เรื่องใน ${days} วันที่เลือก` : `พบ ${top.length} เรื่อง`}</span>
+        <span class="ins-count">พบ ${found.all.length} เรื่องในช่วงที่เลือก</span>
         ${folded ? `<span class="ins-top tone-${lead.tone || 'warn'}">${lead.kind ? `<span class="ins-kind">${esc(lead.kind)}</span>` : ''}<span class="ins-top-baht">${money(lead.baht)}</span> <span>${esc(lead.text)}</span>${lead.caveat ? `<span class="ins-caveat">${esc(lead.caveat)}</span>` : ''}</span>` : ''}
-        <span class="ins-toggle">${folded ? `ดูทั้ง ${top.length} เรื่อง` : 'ย่อ'}</span>
+        <span class="ins-toggle">${folded ? (found.all.length > top.length ? `ดู ${top.length} เรื่องสำคัญ` : `ดูทั้ง ${top.length} เรื่อง`) : 'ย่อ'}</span>
       </button></h2>
       <div class="ins-body" id="${bid}"${folded ? ' hidden' : ''}>
       <div class="ins-grid">${top.map((f, i) => `<article class="ins-card tone-${f.tone || 'warn'}">
@@ -2600,6 +2598,11 @@ function findInsights(get, onPage, goals, span = {}) {
     }
   }
 
+  return finishInsights(out, goals);
+}
+
+// Ranks the findings, names their kind and caveat, and picks the one the folded bar leads with.
+function finishInsights(out, goals) {
   // Order: what the customer said they care about, then the rest; within each, money to act
   // on before money that is waiting or unsure (an unfinished month), then by size.
   const wanted = new Set(goals || []);
@@ -2611,9 +2614,10 @@ function findInsights(get, onPage, goals, span = {}) {
   out.forEach((f) => {
     f.kind = KIND[f.id] || '';
     f.caveat = f.unsure ? 'เดือนนี้ยังไม่จบ'
-      : /80 วันล่าสุด/.test(f.note || '') ? 'นับ 80 วันล่าสุด'
+      : /80 วันล่าสุด/.test(f.note || '') ? '80 วันล่าสุด ไม่ตามช่วงที่เลือก'
       : f.id === 'cheaper' ? 'ตัวเลขสูงสุด'
-      : f.id === 'overbilled' && f.note ? 'ยังไม่หักใบลดหนี้' : '';
+      : f.id === 'ck_gap' ? 'รวมของที่ยังอยู่ในสต็อก'
+      : f.id === 'overbilled' && f.note ? 'ยอดก่อนหักใบลดหนี้' : '';
   });
   // The folded bar leads with money to act on: money to claim back first, then money lost,
   // and good news or bills still to come only when nothing is being lost.
