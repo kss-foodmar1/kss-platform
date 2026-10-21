@@ -2318,6 +2318,8 @@ class DashboardView {
     try { welcome = JSON.parse(sessionStorage.getItem(`kss_welcome_${this.dashboard.id}`) || 'null'); } catch (e) { /* none */ }
     const top = found.top;
     const lead = found.lead || top[0];
+    // findings past the three cards stay reachable: one line, each to its widget
+    const rest = found.all.filter((f) => !top.includes(f)).sort((a, b) => b.baht - a.baht);
     if (!top.length && !welcome) { el.hidden = true; el.innerHTML = ''; return; }
     el.hidden = false;
     const sample = this.dashboard.data_source === 'demo';
@@ -2347,7 +2349,7 @@ class DashboardView {
       <h2 class="ins-h"><button type="button" class="ins-bar" aria-expanded="${!folded}" aria-controls="${bid}">
         <span class="ins-ico" aria-hidden="true">฿</span>
         <b class="ins-title" id="${hid}">เราเจอให้คุณ</b>${sample ? '<span class="demo-pill">ตัวอย่าง</span>' : ''}
-        <span class="ins-count">พบ ${found.all.length} เรื่องในช่วงที่เลือก</span>
+        <span class="ins-count">พบ ${found.all.length} เรื่อง</span>
         ${folded ? `<span class="ins-top tone-${lead.tone || 'warn'}">${lead.kind ? `<span class="ins-kind">${esc(lead.kind)}</span>` : ''}<span class="ins-top-baht">${money(lead.baht)}</span> <span>${esc(lead.text)}</span>${lead.caveat ? `<span class="ins-caveat">${esc(lead.caveat)}</span>` : ''}</span>` : ''}
         <span class="ins-toggle">${folded ? (found.all.length > top.length ? `ดู ${top.length} เรื่องสำคัญ` : `ดูทั้ง ${top.length} เรื่อง`) : 'ย่อ'}</span>
       </button></h2>
@@ -2362,6 +2364,10 @@ class DashboardView {
             ? `<button type="button" class="btn small ghost ins-go" data-i="${i}">ดูรายละเอียด</button>`
             : f.how ? `<details class="ins-how"><summary>ตัวเลขนี้คิดอย่างไร</summary><p>${esc(f.how)}</p></details>` : ''}
         </article>`).join('')}</div>
+      ${rest.length ? `<p class="ins-more">อีก ${rest.length} เรื่อง: ${rest.map((f, j) => {
+        const label = `<span>${esc(f.kind || f.text)}</span> <span>${money(f.baht)}</span>`;
+        return f.widget ? `<button type="button" class="link-btn ins-more-go" data-j="${j}">${label}</button>` : `<span>${label}</span>`;
+      }).join(' · ')}</p>` : ''}
       ${!isSuper() && state.user && state.user.company_id ? '<p class="ins-ask">อยากเห็นข้อมูลอื่นที่ยังไม่มีในหน้านี้? <button type="button" class="link-btn ins-wish">บอกเรา</button></p>' : ''}
       </div></div>` : ''}`;
     const bar = el.querySelector('.ins-bar');
@@ -2380,8 +2386,7 @@ class DashboardView {
       const b = el.querySelector('.ins-bar');
       if (b) b.focus({ preventScroll: true });
     });
-    el.querySelectorAll('.ins-go').forEach((b) => b.addEventListener('click', () => {
-      const f = top[Number(b.dataset.i)];
+    const goTo = (f) => {
       const card = this.wrap.querySelector(`.widget-card[data-wid="${f.widget.id}"]`);
       if (!card) return;
       const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -2390,7 +2395,9 @@ class DashboardView {
       if (!card.hasAttribute('tabindex')) card.tabIndex = -1;
       setTimeout(() => card.focus({ preventScroll: true }), still ? 0 : 350);
       card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 1600);
-    }));
+    };
+    el.querySelectorAll('.ins-go').forEach((b) => b.addEventListener('click', () => goTo(top[Number(b.dataset.i)])));
+    el.querySelectorAll('.ins-more-go').forEach((b) => b.addEventListener('click', () => goTo(rest[Number(b.dataset.j)])));
   }
 }
 

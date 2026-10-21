@@ -1399,7 +1399,8 @@ window.I18N_EN = {
 
   // {0}, {1}... match any text and are carried across.
   patterns: [
-    ['พบ {0} เรื่องในช่วงที่เลือก', '{0} found in the selected dates'],
+    ['พบ {0} เรื่อง', '{0} found'],
+    ['อีก {0} เรื่อง:', '{0} more:'],
     ['ดู {0} เรื่องสำคัญ', 'See top {0}'],
     ['รับแล้ว {0} เรื่อง', 'Taken ({0})'],
     ['ดูทั้ง {0} เรื่อง', 'See all {0}'],
