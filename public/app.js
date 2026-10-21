@@ -104,6 +104,11 @@ function fmtValue(v, format) {
       return (n > 0 ? '+' : '') + n.toFixed(1) + '%';
     case 'decimal1':
       return n.toFixed(1);
+    // stock quantities and unit costs, where 2.2 kg or ฿15.50 must not round away
+    case 'qty':
+      return n.toLocaleString('th-TH', { maximumFractionDigits: 2 });
+    case 'currency2':
+      return (n < 0 ? '−฿' : '฿') + Math.abs(n).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     default:
       return Math.round(n).toLocaleString('th-TH');
   }
@@ -2247,7 +2252,7 @@ class DashboardView {
       const base = widget.pulls ? this.results[widget.pulls[0].key] : res;
       const skipped = this.unfilteredBy(base && base.data);
       try {
-        renderer(body, rows, useCfg);
+        renderer(body, rows, useCfg, { widget, dashboardId: this.dashboard.id, persist: !this.preview });
         this.explainData.set(widget.id, { rows, cfg: useCfg, range: this.range });
         if (skipped.length) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">widget นี้ไม่มีข้อมูล${esc(skipped.map((f) => ({ customer: 'ลูกค้า', branch: 'สาขา', supplier: 'ซัพพลายเออร์' })[f] || f).join(', '))} จึงแสดงทั้งหมด ไม่ได้กรองตามตัวเลือกด้านบน</p>`);
         // A note on how to read the widget. Renderers that place it themselves
@@ -2889,7 +2894,8 @@ function renderLine(body, rows, cfg) {
   activeCharts.push(chart);
 }
 
-function renderTable(body, rows, cfg) {
+function renderTable(body, rows, cfg, ctx) {
+  if (cfg.customize) return renderCustomTable(body, rows, cfg, ctx);
   // A column empty on every row (e.g. LINE before anyone is notified) is noise: leave it out.
   const columns = (cfg.columns && cfg.columns.length ? cfg.columns : Object.keys(rows[0]).map((field) => ({ field })))
     .filter((c) => c.share_of || rows.some((r) => r[c.field] != null && r[c.field] !== ''));
@@ -2979,6 +2985,233 @@ function renderTable(body, rows, cfg) {
     });
   }
   draw();
+}
+
+// ---------- a table each viewer arranges for themselves ----------
+// cfg.customize: { pin_key: [fields], pin_label, category, search: [fields], default_hidden }
+// Prefs { order, hidden, pins, pin_cats, pinned_only } live on widget.my_prefs and are
+// saved per user (PUT …/widgets/:wid/prefs); in the library preview they stay in memory.
+const CT_OPEN = new Map(); // widget id -> settings panel open, kept across re-renders
+const PIN_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false"><path d="M14.5 3.5l6 6-2.2.6-3.6 3.6.3 4.3-1.5 1.5-4.2-4.2L4.5 20.1l-.6-.6 4.8-4.8-4.2-4.2L6 9l4.3.3 3.6-3.6z" fill="currentColor"/></svg>';
+function renderCustomTable(body, rows, cfg, ctx = {}) {
+  const cu = cfg.customize || {};
+  const wid = ctx.widget ? ctx.widget.id : 'x';
+  const all = cfg.columns && cfg.columns.length ? cfg.columns : Object.keys(rows[0] || {}).map((field) => ({ field }));
+  const label = (c) => c.label || c.field.replace(/_/g, ' ');
+  const byField = new Map(all.map((c) => [c.field, c]));
+  const blank = () => ({ order: all.map((c) => c.field), hidden: [...(cu.default_hidden || [])], pins: [], pin_cats: [], pinned_only: false });
+  const load = () => {
+    const p = (ctx.widget && ctx.widget.my_prefs) || null;
+    const b = blank();
+    if (!p) return b;
+    // columns added to the widget later show up at the end, visible
+    const order = (p.order || []).filter((f) => byField.has(f));
+    all.forEach((c) => { if (!order.includes(c.field)) order.push(c.field); });
+    return { order, hidden: (p.hidden || []).filter((f) => byField.has(f)), pins: p.pins || [], pin_cats: p.pin_cats || [], pinned_only: !!p.pinned_only };
+  };
+  let prefs = load();
+  let saveTimer = null;
+  const save = () => {
+    if (ctx.widget) ctx.widget.my_prefs = { ...prefs };
+    if (!ctx.persist) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      api(`/api/dashboards/${ctx.dashboardId}/widgets/${wid}/prefs`, { method: 'PUT', body: JSON.stringify({ prefs }) })
+        .catch(() => { msg.textContent = 'บันทึกการตั้งค่าตารางไม่สำเร็จ ลองอีกครั้ง'; });
+    }, 400);
+  };
+  const keyOf = (r) => { for (const f of [].concat(cu.pin_key || [])) { const v = r[f]; if (v != null && v !== '') return String(v); } return ''; };
+  const catOf = (r) => (cu.category ? String(r[cu.category] ?? '') : '');
+  const nameOf = (r) => String((cu.pin_label && r[cu.pin_label]) || keyOf(r));
+  const pinned = (r) => prefs.pins.includes(keyOf(r)) || (catOf(r) && prefs.pin_cats.includes(catOf(r)));
+  const cats = cu.category ? [...new Set(rows.map(catOf).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'th')) : [];
+  let sort = cfg.sort_by ? { ...cfg.sort_by } : null;
+  let query = '';
+  let expanded = false;
+  const PREVIEW = cfg.preview_rows || 10;
+  const limit = cfg.top_n || 500;
+  const pid = `ct-panel-${wid}`;
+
+  body.insertAdjacentHTML('beforeend', `
+    <div class="ct-tools">
+      ${cu.search ? `<label class="ct-search"><span class="sr-only">ค้นหาสินค้า</span><input type="search" placeholder="ค้นหาชื่อหรือรหัสสินค้า" autocomplete="off"></label>` : ''}
+      <button type="button" class="btn small ghost ct-only" aria-pressed="false"></button>
+      <button type="button" class="btn small ghost ct-open" aria-expanded="false" aria-controls="${pid}">ปรับตาราง</button>
+      <button type="button" class="btn small ghost ct-csv">Export CSV</button>
+    </div>
+    <div class="ct-panel" id="${pid}" hidden></div>
+    <p class="ct-msg" role="status"></p>
+    <p class="widget-foot ct-count"></p>
+    <div class="table-scroll"></div>`);
+  const $ = (s) => body.querySelector(s);
+  const panel = $('.ct-panel');
+  const scroller = $('.table-scroll');
+  const msg = $('.ct-msg');
+  const visible = () => prefs.order.filter((f) => !prefs.hidden.includes(f)).map((f) => byField.get(f));
+
+  function dataNow() {
+    let data = rows;
+    if (query) {
+      const q = query.toLowerCase();
+      data = data.filter((r) => [].concat(cu.search || []).some((f) => String(r[f] ?? '').toLowerCase().includes(q)));
+    }
+    if (prefs.pinned_only) data = data.filter(pinned);
+    data = [...data];
+    if (sort) {
+      data.sort((a, b) => {
+        const x = a[sort.field]; const y = b[sort.field];
+        const cmp = typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? ''), 'th');
+        return sort.dir === 'asc' ? cmp : -cmp;
+      });
+    }
+    // pinned rows lead, in the same order as the rest
+    return [...data.filter(pinned), ...data.filter((r) => !pinned(r))];
+  }
+
+  function drawTools() {
+    const n = rows.filter(pinned).length;
+    const only = $('.ct-only');
+    only.setAttribute('aria-pressed', String(prefs.pinned_only));
+    only.textContent = prefs.pinned_only ? `แสดงทั้งหมด` : `เฉพาะที่ปักหมุด (${n})`;
+    only.disabled = !n && !prefs.pinned_only;
+    const open = !!CT_OPEN.get(wid);
+    $('.ct-open').setAttribute('aria-expanded', String(open));
+    panel.hidden = !open;
+  }
+
+  function drawTable() {
+    const cols = visible();
+    const data = dataNow();
+    const shown = data.slice(0, expanded ? limit : PREVIEW);
+    const pinCount = data.filter(pinned).length;
+    $('.ct-count').textContent = `${data.length.toLocaleString('th-TH')} แถว${pinCount ? ` · ปักไว้ ${pinCount.toLocaleString('th-TH')} รายการ` : ''}${data.length > limit ? ` · แสดง ${limit.toLocaleString('th-TH')} แถวแรก (Export ได้ครบ)` : ''}`;
+    const nums = cols.filter((c) => rows.length && typeof rows[0][c.field] === 'number').length;
+    const head = `<th class="ct-pin-h"><span class="sr-only">ปักหมุด</span></th>` + cols.map((c) => {
+      const on = sort && sort.field === c.field;
+      const isNum = rows.length && typeof rows[0][c.field] === 'number';
+      return `<th tabindex="0" data-field="${esc(c.field)}"${isNum ? ' class="num"' : ''} aria-sort="${on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}">${esc(label(c))}${on ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}</th>`;
+    }).join('');
+    const rowsHtml = shown.map((r, i) => {
+      const k = keyOf(r);
+      const own = prefs.pins.includes(k);
+      const viaCat = !own && catOf(r) && prefs.pin_cats.includes(catOf(r));
+      const pin = viaCat
+        ? `<button type="button" class="ct-pin on via-cat" aria-pressed="true" disabled title="ปักไว้ทั้งหมวด ${esc(catOf(r))} เลิกปักได้ที่ ปรับตาราง" aria-label="ปักไว้ทั้งหมวด ${esc(catOf(r))}">${PIN_SVG}</button>`
+        : `<button type="button" class="ct-pin${own ? ' on' : ''}" data-i="${i}" aria-pressed="${own}" aria-label="${own ? 'เลิกปักหมุด' : 'ปักหมุด'} ${esc(nameOf(r))}" title="${own ? 'เลิกปักหมุด' : 'ปักหมุดไว้บนสุด'}">${PIN_SVG}</button>`;
+      const cells = cols.map((c) => {
+        const v = r[c.field];
+        return typeof v === 'number'
+          ? `<td class="num" data-label="${esc(label(c))}">${esc(c.format ? fmtValue(v, c.format) : v.toLocaleString('th-TH', { maximumFractionDigits: 2 }))}</td>`
+          : `<td>${esc(v == null || v === '' ? '-' : v)}</td>`;
+      }).join('');
+      return `<tr${pinned(r) ? ' class="ct-pinned"' : ''}><td class="ct-pin-cell">${pin}</td>${cells}</tr>`;
+    }).join('');
+    const more = Math.min(data.length, limit) - PREVIEW;
+    scroller.innerHTML = data.length
+      ? `<table class="report-table ct-table${nums >= 3 ? ' nums-many' : ''}"><thead><tr>${head}</tr></thead><tbody>${rowsHtml}</tbody></table>${more > 0 ? `<button type="button" class="table-more">${expanded ? 'ย่อเหลือ ' + PREVIEW + ' แถวแรก' : 'แสดงอีก ' + more.toLocaleString('th-TH') + ' แถว'}</button>` : ''}`
+      : `<p class="muted ct-empty">${prefs.pinned_only ? 'ยังไม่มีสินค้าที่ปักหมุดตรงกับตัวกรองนี้' : query ? 'ไม่พบสินค้าที่ค้นหา' : 'ไม่มีข้อมูล'}</p>`;
+    const mb = scroller.querySelector('.table-more');
+    if (mb) mb.addEventListener('click', () => { expanded = !expanded; drawTable(); scroller.querySelector('.table-more').focus(); });
+    scroller.querySelectorAll('th[data-field]').forEach((th) => {
+      const toggle = () => {
+        const f = th.dataset.field;
+        sort = !sort || sort.field !== f ? { field: f, dir: 'desc' } : sort.dir === 'desc' ? { field: f, dir: 'asc' } : null;
+        drawTable();
+        const again = scroller.querySelector(`th[data-field="${CSS.escape(f)}"]`); if (again) again.focus();
+      };
+      th.addEventListener('click', toggle);
+      th.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+    });
+    scroller.querySelectorAll('.ct-pin[data-i]').forEach((b) => b.addEventListener('click', () => {
+      const r = shown[Number(b.dataset.i)];
+      const k = keyOf(r);
+      if (!k) return;
+      const was = prefs.pins.includes(k);
+      prefs.pins = was ? prefs.pins.filter((x) => x !== k) : [...prefs.pins, k];
+      msg.textContent = was ? `เลิกปักหมุด ${nameOf(r)}` : `ปักหมุด ${nameOf(r)} ไว้บนสุดแล้ว`;
+      save(); drawTools(); drawTable();
+      // keep the keyboard on the same product's pin, wherever it moved
+      const idx = shown.length && [...scroller.querySelectorAll('.ct-pin[data-i]')].find((x) => keyOf(shownNow()[Number(x.dataset.i)]) === k);
+      if (idx) idx.focus();
+    }));
+  }
+  const shownNow = () => dataNow().slice(0, expanded ? limit : PREVIEW);
+
+  function drawPanel(focusSel) {
+    const cols = prefs.order.map((f) => byField.get(f));
+    panel.innerHTML = `
+      <fieldset class="ct-cols"><legend>คอลัมน์ที่แสดง และลำดับ</legend>
+        <p class="muted ct-hint">ติ๊กเพื่อแสดง ใช้ปุ่มขึ้นลงหรือลากเพื่อเรียงลำดับ</p>
+        <ol>${cols.map((c, i) => `<li draggable="true" data-f="${esc(c.field)}">
+          <span class="ct-grip" aria-hidden="true">⋮⋮</span>
+          <label><input type="checkbox" data-f="${esc(c.field)}"${prefs.hidden.includes(c.field) ? '' : ' checked'}> ${esc(label(c))}</label>
+          <span class="ct-move">
+            <button type="button" class="ct-up" data-f="${esc(c.field)}" aria-label="เลื่อน ${esc(label(c))} ขึ้น"${i === 0 ? ' disabled' : ''}>▲</button>
+            <button type="button" class="ct-down" data-f="${esc(c.field)}" aria-label="เลื่อน ${esc(label(c))} ลง"${i === cols.length - 1 ? ' disabled' : ''}>▼</button>
+          </span></li>`).join('')}</ol>
+      </fieldset>
+      ${cats.length ? `<fieldset class="ct-cats"><legend>ปักหมุดทั้งหมวด</legend>
+        <p class="muted ct-hint">สินค้าทุกตัวในหมวดที่เลือกจะขึ้นไปอยู่บนสุด</p>
+        <div class="ct-chips">${cats.map((c) => { const on = prefs.pin_cats.includes(c); const n = rows.filter((r) => catOf(r) === c).length; return `<button type="button" class="ct-cat${on ? ' on' : ''}" data-c="${esc(c)}" aria-pressed="${on}">${on ? PIN_SVG + ' ' : ''}${esc(c)} <span class="muted">${n}</span></button>`; }).join('')}</div>
+      </fieldset>` : ''}
+      <div class="ct-panel-foot">
+        <button type="button" class="link-btn ct-reset">คืนค่าเริ่มต้น</button>
+        <button type="button" class="btn small ct-done">เสร็จ</button>
+      </div>`;
+    const move = (f, d) => {
+      const i = prefs.order.indexOf(f); const j = i + d;
+      if (i < 0 || j < 0 || j >= prefs.order.length) return;
+      const o = [...prefs.order]; [o[i], o[j]] = [o[j], o[i]]; prefs.order = o;
+      msg.textContent = `ย้าย ${label(byField.get(f))} ไปลำดับที่ ${j + 1}`;
+      save(); drawPanel(`.${d < 0 ? 'ct-up' : 'ct-down'}[data-f="${CSS.escape(f)}"]`); drawTable();
+    };
+    panel.querySelectorAll('input[type=checkbox]').forEach((cb) => cb.addEventListener('change', () => {
+      const f = cb.dataset.f;
+      if (!cb.checked && visible().length <= 1) { cb.checked = true; msg.textContent = 'ต้องแสดงอย่างน้อย 1 คอลัมน์'; return; }
+      prefs.hidden = cb.checked ? prefs.hidden.filter((x) => x !== f) : [...prefs.hidden, f];
+      save(); drawTable();
+    }));
+    panel.querySelectorAll('.ct-up').forEach((b) => b.addEventListener('click', () => move(b.dataset.f, -1)));
+    panel.querySelectorAll('.ct-down').forEach((b) => b.addEventListener('click', () => move(b.dataset.f, 1)));
+    // drag to reorder (mouse); the buttons do the same for keyboard and touch
+    let dragF = null;
+    panel.querySelectorAll('li[draggable]').forEach((li) => {
+      li.addEventListener('dragstart', (e) => { dragF = li.dataset.f; li.classList.add('dragging'); try { e.dataTransfer.setData('text/plain', dragF); e.dataTransfer.effectAllowed = 'move'; } catch (er) { /* old browser */ } });
+      li.addEventListener('dragend', () => { li.classList.remove('dragging'); dragF = null; });
+      li.addEventListener('dragover', (e) => { if (dragF && dragF !== li.dataset.f) { e.preventDefault(); li.classList.add('drop'); } });
+      li.addEventListener('dragleave', () => li.classList.remove('drop'));
+      li.addEventListener('drop', (e) => {
+        e.preventDefault(); li.classList.remove('drop');
+        if (!dragF || dragF === li.dataset.f) return;
+        const o = prefs.order.filter((f) => f !== dragF);
+        o.splice(o.indexOf(li.dataset.f) + (prefs.order.indexOf(dragF) < prefs.order.indexOf(li.dataset.f) ? 1 : 0), 0, dragF);
+        prefs.order = o; save(); drawPanel(); drawTable();
+      });
+    });
+    panel.querySelectorAll('.ct-cat').forEach((b) => b.addEventListener('click', () => {
+      const c = b.dataset.c; const was = prefs.pin_cats.includes(c);
+      prefs.pin_cats = was ? prefs.pin_cats.filter((x) => x !== c) : [...prefs.pin_cats, c];
+      msg.textContent = was ? `เลิกปักหมวด ${c}` : `ปักหมุดทั้งหมวด ${c} แล้ว`;
+      save(); drawPanel(`.ct-cat[data-c="${CSS.escape(c)}"]`); drawTools(); drawTable();
+    }));
+    panel.querySelector('.ct-reset').addEventListener('click', () => {
+      prefs = blank(); msg.textContent = 'คืนค่าคอลัมน์ ลำดับ และปักหมุดเป็นค่าเริ่มต้นแล้ว';
+      save(); drawPanel('.ct-reset'); drawTools(); drawTable();
+    });
+    panel.querySelector('.ct-done').addEventListener('click', () => { CT_OPEN.set(wid, false); drawTools(); $('.ct-open').focus(); });
+    if (focusSel) { const el = panel.querySelector(focusSel); if (el && !el.disabled) el.focus(); else { const any = panel.querySelector(focusSel.replace(/^\.ct-(up|down)/, '.ct-$1')); if (any) any.focus(); } }
+  }
+
+  $('.ct-open').addEventListener('click', () => {
+    const open = !CT_OPEN.get(wid); CT_OPEN.set(wid, open);
+    drawTools();
+    if (open) { const f = panel.querySelector('input,button'); if (f) f.focus(); }
+  });
+  $('.ct-only').addEventListener('click', () => { prefs.pinned_only = !prefs.pinned_only; expanded = false; save(); drawTools(); drawTable(); $('.ct-only').focus(); });
+  $('.ct-csv').addEventListener('click', () => exportCsv(dataNow(), visible()));
+  const search = body.querySelector('.ct-search input');
+  if (search) search.addEventListener('input', () => { query = search.value.trim(); expanded = false; drawTable(); });
+  drawPanel(); drawTools(); drawTable();
 }
 
 function exportCsv(rows, columns) {

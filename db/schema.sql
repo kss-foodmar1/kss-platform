@@ -512,3 +512,16 @@ CREATE TABLE IF NOT EXISTS support_requests (
   KEY idx_support_company (company_id, created_at),
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;
+
+-- How one user has arranged one table widget: which columns show and in what order,
+-- and which products / categories they pinned to the top. Personal: other viewers of
+-- the same dashboard keep their own.
+CREATE TABLE IF NOT EXISTS widget_user_prefs (
+  user_id INT NOT NULL,
+  widget_id INT NOT NULL,
+  prefs_json TEXT NOT NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, widget_id),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (widget_id) REFERENCES dashboard_widgets(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
