@@ -59,6 +59,11 @@ const LOGIN_HERO = (() => {
 const SHELL_HTML = (() => {
   let raw = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
   if (LOGIN_HERO) raw = raw.replace('<html lang="th">', '<html lang="th" class="login-hero-on">');
+  // Any Railway environment other than production (staging) says so in the browser tab.
+  // TAB_TITLE wins when set.
+  const envName = String(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT || '').toLowerCase();
+  const tab = process.env.TAB_TITLE || (envName && envName !== 'production' ? 'KSS Dashboard (Play)' : '');
+  if (tab) raw = raw.replace('<title>KSS Dashboard</title>', `<title>${tab.replace(/[<>&]/g, '')}</title>`);
   return raw.replace(/(src|href)="\/(app\.js|admin\.js|ops\.js|library\.js|explain\.js|aichat\.js|helpfaq\.js|selfserve\.js|style\.css|i18n\.js|i18n-en\.js|pos-parse\.js|fmh-file\.js)"/g, `$1="/$2?v=${ASSET_VERSION}"`);
 })();
 
