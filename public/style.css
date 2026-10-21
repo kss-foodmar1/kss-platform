@@ -1412,6 +1412,25 @@ body.arranging-on .ai-fab { display: none; }
 .ins-welcome div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .ins-welcome b { font-size: 15.5px; }
 .ins-welcome span { font-size: 13px; color: var(--ink-2); }
+.ins-fold-card { padding: 2px 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--primary); }
+.ins-fold-card:not(.folded) { padding-bottom: 14px; }
+.ins-h { margin: 0; font-size: inherit; font-weight: inherit; }
+.ins-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; width: 100%; min-height: 44px; padding: 6px 0; border: 0; background: none; color: var(--ink); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.ins-bar:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 8px; }
+.ins-ico { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--primary); color: var(--surface); font-size: 12px; font-weight: 800; flex: none; }
+.ins-title { font-weight: 700; }
+.ins-count { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.ins-count::before { content: '· '; }
+.ins-top { color: var(--ink-2); min-width: 0; flex: 1 1 220px; overflow-wrap: anywhere; }
+.ins-top-baht { font-weight: 700; color: var(--danger-ink); font-variant-numeric: tabular-nums; }
+.ins-top.tone-good .ins-top-baht { color: var(--status-good); }
+.ins-top.tone-info .ins-top-baht { color: var(--ink); }
+.ins-range { font-size: 13px; }
+.ins-toggle { margin-left: auto; font-weight: 700; color: var(--ink); white-space: nowrap; text-decoration: underline; text-underline-offset: 3px; }
+.ins-toggle::after { content: ' ▾'; }
+.ins-fold-card:not(.folded) .ins-toggle::after { content: ' ▴'; }
+.ins-body { display: grid; gap: 12px; padding-top: 6px; }
+.ins-body[hidden] { display: none; }
 .ins-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .ins-head h2 { margin: 0; font-family: 'Kanit', 'Plus Jakarta Sans', sans-serif; font-weight: 600; font-size: 20px; }
 .ins-head .muted { font-size: 13px; }
@@ -1426,7 +1445,7 @@ body.arranging-on .ai-fab { display: none; }
 .ins-how { margin-top: 8px; font-size: 13px; }
 .ins-how summary { cursor: pointer; color: var(--ink-2); font-weight: 600; min-height: 32px; display: flex; align-items: center; }
 .ins-how p { margin: 4px 0 0; color: var(--ink-2); line-height: 1.5; }
-.insight-card.loading .ins-skel { height: 170px; border-radius: var(--card-radius); background: linear-gradient(90deg, var(--surface-2), var(--surface), var(--surface-2)); background-size: 200% 100%; animation: insskel 1.4s ease infinite; }
+.insight-card.loading .ins-skel { height: 48px; border-radius: var(--card-radius); background: linear-gradient(90deg, var(--surface-2), var(--surface), var(--surface-2)); background-size: 200% 100%; animation: insskel 1.4s ease infinite; }
 @keyframes insskel { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 @media (prefers-reduced-motion: reduce) { .insight-card.loading .ins-skel { animation: none; } }
 .widget-card:focus { outline: 2px solid var(--primary); outline-offset: 2px; }

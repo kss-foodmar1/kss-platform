@@ -2325,6 +2325,16 @@ class DashboardView {
     const announce = welcome && !this.welcomeAnnounced;
     if (welcome) this.welcomeAnnounced = true;
     const hid = `ins-h-${this.dashboard.id}`;
+    const bid = `ins-body-${this.dashboard.id}`;
+    // A slim line like "เช้านี้ต้องทำ": the biggest finding shows folded, the cards open on demand.
+    // Opens by itself on the first visit after setup (the welcome strip), remembered for the day.
+    const foldKey = `kss_ins_open_${this.dashboard.id}_${todayIso()}`;
+    let folded = !welcome;
+    try {
+      const v = localStorage.getItem(foldKey);
+      if (v !== null) folded = v !== '1';
+      else if (welcome && top.length) localStorage.setItem(foldKey, '1'); // stays open after the welcome is closed
+    } catch (e) { /* private window */ }
     el.setAttribute('aria-labelledby', hid);
     el.removeAttribute('aria-label');
     el.innerHTML = `
@@ -2332,7 +2342,15 @@ class DashboardView {
         <div><b>Dashboard ของคุณพร้อมแล้ว</b>${welcome.said && welcome.said.length ? `<span class="ins-said">จัดให้ตามที่คุณบอก: ${esc(welcome.said.join(' · '))}</span>` : ''}</div>
         <button type="button" class="btn small ghost ins-close" aria-label="ปิดข้อความต้อนรับ">ปิด</button>
       </div>` : ''}
-      ${top.length ? `<div class="ins-head"><h2 id="${hid}">เราเจอให้คุณ${sample ? ' <span class="demo-pill">ตัวอย่าง</span>' : ''}</h2><span class="muted">${esc(dayLabel(this.range.start))} – ${esc(dayLabel(this.range.end))}</span></div>
+      ${top.length ? `<div class="ins-fold-card${folded ? ' folded' : ''}">
+      <h2 class="ins-h"><button type="button" class="ins-bar" aria-expanded="${!folded}" aria-controls="${bid}">
+        <span class="ins-ico" aria-hidden="true">฿</span>
+        <b class="ins-title" id="${hid}">เราเจอให้คุณ</b>${sample ? '<span class="demo-pill">ตัวอย่าง</span>' : ''}
+        <span class="ins-count">${top.length} เรื่อง</span>
+        ${folded ? `<span class="ins-top tone-${top[0].tone || 'warn'}"><span class="ins-top-baht">${money(top[0].baht)}</span> <span>${esc(top[0].text)}</span></span>` : `<span class="muted ins-range">${esc(dayLabel(this.range.start))} – ${esc(dayLabel(this.range.end))}</span>`}
+        <span class="ins-toggle">${folded ? 'ดูรายละเอียด' : 'ย่อ'}</span>
+      </button></h2>
+      <div class="ins-body" id="${bid}"${folded ? ' hidden' : ''}>
       <div class="ins-grid">${top.map((f, i) => `<article class="ins-card tone-${f.tone || 'warn'}">
           <span class="ins-tag">${esc(f.tag || { warn: 'เงินที่เสียหรือควรทวง', good: 'โอกาสประหยัด', info: 'รอดำเนินการ' }[f.tone || 'warn'])}</span>
           <span class="ins-baht">${money(f.baht)}</span>
@@ -2343,15 +2361,23 @@ class DashboardView {
             ? `<button type="button" class="btn small ghost ins-go" data-i="${i}">ดูรายละเอียด</button>`
             : f.how ? `<details class="ins-how"><summary>ตัวเลขนี้คิดอย่างไร</summary><p>${esc(f.how)}</p></details>` : ''}
         </article>`).join('')}</div>
-      ${!isSuper() && state.user && state.user.company_id ? '<p class="ins-ask">อยากเห็นข้อมูลอื่นที่ยังไม่มีในหน้านี้? <button type="button" class="link-btn ins-wish">บอกเรา</button></p>' : ''}` : ''}`;
+      ${!isSuper() && state.user && state.user.company_id ? '<p class="ins-ask">อยากเห็นข้อมูลอื่นที่ยังไม่มีในหน้านี้? <button type="button" class="link-btn ins-wish">บอกเรา</button></p>' : ''}
+      </div></div>` : ''}`;
+    const bar = el.querySelector('.ins-bar');
+    if (bar) bar.addEventListener('click', () => {
+      try { localStorage.setItem(foldKey, folded ? '1' : '0'); } catch (e) { /* private window */ }
+      this.renderInsights();
+      const b = el.querySelector('.ins-bar');
+      if (b) b.focus({ preventScroll: true });
+    });
     const wishLink = el.querySelector('.ins-wish');
     if (wishLink) wishLink.addEventListener('click', () => openSupportForm({ kind: 'wish' }));
     const close = el.querySelector('.ins-close');
     if (close) close.addEventListener('click', () => {
       try { sessionStorage.removeItem(`kss_welcome_${this.dashboard.id}`); } catch (e) { /* none */ }
       this.renderInsights();
-      const h = el.querySelector('h2');
-      if (h) { h.tabIndex = -1; h.focus({ preventScroll: true }); }
+      const b = el.querySelector('.ins-bar');
+      if (b) b.focus({ preventScroll: true });
     });
     el.querySelectorAll('.ins-go').forEach((b) => b.addEventListener('click', () => {
       const f = top[Number(b.dataset.i)];

@@ -1387,6 +1387,7 @@ window.I18N_EN = {
 
   // {0}, {1}... match any text and are carried across.
   patterns: [
+    ['{0} เรื่อง', '{0} findings'],
     ['แสดงอีก {0} แถว', 'Show {0} more rows'],
     ['ย่อเหลือ {0} แถวแรก', 'Show first {0} rows only'],
     ['ช่วงสุดท้าย (เส้นประ) ยังไม่ครบ{0} ตัวเลขยังขึ้นได้อีก', 'The last period (dashed) is not complete yet; it can still rise'],
