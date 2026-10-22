@@ -3079,6 +3079,7 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
   const cats = cu.category ? [...new Set(rows.map(catOf).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'th')) : [];
   let sort = cfg.sort_by ? { ...cfg.sort_by } : null;
   let query = '';
+  let undoPin = null; // the order just cleared, so it can be put back
   let expanded = false;
   const PREVIEW = cfg.preview_rows || 10;
   const limit = cfg.top_n || 500;
@@ -3103,6 +3104,29 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
   const msg = $('.ct-msg');
   const visible = () => prefs.order.filter((f) => !prefs.hidden.includes(f)).map((f) => byField.get(f));
 
+  function sortRows(data) {
+    const out = [...data];
+    if (sort) {
+      out.sort((a, b) => {
+        const x = a[sort.field]; const y = b[sort.field];
+        const cmp = typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? ''), 'th');
+        return sort.dir === 'asc' ? cmp : -cmp;
+      });
+    }
+    return out;
+  }
+  // The pinned rows of an already-sorted list, in the order the table shows them: the
+  // person's own order first, then the table's sort; each product's places together, kitchen first.
+  function orderPins(sorted) {
+    const pins = sorted.filter(pinned);
+    const rank = new Map();
+    pins.forEach((r) => { const k = keyOf(r) || nameOf(r); if (!rank.has(k)) rank.set(k, rank.size); });
+    const mine = (r) => { const i = prefs.pin_order.indexOf(keyOf(r) || nameOf(r)); return i < 0 ? 1e6 : i; };
+    const placeOf = (r) => String(r.branch ?? '');
+    return pins.sort((a, b) => mine(a) - mine(b) || rank.get(keyOf(a) || nameOf(a)) - rank.get(keyOf(b) || nameOf(b))
+      || (CK_NAME.test(placeOf(b)) - CK_NAME.test(placeOf(a))) || placeOf(a).localeCompare(placeOf(b), 'th'));
+  }
+
   function dataNow() {
     let data = rows;
     if (BF && prefs.branch) data = data.filter((r) => String(r[BF] ?? '') === prefs.branch);
@@ -3112,22 +3136,8 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
     }
     if (prefs.pinned_only) data = data.filter(pinned);
     data = [...data];
-    if (sort) {
-      data.sort((a, b) => {
-        const x = a[sort.field]; const y = b[sort.field];
-        const cmp = typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? ''), 'th');
-        return sort.dir === 'asc' ? cmp : -cmp;
-      });
-    }
-    // pinned rows lead, each product's places together (the kitchen first). Products the
-    // person has put in order come first in that order; the rest follow the table's sort
-    const pins = data.filter(pinned);
-    const rank = new Map();
-    pins.forEach((r) => { const k = keyOf(r) || nameOf(r); if (!rank.has(k)) rank.set(k, rank.size); });
-    const mine = (r) => { const i = prefs.pin_order.indexOf(keyOf(r) || nameOf(r)); return i < 0 ? 1e6 : i; };
-    const placeOf = (r) => String(r.branch ?? '');
-    pins.sort((a, b) => mine(a) - mine(b) || rank.get(keyOf(a) || nameOf(a)) - rank.get(keyOf(b) || nameOf(b))
-      || (CK_NAME.test(placeOf(b)) - CK_NAME.test(placeOf(a))) || placeOf(a).localeCompare(placeOf(b), 'th'));
+    data = sortRows(data);
+    const pins = orderPins(data);
     return [...pins, ...data.filter((r) => !pinned(r))];
   }
 
@@ -3207,16 +3217,14 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
 
   // every pinned product (one entry each, whatever branch or search is on), in the order shown
   const pinList = () => {
-    const names = new Map();
-    rows.forEach((r) => { if (pinned(r)) { const k = keyOf(r) || nameOf(r); if (!names.has(k)) names.set(k, nameOf(r)); } });
-    const first = new Map();
-    rows.forEach((r, i) => { const k = keyOf(r) || nameOf(r); if (!first.has(k)) first.set(k, i); });
-    const at = (k) => { const i = prefs.pin_order.indexOf(k); return i < 0 ? 1e6 : i; };
-    return [...names.keys()].sort((a, b) => at(a) - at(b) || first.get(a) - first.get(b)).map((k) => ({ k, name: names.get(k) }));
+    const out = []; const seen = new Set();
+    orderPins(sortRows(rows)).forEach((r) => { const k = keyOf(r) || nameOf(r); if (!seen.has(k)) { seen.add(k); out.push({ k, name: nameOf(r) }); } });
+    return out;
   };
 
   function drawPanel(focusSel) {
     const plist = pinList();
+    const touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
     const cols = prefs.order.map((f) => byField.get(f));
     panel.innerHTML = `
       <fieldset class="ct-cols"><legend>คอลัมน์ที่แสดง และลำดับ</legend>
@@ -3230,15 +3238,15 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
           </span></li>`).join('')}</ol>
       </fieldset>
       ${plist.length > 1 ? `<fieldset class="ct-cols ct-pinorder"><legend>ลำดับสินค้าที่ปักหมุด</legend>
-        <p class="muted ct-hint">เรียงสินค้าที่ปักหมุดตามที่ต้องการ ใช้ปุ่มขึ้นลงหรือลาก ตารางจะเรียงตามนี้เสมอ</p>
-        <ol>${plist.map((x, i) => `<li draggable="true" data-k="${esc(x.k)}">
+        <p class="muted ct-hint">${touch ? 'เรียงสินค้าที่ปักหมุดตามที่ต้องการ ใช้ปุ่มขึ้นลง ตารางจะเรียงตามนี้เสมอ' : 'เรียงสินค้าที่ปักหมุดตามที่ต้องการ ใช้ปุ่มขึ้นลงหรือลาก ตารางจะเรียงตามนี้เสมอ'}</p>
+        <ol>${plist.map((x, i) => `<li${touch ? '' : ' draggable="true"'} data-k="${esc(x.k)}">
           <span class="ct-grip" aria-hidden="true">⋮⋮</span>
           <span class="ct-pname">${esc(x.name)}</span>
           <span class="ct-move">
             <button type="button" class="ct-pup" data-k="${esc(x.k)}" aria-label="เลื่อน ${esc(x.name)} ขึ้น"${i === 0 ? ' disabled' : ''}>▲</button>
             <button type="button" class="ct-pdown" data-k="${esc(x.k)}" aria-label="เลื่อน ${esc(x.name)} ลง"${i === plist.length - 1 ? ' disabled' : ''}>▼</button>
           </span></li>`).join('')}</ol>
-        ${prefs.pin_order.length ? '<button type="button" class="link-btn ct-pauto">เรียงตามตารางอัตโนมัติ</button>' : ''}
+        ${prefs.pin_order.length ? '<button type="button" class="link-btn ct-pauto">ล้างลำดับที่จัดเอง (กลับไปเรียงตามตาราง)</button>' : undoPin ? '<button type="button" class="link-btn ct-pundo">ย้อนกลับลำดับที่จัดไว้</button>' : ''}
       </fieldset>` : ''}
       ${cats.length ? `<fieldset class="ct-cats"><legend>ปักหมุดทั้งหมวด</legend>
         <p class="muted ct-hint">สินค้าทุกตัวในหมวดที่เลือกจะขึ้นไปอยู่บนสุด</p>
@@ -3280,6 +3288,7 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
     });
     // order of the pinned products: the first change writes the whole list down
     const setPinOrder = (keys, say, focus) => {
+      if (keys.length) undoPin = null;
       prefs.pin_order = keys; msg.textContent = say;
       save(); drawPanel(focus); drawTable();
     };
@@ -3306,7 +3315,9 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
       });
     });
     const pauto = panel.querySelector('.ct-pauto');
-    if (pauto) pauto.addEventListener('click', () => setPinOrder([], 'เรียงสินค้าที่ปักหมุดตามตารางอัตโนมัติแล้ว'));
+    if (pauto) pauto.addEventListener('click', () => { const was = prefs.pin_order; setPinOrder([], 'ล้างลำดับที่จัดเองแล้ว สินค้าที่ปักหมุดเรียงตามตาราง', '.ct-pundo'); undoPin = was; drawPanel('.ct-pundo'); });
+    const pundo = panel.querySelector('.ct-pundo');
+    if (pundo) pundo.addEventListener('click', () => { const was = undoPin; setPinOrder(was, 'คืนลำดับที่จัดไว้แล้ว', '.ct-pauto'); });
     panel.querySelectorAll('.ct-cat').forEach((b) => b.addEventListener('click', () => {
       const c = b.dataset.c; const was = prefs.pin_cats.includes(c);
       prefs.pin_cats = was ? prefs.pin_cats.filter((x) => x !== c) : [...prefs.pin_cats, c];
@@ -3318,7 +3329,13 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
       save(); drawPanel('.ct-reset'); drawTools(); drawTable();
     });
     panel.querySelector('.ct-done').addEventListener('click', () => { CT_OPEN.set(wid, false); drawTools(); $('.ct-open').focus(); });
-    if (focusSel) { const el = panel.querySelector(focusSel); if (el && !el.disabled) el.focus(); else { const any = panel.querySelector(focusSel.replace(/^\.ct-(up|down|pup|pdown)/, '.ct-$1')); if (any) any.focus(); } }
+    if (focusSel) {
+      // a button that just became disabled (top or bottom of the list) hands focus to its partner
+      const opp = { 'ct-up': 'ct-down', 'ct-down': 'ct-up', 'ct-pup': 'ct-pdown', 'ct-pdown': 'ct-pup' };
+      let el = panel.querySelector(focusSel);
+      if (el && el.disabled) el = panel.querySelector(focusSel.replace(/ct-(up|down|pup|pdown)/, (m, c) => opp['ct-' + c].slice(0))) || el;
+      if (el && !el.disabled) el.focus();
+    }
   }
 
   $('.ct-open').addEventListener('click', () => {

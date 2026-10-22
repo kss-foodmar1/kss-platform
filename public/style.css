@@ -1542,7 +1542,6 @@ body.arranging-on .ai-fab { display: none; }
 .ct-cols li.drop { border-color: var(--primary); }
 .ct-cols label { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; font-size: 13.5px; }
 .ct-cols input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--primary); }
-.ct-pinorder ol { max-height: 280px; overflow-y: auto; }
 .ct-pname { flex: 1; min-width: 0; font-size: 13.5px; overflow-wrap: anywhere; }
 .ct-pauto { margin-top: 6px; }
 .ct-grip { color: var(--muted); cursor: grab; letter-spacing: -2px; font-size: 13px; }
