@@ -3047,7 +3047,7 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
   const all = cfg.columns && cfg.columns.length ? cfg.columns : Object.keys(rows[0] || {}).map((field) => ({ field }));
   const label = (c) => c.label || c.field.replace(/_/g, ' ');
   const byField = new Map(all.map((c) => [c.field, c]));
-  const blank = () => ({ order: all.map((c) => c.field), hidden: [...(cu.default_hidden || [])], pins: [], pin_cats: [], pinned_only: false, branch: '' });
+  const blank = () => ({ order: all.map((c) => c.field), hidden: [...(cu.default_hidden || [])], pins: [], pin_order: [], pin_cats: [], pinned_only: false, branch: '' });
   const load = () => {
     const p = (ctx.widget && ctx.widget.my_prefs) || null;
     const b = blank();
@@ -3055,7 +3055,7 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
     // columns added to the widget later show up at the end, visible
     const order = (p.order || []).filter((f) => byField.has(f));
     all.forEach((c) => { if (!order.includes(c.field)) order.push(c.field); });
-    return { order, hidden: (p.hidden || []).filter((f) => byField.has(f)), pins: p.pins || [], pin_cats: p.pin_cats || [], pinned_only: !!p.pinned_only, branch: p.branch || '' };
+    return { order, hidden: (p.hidden || []).filter((f) => byField.has(f)), pins: p.pins || [], pin_order: p.pin_order || [], pin_cats: p.pin_cats || [], pinned_only: !!p.pinned_only, branch: p.branch || '' };
   };
   let prefs = load();
   let saveTimer = null;
@@ -3119,13 +3119,14 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
         return sort.dir === 'asc' ? cmp : -cmp;
       });
     }
-    // pinned rows lead, each product's places together (the kitchen first), products in
-    // the order the sort puts their first row
+    // pinned rows lead, each product's places together (the kitchen first). Products the
+    // person has put in order come first in that order; the rest follow the table's sort
     const pins = data.filter(pinned);
     const rank = new Map();
     pins.forEach((r) => { const k = keyOf(r) || nameOf(r); if (!rank.has(k)) rank.set(k, rank.size); });
+    const mine = (r) => { const i = prefs.pin_order.indexOf(keyOf(r) || nameOf(r)); return i < 0 ? 1e6 : i; };
     const placeOf = (r) => String(r.branch ?? '');
-    pins.sort((a, b) => rank.get(keyOf(a) || nameOf(a)) - rank.get(keyOf(b) || nameOf(b))
+    pins.sort((a, b) => mine(a) - mine(b) || rank.get(keyOf(a) || nameOf(a)) - rank.get(keyOf(b) || nameOf(b))
       || (CK_NAME.test(placeOf(b)) - CK_NAME.test(placeOf(a))) || placeOf(a).localeCompare(placeOf(b), 'th'));
     return [...pins, ...data.filter((r) => !pinned(r))];
   }
@@ -3193,8 +3194,10 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
       if (!k) return;
       const was = prefs.pins.includes(k);
       prefs.pins = was ? prefs.pins.filter((x) => x !== k) : [...prefs.pins, k];
+      if (was) prefs.pin_order = prefs.pin_order.filter((x) => x !== k);
+      else if (prefs.pin_order.length && !prefs.pin_order.includes(k)) prefs.pin_order = [...prefs.pin_order, k];
       msg.textContent = was ? `เลิกปักหมุด ${nameOf(r)}` : `ปักหมุด ${nameOf(r)} ไว้บนสุดแล้ว`;
-      save(); drawTools(); drawTable();
+      save(); drawPanel(); drawTools(); drawTable();
       // keep the keyboard on the same product's pin, wherever it moved
       const idx = shown.length && [...scroller.querySelectorAll('.ct-pin[data-i]')].find((x) => keyOf(shownNow()[Number(x.dataset.i)]) === k);
       if (idx) idx.focus();
@@ -3202,7 +3205,18 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
   }
   const shownNow = () => dataNow().slice(0, expanded ? limit : PREVIEW);
 
+  // every pinned product (one entry each, whatever branch or search is on), in the order shown
+  const pinList = () => {
+    const names = new Map();
+    rows.forEach((r) => { if (pinned(r)) { const k = keyOf(r) || nameOf(r); if (!names.has(k)) names.set(k, nameOf(r)); } });
+    const first = new Map();
+    rows.forEach((r, i) => { const k = keyOf(r) || nameOf(r); if (!first.has(k)) first.set(k, i); });
+    const at = (k) => { const i = prefs.pin_order.indexOf(k); return i < 0 ? 1e6 : i; };
+    return [...names.keys()].sort((a, b) => at(a) - at(b) || first.get(a) - first.get(b)).map((k) => ({ k, name: names.get(k) }));
+  };
+
   function drawPanel(focusSel) {
+    const plist = pinList();
     const cols = prefs.order.map((f) => byField.get(f));
     panel.innerHTML = `
       <fieldset class="ct-cols"><legend>คอลัมน์ที่แสดง และลำดับ</legend>
@@ -3215,6 +3229,17 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
             <button type="button" class="ct-down" data-f="${esc(c.field)}" aria-label="เลื่อน ${esc(label(c))} ลง"${i === cols.length - 1 ? ' disabled' : ''}>▼</button>
           </span></li>`).join('')}</ol>
       </fieldset>
+      ${plist.length > 1 ? `<fieldset class="ct-cols ct-pinorder"><legend>ลำดับสินค้าที่ปักหมุด</legend>
+        <p class="muted ct-hint">เรียงสินค้าที่ปักหมุดตามที่ต้องการ ใช้ปุ่มขึ้นลงหรือลาก ตารางจะเรียงตามนี้เสมอ</p>
+        <ol>${plist.map((x, i) => `<li draggable="true" data-k="${esc(x.k)}">
+          <span class="ct-grip" aria-hidden="true">⋮⋮</span>
+          <span class="ct-pname">${esc(x.name)}</span>
+          <span class="ct-move">
+            <button type="button" class="ct-pup" data-k="${esc(x.k)}" aria-label="เลื่อน ${esc(x.name)} ขึ้น"${i === 0 ? ' disabled' : ''}>▲</button>
+            <button type="button" class="ct-pdown" data-k="${esc(x.k)}" aria-label="เลื่อน ${esc(x.name)} ลง"${i === plist.length - 1 ? ' disabled' : ''}>▼</button>
+          </span></li>`).join('')}</ol>
+        ${prefs.pin_order.length ? '<button type="button" class="link-btn ct-pauto">เรียงตามตารางอัตโนมัติ</button>' : ''}
+      </fieldset>` : ''}
       ${cats.length ? `<fieldset class="ct-cats"><legend>ปักหมุดทั้งหมวด</legend>
         <p class="muted ct-hint">สินค้าทุกตัวในหมวดที่เลือกจะขึ้นไปอยู่บนสุด</p>
         <div class="ct-chips">${cats.map((c) => { const on = prefs.pin_cats.includes(c); const n = rows.filter((r) => catOf(r) === c).length; return `<button type="button" class="ct-cat${on ? ' on' : ''}" data-c="${esc(c)}" aria-pressed="${on}">${on ? PIN_SVG + ' ' : ''}${esc(c)} <span class="muted">${n}</span></button>`; }).join('')}</div>
@@ -3253,6 +3278,35 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
         prefs.order = o; save(); drawPanel(); drawTable();
       });
     });
+    // order of the pinned products: the first change writes the whole list down
+    const setPinOrder = (keys, say, focus) => {
+      prefs.pin_order = keys; msg.textContent = say;
+      save(); drawPanel(focus); drawTable();
+    };
+    const pmove = (k, d) => {
+      const keys = plist.map((x) => x.k); const i = keys.indexOf(k); const j = i + d;
+      if (i < 0 || j < 0 || j >= keys.length) return;
+      [keys[i], keys[j]] = [keys[j], keys[i]];
+      setPinOrder(keys, `ย้าย ${plist[i].name} ไปลำดับที่ ${j + 1} จาก ${keys.length}`, `.${d < 0 ? 'ct-pup' : 'ct-pdown'}[data-k="${CSS.escape(k)}"]`);
+    };
+    panel.querySelectorAll('.ct-pup').forEach((b) => b.addEventListener('click', () => pmove(b.dataset.k, -1)));
+    panel.querySelectorAll('.ct-pdown').forEach((b) => b.addEventListener('click', () => pmove(b.dataset.k, 1)));
+    let dragK = null;
+    panel.querySelectorAll('li[data-k]').forEach((li) => {
+      li.addEventListener('dragstart', (e) => { dragK = li.dataset.k; li.classList.add('dragging'); try { e.dataTransfer.setData('text/plain', dragK); e.dataTransfer.effectAllowed = 'move'; } catch (er) { /* old browser */ } });
+      li.addEventListener('dragend', () => { li.classList.remove('dragging'); dragK = null; });
+      li.addEventListener('dragover', (e) => { if (dragK && dragK !== li.dataset.k) { e.preventDefault(); li.classList.add('drop'); } });
+      li.addEventListener('dragleave', () => li.classList.remove('drop'));
+      li.addEventListener('drop', (e) => {
+        e.preventDefault(); li.classList.remove('drop');
+        if (!dragK || dragK === li.dataset.k) return;
+        const keys = plist.map((x) => x.k); const from = keys.indexOf(dragK); const to = keys.indexOf(li.dataset.k);
+        keys.splice(from, 1); keys.splice(to, 0, dragK);
+        setPinOrder(keys, `ย้าย ${plist[from].name} ไปลำดับที่ ${to + 1} จาก ${keys.length}`);
+      });
+    });
+    const pauto = panel.querySelector('.ct-pauto');
+    if (pauto) pauto.addEventListener('click', () => setPinOrder([], 'เรียงสินค้าที่ปักหมุดตามตารางอัตโนมัติแล้ว'));
     panel.querySelectorAll('.ct-cat').forEach((b) => b.addEventListener('click', () => {
       const c = b.dataset.c; const was = prefs.pin_cats.includes(c);
       prefs.pin_cats = was ? prefs.pin_cats.filter((x) => x !== c) : [...prefs.pin_cats, c];
@@ -3264,7 +3318,7 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
       save(); drawPanel('.ct-reset'); drawTools(); drawTable();
     });
     panel.querySelector('.ct-done').addEventListener('click', () => { CT_OPEN.set(wid, false); drawTools(); $('.ct-open').focus(); });
-    if (focusSel) { const el = panel.querySelector(focusSel); if (el && !el.disabled) el.focus(); else { const any = panel.querySelector(focusSel.replace(/^\.ct-(up|down)/, '.ct-$1')); if (any) any.focus(); } }
+    if (focusSel) { const el = panel.querySelector(focusSel); if (el && !el.disabled) el.focus(); else { const any = panel.querySelector(focusSel.replace(/^\.ct-(up|down|pup|pdown)/, '.ct-$1')); if (any) any.focus(); } }
   }
 
   $('.ct-open').addEventListener('click', () => {

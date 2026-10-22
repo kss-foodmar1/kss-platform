@@ -195,7 +195,7 @@ router.get(
   })
 );
 
-// One viewer's arrangement of one table widget: { order, hidden, pins, pin_cats, pinned_only }.
+// One viewer's arrangement of one table widget: { order, hidden, pins, pin_order, pin_cats, pinned_only }.
 // Anyone who can see the dashboard may arrange it for themselves; it changes nothing for others.
 const strList = (v, max) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.length <= 200).slice(0, max) : []);
 router.put(
@@ -215,6 +215,7 @@ router.put(
       order: strList(p.order, 60),
       hidden: strList(p.hidden, 60),
       pins: strList(p.pins, 500),
+      pin_order: strList(p.pin_order, 500),
       pin_cats: strList(p.pin_cats, 100),
       pinned_only: !!p.pinned_only,
       branch: typeof p.branch === 'string' ? p.branch.slice(0, 200) : '',
