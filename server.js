@@ -230,7 +230,7 @@ async function syncMissingOnBoot() {
   try {
     const [companies] = await pool.query(
       `SELECT id, name FROM companies WHERE (fmh_api_key_enc IS NOT NULL OR data_source = 'demo') AND status <> 'suspended'
-         AND (auto_sync = TRUE OR data_source = 'demo')`
+         AND (auto_sync_mode <> 'off' OR data_source = 'demo')`
     );
     for (const c of companies) {
       const used = await pullsUsedByCompany(c.id);

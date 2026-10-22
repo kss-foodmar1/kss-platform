@@ -90,9 +90,9 @@ async function companyExists(id) {
 // If a company has a key but no cached data for a source (e.g. a widget
 // using a new source was just added), fetch it in the background.
 async function warmSource(companyId, source, grouping = null) {
-  const [[c]] = await pool.query(`SELECT fmh_api_key_enc, data_source, auto_sync FROM companies WHERE id = ?`, [companyId]);
+  const [[c]] = await pool.query(`SELECT fmh_api_key_enc, data_source, auto_sync_mode FROM companies WHERE id = ?`, [companyId]);
   if (!c || (!c.fmh_api_key_enc && c.data_source !== 'demo') || !FMH_REPORTS[source]) return;
-  if (c.data_source !== 'demo' && !c.auto_sync) return; // auto-fetch is off: the Refresh button pulls it
+  if (c.data_source !== 'demo' && c.auto_sync_mode === 'off') return; // auto-fetch is off: the Refresh button pulls it
   if (await getCached(companyId, source, grouping)) return;
   const key = grouping ? `${source}|${grouping}` : source;
   withTrigger('warm', () => syncOne(companyId, source, grouping)).catch((err) => console.error(`Warm sync failed (${companyId}/${key}):`, err.message));

@@ -861,6 +861,42 @@ function renderNoAccess(wrap) {
 
 // "Ready for real data?" — asks first, says what stays and what is cleared,
 // and when nothing real is connected yet explains how to connect it.
+// 'ดึงข้อมูลใหม่' spends FMH rows from a monthly quota. Under this many estimated rows it just runs.
+const REFRESH_WARN_ROWS = 100;
+function refreshNearQuota(est) {
+  const q = est.quota;
+  return !!(q && q.limit && (q.remaining - est.total) / q.limit < 0.2);
+}
+function showRefreshConfirm(bar, est, go) {
+  bar.querySelectorAll('.refresh-confirm').forEach((n) => n.remove());
+  const nf = (n) => Number(n).toLocaleString('th-TH');
+  const q = est.quota;
+  const left = q ? q.remaining - est.total : null;
+  const over = q && left < 0;
+  const biggest = est.items.filter((i) => !i.wait_min && i.est_rows).sort((a, b) => b.est_rows - a.est_rows).slice(0, 3);
+  const box = document.createElement('div');
+  box.className = 'refresh-confirm' + (over ? ' refresh-confirm-over' : '');
+  box.setAttribute('role', 'alert');
+  box.innerHTML = `
+    <div class="rc-head"></div>
+    ${biggest.length ? '<ul class="rc-list"></ul>' : ''}
+    ${q ? '<div class="rc-quota"></div>' : ''}
+    ${est.unknown ? '<div class="rc-unknown"></div>' : ''}
+    <div class="rc-actions"><button type="button" class="btn small primary rc-go"></button><button type="button" class="btn small ghost rc-cancel">ยกเลิก</button></div>`;
+  box.querySelector('.rc-head').textContent = est.total ? `จะดึงข้อมูลใหม่ประมาณ ${nf(est.total)} แถว` : 'จะดึงข้อมูลใหม่';
+  const ul = box.querySelector('.rc-list');
+  if (ul) biggest.forEach((i) => { const li = document.createElement('li'); li.textContent = `${i.label}: ประมาณ ${nf(i.est_rows)} แถว`; ul.appendChild(li); });
+  if (q) box.querySelector('.rc-quota').textContent = over
+    ? `โควตา FMH เดือนนี้เหลือ ${nf(q.remaining)} แถว น้อยกว่าที่ต้องใช้ ข้อมูลบางรายงานอาจดึงไม่ครบ`
+    : `โควตา FMH เดือนนี้เหลือ ${nf(q.remaining)} แถว จะเหลือประมาณ ${nf(left)} หลังดึง`;
+  if (est.unknown) box.querySelector('.rc-unknown').textContent = `มี ${est.unknown} รายงานที่ยังไม่เคยดึง จึงบอกจำนวนแถวไม่ได้`;
+  box.querySelector('.rc-go').textContent = 'ดึงเลย';
+  box.querySelector('.rc-cancel').addEventListener('click', () => box.remove());
+  box.querySelector('.rc-go').addEventListener('click', () => { box.remove(); go(); });
+  bar.appendChild(box);
+  box.querySelector('.rc-go').focus();
+}
+
 function showRealConfirm(bar, dashboardId, force = false) {
   bar.querySelector('.real-confirm')?.remove();
   const box = document.createElement('div');
@@ -1755,7 +1791,7 @@ class DashboardView {
                      ? '<strong>ตัวเลขเป็นข้อมูลตัวอย่าง ไม่ใช่ของร้านคุณ</strong> <span class="hide-m">ลองจัด dashboard ให้ถูกใจได้เต็มที่ widget และการจัดวางจะอยู่ครบเมื่อสลับเป็นข้อมูลจริง</span>'
                      : 'ตัวเลขนี้เป็นข้อมูลตัวอย่าง ไม่ใช่ข้อมูลจริงของร้าน'
                  }</span>`
-               : oldest ? (this.dashboard.auto_sync === false ? `ข้อมูลล่าสุด: ${esc(oldest)} · ปิดการดึงอัตโนมัติ กด “ดึงข้อมูลใหม่” เมื่อต้องการ` : `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1`) : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
+               : oldest ? (this.dashboard.auto_sync_mode === 'off' ? `ข้อมูลล่าสุด: ${esc(oldest)} · ปิดการดึงอัตโนมัติ กด “ดึงข้อมูลใหม่” เมื่อต้องการ` : this.dashboard.auto_sync_mode === 'light' ? `ข้อมูลล่าสุด: ${esc(oldest)} · อัปเดตอัตโนมัติทุกคืน รายงานใหญ่สัปดาห์ละครั้ง` : `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1`) : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
            }</span>
            <span class="sync-actions">${this.dashboard.data_source === 'demo' ? '' : toggle}${this.dashboard.data_source === 'demo' && isCompanyAdmin() && !this.preview ? '<button type="button" class="btn small primary use-real-btn">พร้อมใช้ข้อมูลจริงแล้ว</button>' : ''}${keyMissing || this.dashboard.data_source === 'demo' ? '' : '<button type="button" class="btn small ghost fmh-refresh-btn">ดึงข้อมูลใหม่</button>'}</span>
          </div>
@@ -1843,21 +1879,33 @@ class DashboardView {
     if (real) real.addEventListener('click', () => showRealConfirm(bar, this.dashboard.id));
     const btn = bar.querySelector('.fmh-refresh-btn');
     if (btn) {
-      btn.addEventListener('click', async () => {
+      const failNote = (err) => {
+        btn.disabled = false;
+        btn.textContent = 'ดึงข้อมูลใหม่';
+        const note = document.createElement('div');
+        note.className = 'inline-note';
+        note.textContent = err.message;
+        bar.appendChild(note);
+        setTimeout(() => note.remove(), 6000);
+      };
+      const doRefresh = async () => {
         btn.disabled = true;
         btn.textContent = 'กำลัง refresh...';
         try {
           await api(`/api/dashboards/${this.dashboard.id}/refresh`, { method: 'POST' });
           await this.load();
         } catch (err) {
-          btn.disabled = false;
-          btn.textContent = 'ดึงข้อมูลใหม่';
-          const note = document.createElement('div');
-          note.className = 'inline-note';
-          note.textContent = err.message;
-          bar.appendChild(note);
-          setTimeout(() => note.remove(), 6000);
+          failNote(err);
         }
+      };
+      btn.addEventListener('click', async () => {
+        // Say what it will cost first when it is more than a few rows: every row counts against the month's FMH quota.
+        btn.disabled = true;
+        let est = null;
+        try { est = await api(`/api/dashboards/${this.dashboard.id}/refresh-estimate`); } catch (e) { /* no estimate: just pull */ }
+        btn.disabled = false;
+        if (!est || est.demo || !est.will_pull || (est.total < REFRESH_WARN_ROWS && !est.unknown && !refreshNearQuota(est))) return doRefresh();
+        showRefreshConfirm(bar, est, doRefresh);
       });
     }
   }

@@ -4,11 +4,34 @@
 //   renderUserManager  — users, roles, passwords, per-user dashboard access
 // Relies on helpers from app.js (el, api, esc, state, isSuper, ...).
 
+// ---------- shared: automatic FMH fetch mode ----------
+const AUTO_SYNC_SAVED = { all: 'ตั้งเป็นดึงทุกรายงานทุกคืนแล้ว', light: 'ตั้งเป็นดึงเฉพาะรายงานเล็กทุกคืนแล้ว', off: 'ปิดการดึงข้อมูลอัตโนมัติแล้ว' };
+const nf = (n) => Number(n || 0).toLocaleString('th-TH');
+function autoSyncRows(mode, plan) {
+  const perMonth = plan ? plan.per_month : null;
+  const heavy = plan ? plan.heavy : [];
+  const cost = (n) => (perMonth && !plan.unknown ? ` · ประมาณ ${nf(n)} แถวต่อเดือน` : '');
+  const opts = [
+    ['all', 'ทุกรายงาน ทุกคืนตี 1', `ข้อมูลสดที่สุด${cost(perMonth && perMonth.all)}`],
+    ['light', 'เฉพาะรายงานเล็กทุกคืน (แนะนำเมื่อโควตาไม่พอ)',
+      heavy.length
+        ? `รายงานที่มีหลายพันแถว (${heavy.map((h) => h.label).join(', ')}) ดึงสัปดาห์ละครั้ง ที่เหลืออัปเดตทุกคืน${cost(perMonth && perMonth.light)}`
+        : 'ตอนนี้ยังไม่มีรายงานใหญ่ ผลเท่ากับดึงทุกรายงานทุกคืน (ถ้ามีรายงานใหญ่เพิ่ม ระบบจะดึงสัปดาห์ละครั้งให้เอง)'],
+    ['off', 'ปิด ดึงเมื่อกดปุ่มเท่านั้น', 'ข้อมูลจะเก่าลงเรื่อยๆ จนกว่าจะกด “ดึงข้อมูลใหม่” ในหน้า dashboard ตัวเตือนและ LINE จะใช้ข้อมูลที่ดึงไว้ล่าสุด'],
+  ];
+  const q = plan && plan.quota ? `โควตาของ FMH เดือนนี้ ${nf(plan.quota.limit)} แถว (ใช้ไป ${nf(plan.quota.used)})` : '';
+  return `<fieldset class="auto-sync-row">
+    <legend>ดึงข้อมูลจาก FMH อัตโนมัติ</legend>
+    ${q ? `<p class="helper-text auto-sync-quota">${esc(q)}${plan.unknown ? ` · มี ${plan.unknown} รายงานที่ยังไม่เคยดึง จึงยังประเมินแถวไม่ได้` : ''}</p>` : ''}
+    ${opts.map(([v, label, help]) => `<label class="auto-sync-opt"><input type="radio" name="auto-sync-mode" class="auto-sync-radio" value="${v}"${mode === v ? ' checked' : ''} aria-describedby="as-help-${v}"><span class="auto-sync-text"><b>${esc(label)}</b><span class="helper-text" id="as-help-${v}">${esc(help)}</span></span></label>`).join('')}
+  </fieldset>`;
+}
+
 // ---------- shared: FMH key panel ----------
 async function renderFmhKeyPanel(container, companyId, onSaved) {
   const qs = isSuper() ? `?company_id=${companyId}` : '';
   container.innerHTML = '<p class="muted">กำลังโหลด...</p>';
-  const { configured, updated_at, auto_sync } = await api(`/api/settings/fmh-key${qs}`);
+  const { configured, updated_at, auto_sync_mode, auto_sync_plan } = await api(`/api/settings/fmh-key${qs}`);
   container.innerHTML = `
     <p class="status-line">${
       configured
@@ -21,12 +44,7 @@ async function renderFmhKeyPanel(container, companyId, onSaved) {
       <button type="submit" class="btn small primary">บันทึก Key</button>
       ${configured ? '<button type="button" class="btn small danger fmh-remove">ลบ Key</button>' : ''}
     </form>
-    ${configured ? `<div class="auto-sync-row">
-      <label class="check-row"><input type="checkbox" class="auto-sync-cb"${auto_sync ? ' checked' : ''}> ดึงข้อมูลจาก FMH อัตโนมัติทุกวันตี 1</label>
-      <p class="helper-text auto-sync-help">${auto_sync
-        ? 'เปิดอยู่: ข้อมูลอัปเดตเองทุกคืน (ใช้โควตาแถวของ FMH ทุกคืน)'
-        : 'ปิดอยู่: ระบบไม่ดึงเอง ข้อมูลจะเก่าลงเรื่อยๆ จนกว่าจะกด “ดึงข้อมูลใหม่” ในหน้า dashboard ตัวเตือนและ LINE จะใช้ข้อมูลที่ดึงไว้ล่าสุด'}</p>
-    </div>` : ''}`;
+    ${configured ? autoSyncRows(auto_sync_mode, auto_sync_plan) : ''}`;
   const msg = container.querySelector('.form-msg');
   container.querySelector('form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -42,23 +60,27 @@ async function renderFmhKeyPanel(container, companyId, onSaved) {
       msg.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
     }
   });
-  const autoCb = container.querySelector('.auto-sync-cb');
-  if (autoCb) {
-    autoCb.addEventListener('change', async () => {
-      autoCb.disabled = true;
-      try {
-        const on = autoCb.checked;
-        await api(`/api/settings/auto-sync${qs}`, { method: 'PUT', body: JSON.stringify({ enabled: on }) });
+  container.querySelectorAll('.auto-sync-radio').forEach((radio) => {
+    radio.addEventListener('change', async () => {
+      const mode = radio.value;
+      if (mode === 'off' && !confirm('ปิดการดึงข้อมูลอัตโนมัติ? ข้อมูลจะเก่าลงเรื่อยๆ จนกว่าจะกด “ดึงข้อมูลใหม่” และตัวเตือน/LINE จะใช้ข้อมูลที่ดึงไว้ล่าสุด')) {
         await renderFmhKeyPanel(container, companyId, onSaved);
-        container.querySelector('.form-msg').innerHTML = `<div class="ok-msg">${on ? 'เปิดการดึงข้อมูลอัตโนมัติแล้ว' : 'ปิดการดึงข้อมูลอัตโนมัติแล้ว'}</div>`;
+        return;
+      }
+      container.querySelectorAll('.auto-sync-radio').forEach((r) => (r.disabled = true));
+      try {
+        await api(`/api/settings/auto-sync${qs}`, { method: 'PUT', body: JSON.stringify({ mode }) });
+        await renderFmhKeyPanel(container, companyId, onSaved);
+        const m = container.querySelector('.form-msg');
+        m.setAttribute('aria-live', 'polite');
+        m.innerHTML = `<div class="ok-msg">${esc(AUTO_SYNC_SAVED[mode])}</div>`;
         if (onSaved) onSaved();
       } catch (err) {
-        autoCb.checked = !autoCb.checked;
-        autoCb.disabled = false;
-        msg.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+        await renderFmhKeyPanel(container, companyId, onSaved);
+        container.querySelector('.form-msg').innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
       }
     });
-  }
+  });
   const remove = container.querySelector('.fmh-remove');
   if (remove) {
     remove.addEventListener('click', async () => {

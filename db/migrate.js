@@ -104,9 +104,15 @@ async function upgradeLine() {
 }
 
 async function upgradeCompanies() {
-  if (!(await columnInfo('companies', 'auto_sync'))) {
-    await pool.query(`ALTER TABLE companies ADD COLUMN auto_sync BOOLEAN NOT NULL DEFAULT TRUE`);
-    console.log('  companies: added auto_sync');
+  if (!(await columnInfo('companies', 'auto_sync_mode'))) {
+    await pool.query(`ALTER TABLE companies ADD COLUMN auto_sync_mode ENUM('all','light','off') NOT NULL DEFAULT 'all'`);
+    console.log('  companies: added auto_sync_mode');
+  }
+  // Staging briefly had an on/off boolean; fold it into the mode.
+  if (await columnInfo('companies', 'auto_sync')) {
+    await pool.query(`UPDATE companies SET auto_sync_mode = 'off' WHERE auto_sync = FALSE`);
+    await pool.query(`ALTER TABLE companies DROP COLUMN auto_sync`);
+    console.log('  companies: auto_sync folded into auto_sync_mode');
   }
   if (!(await columnInfo('companies', 'data_source'))) {
     await pool.query(`ALTER TABLE companies ADD COLUMN data_source ENUM('fmh','demo') NOT NULL DEFAULT 'fmh'`);

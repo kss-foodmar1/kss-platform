@@ -7,7 +7,7 @@ const pool = require('../db/pool');
 const { requireAuth, requireCompanyAdmin } = require('../middleware/auth');
 const { wrap, resolveCompanyId } = require('../lib/access');
 const { encrypt, mask } = require('../lib/crypto');
-const { syncCompany } = require('../lib/fmhCache');
+const { syncCompany, estimatePulls, pullsUsedByCompany, HEAVY_EVERY_DAYS } = require('../lib/fmhCache');
 const { withTrigger } = require('../lib/fmhUsage');
 
 const router = express.Router();
@@ -27,15 +27,36 @@ router.get(
   wrap(async (req, res) => {
     const companyId = resolveCompanyId(req);
     if (!companyId) return res.status(400).json({ error: 'company_id required' });
-    const [[c]] = await pool.query(`SELECT fmh_api_key_enc, fmh_key_updated_at, auto_sync FROM companies WHERE id = ?`, [companyId]);
+    const [[c]] = await pool.query(`SELECT fmh_api_key_enc, fmh_key_updated_at, auto_sync_mode, data_source FROM companies WHERE id = ?`, [companyId]);
     if (!c) return res.status(404).json({ error: 'Company not found' });
-    res.json({ configured: !!c.fmh_api_key_enc, updated_at: c.fmh_key_updated_at, auto_sync: !!c.auto_sync });
+    res.json({
+      configured: !!c.fmh_api_key_enc,
+      updated_at: c.fmh_key_updated_at,
+      auto_sync_mode: c.auto_sync_mode,
+      auto_sync_plan: c.fmh_api_key_enc && c.data_source !== 'demo' ? await autoSyncPlan(companyId) : null,
+    });
   })
 );
 
-// Switch the automatic (1am) FMH pull on or off for a company. The data source
-// stays FMH either way; off only stops the scheduled pulls, and the
-// 'ดึงข้อมูลใหม่' button still works.
+// What each auto-fetch mode would cost this company, from what its reports returned
+// last time: nightly rows with everything on, and with the big whole-table reports weekly.
+async function autoSyncPlan(companyId) {
+  const { items, quota } = await estimatePulls(companyId, await pullsUsedByCompany(companyId));
+  const paid = items.filter((i) => !i.free);
+  const sum = (list, f = (i) => i.est_rows || 0) => list.reduce((n, i) => n + f(i), 0);
+  const heavy = paid.filter((i) => i.heavy);
+  const nightlyAll = sum(paid);
+  const nightlyLight = sum(paid.filter((i) => !i.heavy)) + sum(heavy, (i) => (i.est_rows || 0) / HEAVY_EVERY_DAYS);
+  return {
+    heavy: heavy.map((i) => ({ label: i.label, est_rows: i.est_rows })),
+    unknown: paid.filter((i) => i.est_rows === null).length,
+    per_month: { all: Math.round(nightlyAll * 30), light: Math.round(nightlyLight * 30) },
+    quota,
+  };
+}
+
+// Switch the automatic (1am) FMH pull for a company: all | light | off. The data source
+// stays FMH in every mode; the 'ดึงข้อมูลใหม่' button always works.
 router.put(
   '/auto-sync',
   requireAuth,
@@ -43,10 +64,11 @@ router.put(
   wrap(async (req, res) => {
     const companyId = resolveCompanyId(req);
     if (!companyId) return res.status(400).json({ error: 'company_id required' });
-    const enabled = !!(req.body && req.body.enabled);
-    const [result] = await pool.query(`UPDATE companies SET auto_sync = ? WHERE id = ?`, [enabled, companyId]);
+    const mode = String((req.body && req.body.mode) || '');
+    if (!['all', 'light', 'off'].includes(mode)) return res.status(400).json({ error: 'mode must be all, light or off' });
+    const [result] = await pool.query(`UPDATE companies SET auto_sync_mode = ? WHERE id = ?`, [mode, companyId]);
     if (!result.affectedRows) return res.status(404).json({ error: 'Company not found' });
-    res.json({ ok: true, auto_sync: enabled });
+    res.json({ ok: true, auto_sync_mode: mode });
   })
 );
 
