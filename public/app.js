@@ -3164,6 +3164,8 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
       const isNum = rows.length && typeof rows[0][c.field] === 'number';
       return `<th tabindex="0" data-field="${esc(c.field)}"${isNum ? ' class="num"' : ''} aria-sort="${on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}">${esc(label(c))}${on ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}</th>`;
     }).join('');
+    const plist = pinList(); const plKeys = plist.map((x) => x.k);
+    const seenGroup = new Set();
     const rowsHtml = shown.map((r, i) => {
       const k = keyOf(r);
       const own = prefs.pins.includes(k);
@@ -3180,7 +3182,13 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
           ? `<td class="num" data-label="${esc(label(c))}">${esc(c.format ? fmtValue(v, c.format) : v.toLocaleString('th-TH', { maximumFractionDigits: 2 }))}${flag}</td>`
           : `<td class="ct-txt" data-label="${esc(label(c))}">${esc(v == null || v === '' ? '-' : v)}</td>`;
       }).join('');
-      return `<tr${pinned(r) ? ' class="ct-pinned"' : ''}><td class="ct-pin-cell">${pin}</td>${cells}</tr>`;
+      // pinned products carry their own up/down arrows (once per product, on its first row)
+      const gk = keyOf(r) || nameOf(r); let mv = '';
+      if (pinned(r) && plKeys.length > 1 && !seenGroup.has(gk)) {
+        seenGroup.add(gk); const pi = plKeys.indexOf(gk);
+        mv = `<span class="ct-rowmove"><button type="button" class="ct-rup" data-k="${esc(gk)}" aria-label="เลื่อน ${esc(nameOf(r))} ขึ้นในลำดับที่ปักหมุด"${pi === 0 ? ' disabled' : ''}>▲</button><button type="button" class="ct-rdown" data-k="${esc(gk)}" aria-label="เลื่อน ${esc(nameOf(r))} ลงในลำดับที่ปักหมุด"${pi === plKeys.length - 1 ? ' disabled' : ''}>▼</button></span>`;
+      }
+      return `<tr${pinned(r) ? ' class="ct-pinned"' : ''}><td class="ct-pin-cell">${pin}${mv}</td>${cells}</tr>`;
     }).join('');
     const more = Math.min(data.length, limit) - PREVIEW;
     scroller.innerHTML = data.length
@@ -3198,6 +3206,8 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
       th.addEventListener('click', toggle);
       th.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
     });
+    scroller.querySelectorAll('.ct-rup').forEach((b) => b.addEventListener('click', () => pmove(b.dataset.k, -1, 'row')));
+    scroller.querySelectorAll('.ct-rdown').forEach((b) => b.addEventListener('click', () => pmove(b.dataset.k, 1, 'row')));
     scroller.querySelectorAll('.ct-pin[data-i]').forEach((b) => b.addEventListener('click', () => {
       const r = shown[Number(b.dataset.i)];
       const k = keyOf(r);
@@ -3220,6 +3230,26 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
     const out = []; const seen = new Set();
     orderPins(sortRows(rows)).forEach((r) => { const k = keyOf(r) || nameOf(r); if (!seen.has(k)) { seen.add(k); out.push({ k, name: nameOf(r) }); } });
     return out;
+  };
+
+  // order of the pinned products: the first change writes the whole list down
+  const setPinOrder = (keys, say, focus) => {
+    if (keys.length) undoPin = null;
+    prefs.pin_order = keys; msg.textContent = say;
+    save(); drawPanel(focus); drawTable();
+  };
+  // d = -1 up, +1 down; from = which button to keep the keyboard on afterwards
+  const pmove = (k, d, from) => {
+    const pl = pinList(); const keys = pl.map((x) => x.k); const i = keys.indexOf(k); const j = i + d;
+    if (i < 0 || j < 0 || j >= keys.length) return;
+    [keys[i], keys[j]] = [keys[j], keys[i]];
+    setPinOrder(keys, `ย้าย ${pl[i].name} ไปลำดับที่ ${j + 1} จาก ${keys.length}`, from === 'row' ? null : `.${d < 0 ? 'ct-pup' : 'ct-pdown'}[data-k="${CSS.escape(k)}"]`);
+    if (from === 'row') {
+      const sel = (c) => scroller.querySelector(`.${c}[data-k="${CSS.escape(k)}"]`);
+      let el = sel(d < 0 ? 'ct-rup' : 'ct-rdown');
+      if (!el || el.disabled) el = sel(d < 0 ? 'ct-rdown' : 'ct-rup');
+      if (el) el.focus();
+    }
   };
 
   function drawPanel(focusSel) {
@@ -3286,18 +3316,6 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
         prefs.order = o; save(); drawPanel(); drawTable();
       });
     });
-    // order of the pinned products: the first change writes the whole list down
-    const setPinOrder = (keys, say, focus) => {
-      if (keys.length) undoPin = null;
-      prefs.pin_order = keys; msg.textContent = say;
-      save(); drawPanel(focus); drawTable();
-    };
-    const pmove = (k, d) => {
-      const keys = plist.map((x) => x.k); const i = keys.indexOf(k); const j = i + d;
-      if (i < 0 || j < 0 || j >= keys.length) return;
-      [keys[i], keys[j]] = [keys[j], keys[i]];
-      setPinOrder(keys, `ย้าย ${plist[i].name} ไปลำดับที่ ${j + 1} จาก ${keys.length}`, `.${d < 0 ? 'ct-pup' : 'ct-pdown'}[data-k="${CSS.escape(k)}"]`);
-    };
     panel.querySelectorAll('.ct-pup').forEach((b) => b.addEventListener('click', () => pmove(b.dataset.k, -1)));
     panel.querySelectorAll('.ct-pdown').forEach((b) => b.addEventListener('click', () => pmove(b.dataset.k, 1)));
     let dragK = null;

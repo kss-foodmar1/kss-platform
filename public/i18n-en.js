@@ -1453,6 +1453,8 @@ window.I18N_EN = {
     ['เลิกปักหมวด {0}', 'Unpinned category {0}'],
     ['ย้าย {0} ไปลำดับที่ {1} จาก {2}', 'Moved {0} to position {1} of {2}'],
     ['ย้าย {0} ไปลำดับที่ {1}', 'Moved {0} to position {1}'],
+    ['เลื่อน {0} ขึ้นในลำดับที่ปักหมุด', 'Move {0} up in the pinned order'],
+    ['เลื่อน {0} ลงในลำดับที่ปักหมุด', 'Move {0} down in the pinned order'],
     ['เลื่อน {0} ขึ้น', 'Move {0} up'],
     ['เลื่อน {0} ลง', 'Move {0} down'],
     ['ปักไว้ทั้งหมวด {0}', 'Pinned with category {0}'],

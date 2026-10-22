@@ -1544,6 +1544,12 @@ body.arranging-on .ai-fab { display: none; }
 .ct-cols input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--primary); }
 .ct-pname { flex: 1; min-width: 0; font-size: 13.5px; overflow-wrap: anywhere; }
 .ct-pauto { margin-top: 6px; }
+.ct-pin-cell { white-space: nowrap; }
+.ct-rowmove { display: inline-flex; flex-direction: column; vertical-align: middle; margin-left: 2px; }
+.ct-rowmove button { width: 22px; height: 18px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 9px; line-height: 1; cursor: pointer; border-radius: 4px; }
+.ct-rowmove button:hover:not(:disabled) { background: var(--line-soft); color: var(--ink-2); }
+.ct-rowmove button:disabled { opacity: .25; cursor: default; }
+.ct-rowmove button:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .ct-grip { color: var(--muted); cursor: grab; letter-spacing: -2px; font-size: 13px; }
 .ct-move { display: flex; gap: 2px; }
 .ct-move button { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink-2); font-size: 11px; cursor: pointer; }
@@ -1571,6 +1577,8 @@ table.report-table.ct-table td { vertical-align: middle; }
   .ct-panel { grid-template-columns: minmax(0, 1fr); }
   .ct-tools .btn.small, .ct-pin, .ct-move button { min-height: 44px; min-width: 44px; }
   .ct-move button { width: 44px; height: 44px; }
+  .ct-rowmove { flex-direction: row; }
+  .ct-rowmove button { width: 44px; height: 44px; font-size: 12px; border: 1px solid var(--line); background: var(--surface); }
   .ct-cols li { min-height: 48px; }
   .table-scroll table.ct-table tr { position: relative; padding-right: 48px; }
   .table-scroll table.ct-table td.ct-pin-cell { position: absolute; right: 0; top: 6px; width: auto; }
