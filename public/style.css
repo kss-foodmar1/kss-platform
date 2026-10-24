@@ -1542,6 +1542,14 @@ body.arranging-on .ai-fab { display: none; }
 .ct-cols li.drop { border-color: var(--primary); }
 .ct-cols label { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; font-size: 13.5px; }
 .ct-cols input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--primary); }
+.ct-pname { flex: 1; min-width: 0; font-size: 13.5px; overflow-wrap: anywhere; }
+.ct-pauto { margin-top: 6px; }
+.ct-pin-cell { white-space: nowrap; }
+.ct-rowmove { display: inline-flex; flex-direction: column; vertical-align: middle; margin-left: 2px; }
+.ct-rowmove button { width: 22px; height: 18px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 9px; line-height: 1; cursor: pointer; border-radius: 4px; }
+.ct-rowmove button:hover:not(:disabled) { background: var(--line-soft); color: var(--ink-2); }
+.ct-rowmove button:disabled { opacity: .25; cursor: default; }
+.ct-rowmove button:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .ct-grip { color: var(--muted); cursor: grab; letter-spacing: -2px; font-size: 13px; }
 .ct-move { display: flex; gap: 2px; }
 .ct-move button { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink-2); font-size: 11px; cursor: pointer; }
@@ -1569,6 +1577,8 @@ table.report-table.ct-table td { vertical-align: middle; }
   .ct-panel { grid-template-columns: minmax(0, 1fr); }
   .ct-tools .btn.small, .ct-pin, .ct-move button { min-height: 44px; min-width: 44px; }
   .ct-move button { width: 44px; height: 44px; }
+  .ct-rowmove { flex-direction: row; }
+  .ct-rowmove button { width: 44px; height: 44px; font-size: 12px; border: 1px solid var(--line); background: var(--surface); }
   .ct-cols li { min-height: 48px; }
   .table-scroll table.ct-table tr { position: relative; padding-right: 48px; }
   .table-scroll table.ct-table td.ct-pin-cell { position: absolute; right: 0; top: 6px; width: auto; }
@@ -1579,3 +1589,21 @@ table.report-table.ct-table td { vertical-align: middle; }
   /* room under the panel and the list for the floating "ถาม AI" button */
   .widget-card:has(.ct-table) .widget-body { padding-bottom: 64px; }
 }
+
+/* Auto-fetch mode under the FMH key form. */
+.auto-sync-row { margin: 14px 0 0; padding: 12px 0 0; border: 0; border-top: 1px solid var(--line, rgba(127,127,127,.25)); min-width: 0; }
+.auto-sync-row legend { font-size: 14px; font-weight: 700; padding: 0 8px 0 0; }
+.auto-sync-row .auto-sync-quota { margin: 4px 0 8px; }
+.auto-sync-opt { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; cursor: pointer; min-height: 44px; }
+.auto-sync-opt input { width: 18px; height: 18px; flex: 0 0 auto; margin: 2px 0 0; }
+.auto-sync-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 14px; }
+.auto-sync-text .helper-text { margin: 0; max-width: 70ch; }
+
+/* Cost notice before 'ดึงข้อมูลใหม่'. */
+.refresh-confirm { margin-top: 10px; padding: 12px 14px; border: 1px solid var(--line, rgba(127,127,127,.3)); border-radius: 10px; background: var(--card, #fff); display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; }
+.refresh-confirm-over { border-color: var(--bad, #c0392b); }
+.refresh-confirm .rc-head { font-weight: 700; }
+.refresh-confirm .rc-list { margin: 0; padding-left: 18px; color: var(--muted); }
+.refresh-confirm .rc-quota, .refresh-confirm .rc-unknown { color: var(--muted); }
+.refresh-confirm-over .rc-quota { color: var(--bad, #c0392b); font-weight: 600; }
+.refresh-confirm .rc-actions { display: flex; gap: 8px; margin-top: 4px; }

@@ -861,6 +861,42 @@ function renderNoAccess(wrap) {
 
 // "Ready for real data?" — asks first, says what stays and what is cleared,
 // and when nothing real is connected yet explains how to connect it.
+// 'ดึงข้อมูลใหม่' spends FMH rows from a monthly quota. Under this many estimated rows it just runs.
+const REFRESH_WARN_ROWS = 100;
+function refreshNearQuota(est) {
+  const q = est.quota;
+  return !!(q && q.limit && (q.remaining - est.total) / q.limit < 0.2);
+}
+function showRefreshConfirm(bar, est, go) {
+  bar.querySelectorAll('.refresh-confirm').forEach((n) => n.remove());
+  const nf = (n) => Number(n).toLocaleString('th-TH');
+  const q = est.quota;
+  const left = q ? q.remaining - est.total : null;
+  const over = q && left < 0;
+  const biggest = est.items.filter((i) => !i.wait_min && i.est_rows).sort((a, b) => b.est_rows - a.est_rows).slice(0, 3);
+  const box = document.createElement('div');
+  box.className = 'refresh-confirm' + (over ? ' refresh-confirm-over' : '');
+  box.setAttribute('role', 'alert');
+  box.innerHTML = `
+    <div class="rc-head"></div>
+    ${biggest.length ? '<ul class="rc-list"></ul>' : ''}
+    ${q ? '<div class="rc-quota"></div>' : ''}
+    ${est.unknown ? '<div class="rc-unknown"></div>' : ''}
+    <div class="rc-actions"><button type="button" class="btn small primary rc-go"></button><button type="button" class="btn small ghost rc-cancel">ยกเลิก</button></div>`;
+  box.querySelector('.rc-head').textContent = est.total ? `จะดึงข้อมูลใหม่ประมาณ ${nf(est.total)} แถว` : 'จะดึงข้อมูลใหม่';
+  const ul = box.querySelector('.rc-list');
+  if (ul) biggest.forEach((i) => { const li = document.createElement('li'); li.textContent = `${i.label}: ประมาณ ${nf(i.est_rows)} แถว`; ul.appendChild(li); });
+  if (q) box.querySelector('.rc-quota').textContent = over
+    ? `โควตา FMH เดือนนี้เหลือ ${nf(q.remaining)} แถว น้อยกว่าที่ต้องใช้ ข้อมูลบางรายงานอาจดึงไม่ครบ`
+    : `โควตา FMH เดือนนี้เหลือ ${nf(q.remaining)} แถว จะเหลือประมาณ ${nf(left)} หลังดึง`;
+  if (est.unknown) box.querySelector('.rc-unknown').textContent = `มี ${est.unknown} รายงานที่ยังไม่เคยดึง จึงบอกจำนวนแถวไม่ได้`;
+  box.querySelector('.rc-go').textContent = 'ดึงเลย';
+  box.querySelector('.rc-cancel').addEventListener('click', () => box.remove());
+  box.querySelector('.rc-go').addEventListener('click', () => { box.remove(); go(); });
+  bar.appendChild(box);
+  box.querySelector('.rc-go').focus();
+}
+
 function showRealConfirm(bar, dashboardId, force = false) {
   bar.querySelector('.real-confirm')?.remove();
   const box = document.createElement('div');
@@ -1755,7 +1791,7 @@ class DashboardView {
                      ? '<strong>ตัวเลขเป็นข้อมูลตัวอย่าง ไม่ใช่ของร้านคุณ</strong> <span class="hide-m">ลองจัด dashboard ให้ถูกใจได้เต็มที่ widget และการจัดวางจะอยู่ครบเมื่อสลับเป็นข้อมูลจริง</span>'
                      : 'ตัวเลขนี้เป็นข้อมูลตัวอย่าง ไม่ใช่ข้อมูลจริงของร้าน'
                  }</span>`
-               : oldest ? `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1` : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
+               : oldest ? (this.dashboard.auto_sync_mode === 'off' ? `ข้อมูลล่าสุด: ${esc(oldest)} · ปิดการดึงอัตโนมัติ กด “ดึงข้อมูลใหม่” เมื่อต้องการ` : this.dashboard.auto_sync_mode === 'light' ? `ข้อมูลล่าสุด: ${esc(oldest)} · อัปเดตอัตโนมัติทุกคืน รายงานใหญ่สัปดาห์ละครั้ง` : `ข้อมูลล่าสุด: ${esc(oldest)} · ระบบอัปเดตอัตโนมัติทุกวันตี 1`) : keyMissing ? '' : 'ยังไม่เคย sync ข้อมูล'
            }</span>
            <span class="sync-actions">${this.dashboard.data_source === 'demo' ? '' : toggle}${this.dashboard.data_source === 'demo' && isCompanyAdmin() && !this.preview ? '<button type="button" class="btn small primary use-real-btn">พร้อมใช้ข้อมูลจริงแล้ว</button>' : ''}${keyMissing || this.dashboard.data_source === 'demo' ? '' : '<button type="button" class="btn small ghost fmh-refresh-btn">ดึงข้อมูลใหม่</button>'}</span>
          </div>
@@ -1843,21 +1879,33 @@ class DashboardView {
     if (real) real.addEventListener('click', () => showRealConfirm(bar, this.dashboard.id));
     const btn = bar.querySelector('.fmh-refresh-btn');
     if (btn) {
-      btn.addEventListener('click', async () => {
+      const failNote = (err) => {
+        btn.disabled = false;
+        btn.textContent = 'ดึงข้อมูลใหม่';
+        const note = document.createElement('div');
+        note.className = 'inline-note';
+        note.textContent = err.message;
+        bar.appendChild(note);
+        setTimeout(() => note.remove(), 6000);
+      };
+      const doRefresh = async () => {
         btn.disabled = true;
         btn.textContent = 'กำลัง refresh...';
         try {
           await api(`/api/dashboards/${this.dashboard.id}/refresh`, { method: 'POST' });
           await this.load();
         } catch (err) {
-          btn.disabled = false;
-          btn.textContent = 'ดึงข้อมูลใหม่';
-          const note = document.createElement('div');
-          note.className = 'inline-note';
-          note.textContent = err.message;
-          bar.appendChild(note);
-          setTimeout(() => note.remove(), 6000);
+          failNote(err);
         }
+      };
+      btn.addEventListener('click', async () => {
+        // Say what it will cost first when it is more than a few rows: every row counts against the month's FMH quota.
+        btn.disabled = true;
+        let est = null;
+        try { est = await api(`/api/dashboards/${this.dashboard.id}/refresh-estimate`); } catch (e) { /* no estimate: just pull */ }
+        btn.disabled = false;
+        if (!est || est.demo || !est.will_pull || (est.total < REFRESH_WARN_ROWS && !est.unknown && !refreshNearQuota(est))) return doRefresh();
+        showRefreshConfirm(bar, est, doRefresh);
       });
     }
   }
@@ -2999,7 +3047,7 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
   const all = cfg.columns && cfg.columns.length ? cfg.columns : Object.keys(rows[0] || {}).map((field) => ({ field }));
   const label = (c) => c.label || c.field.replace(/_/g, ' ');
   const byField = new Map(all.map((c) => [c.field, c]));
-  const blank = () => ({ order: all.map((c) => c.field), hidden: [...(cu.default_hidden || [])], pins: [], pin_cats: [], pinned_only: false, branch: '' });
+  const blank = () => ({ order: all.map((c) => c.field), hidden: [...(cu.default_hidden || [])], pins: [], pin_order: [], pin_cats: [], pinned_only: false, branch: '' });
   const load = () => {
     const p = (ctx.widget && ctx.widget.my_prefs) || null;
     const b = blank();
@@ -3007,7 +3055,7 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
     // columns added to the widget later show up at the end, visible
     const order = (p.order || []).filter((f) => byField.has(f));
     all.forEach((c) => { if (!order.includes(c.field)) order.push(c.field); });
-    return { order, hidden: (p.hidden || []).filter((f) => byField.has(f)), pins: p.pins || [], pin_cats: p.pin_cats || [], pinned_only: !!p.pinned_only, branch: p.branch || '' };
+    return { order, hidden: (p.hidden || []).filter((f) => byField.has(f)), pins: p.pins || [], pin_order: p.pin_order || [], pin_cats: p.pin_cats || [], pinned_only: !!p.pinned_only, branch: p.branch || '' };
   };
   let prefs = load();
   let saveTimer = null;
@@ -3031,6 +3079,7 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
   const cats = cu.category ? [...new Set(rows.map(catOf).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'th')) : [];
   let sort = cfg.sort_by ? { ...cfg.sort_by } : null;
   let query = '';
+  let undoPin = null; // the order just cleared, so it can be put back
   let expanded = false;
   const PREVIEW = cfg.preview_rows || 10;
   const limit = cfg.top_n || 500;
@@ -3055,6 +3104,29 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
   const msg = $('.ct-msg');
   const visible = () => prefs.order.filter((f) => !prefs.hidden.includes(f)).map((f) => byField.get(f));
 
+  function sortRows(data) {
+    const out = [...data];
+    if (sort) {
+      out.sort((a, b) => {
+        const x = a[sort.field]; const y = b[sort.field];
+        const cmp = typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? ''), 'th');
+        return sort.dir === 'asc' ? cmp : -cmp;
+      });
+    }
+    return out;
+  }
+  // The pinned rows of an already-sorted list, in the order the table shows them: the
+  // person's own order first, then the table's sort; each product's places together, kitchen first.
+  function orderPins(sorted) {
+    const pins = sorted.filter(pinned);
+    const rank = new Map();
+    pins.forEach((r) => { const k = keyOf(r) || nameOf(r); if (!rank.has(k)) rank.set(k, rank.size); });
+    const mine = (r) => { const i = prefs.pin_order.indexOf(keyOf(r) || nameOf(r)); return i < 0 ? 1e6 : i; };
+    const placeOf = (r) => String(r.branch ?? '');
+    return pins.sort((a, b) => mine(a) - mine(b) || rank.get(keyOf(a) || nameOf(a)) - rank.get(keyOf(b) || nameOf(b))
+      || (CK_NAME.test(placeOf(b)) - CK_NAME.test(placeOf(a))) || placeOf(a).localeCompare(placeOf(b), 'th'));
+  }
+
   function dataNow() {
     let data = rows;
     if (BF && prefs.branch) data = data.filter((r) => String(r[BF] ?? '') === prefs.branch);
@@ -3064,21 +3136,8 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
     }
     if (prefs.pinned_only) data = data.filter(pinned);
     data = [...data];
-    if (sort) {
-      data.sort((a, b) => {
-        const x = a[sort.field]; const y = b[sort.field];
-        const cmp = typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? ''), 'th');
-        return sort.dir === 'asc' ? cmp : -cmp;
-      });
-    }
-    // pinned rows lead, each product's places together (the kitchen first), products in
-    // the order the sort puts their first row
-    const pins = data.filter(pinned);
-    const rank = new Map();
-    pins.forEach((r) => { const k = keyOf(r) || nameOf(r); if (!rank.has(k)) rank.set(k, rank.size); });
-    const placeOf = (r) => String(r.branch ?? '');
-    pins.sort((a, b) => rank.get(keyOf(a) || nameOf(a)) - rank.get(keyOf(b) || nameOf(b))
-      || (CK_NAME.test(placeOf(b)) - CK_NAME.test(placeOf(a))) || placeOf(a).localeCompare(placeOf(b), 'th'));
+    data = sortRows(data);
+    const pins = orderPins(data);
     return [...pins, ...data.filter((r) => !pinned(r))];
   }
 
@@ -3105,6 +3164,8 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
       const isNum = rows.length && typeof rows[0][c.field] === 'number';
       return `<th tabindex="0" data-field="${esc(c.field)}"${isNum ? ' class="num"' : ''} aria-sort="${on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}">${esc(label(c))}${on ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}</th>`;
     }).join('');
+    const plist = pinList(); const plKeys = plist.map((x) => x.k);
+    const seenGroup = new Set();
     const rowsHtml = shown.map((r, i) => {
       const k = keyOf(r);
       const own = prefs.pins.includes(k);
@@ -3121,7 +3182,13 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
           ? `<td class="num" data-label="${esc(label(c))}">${esc(c.format ? fmtValue(v, c.format) : v.toLocaleString('th-TH', { maximumFractionDigits: 2 }))}${flag}</td>`
           : `<td class="ct-txt" data-label="${esc(label(c))}">${esc(v == null || v === '' ? '-' : v)}</td>`;
       }).join('');
-      return `<tr${pinned(r) ? ' class="ct-pinned"' : ''}><td class="ct-pin-cell">${pin}</td>${cells}</tr>`;
+      // pinned products carry their own up/down arrows (once per product, on its first row)
+      const gk = keyOf(r) || nameOf(r); let mv = '';
+      if (pinned(r) && plKeys.length > 1 && !seenGroup.has(gk)) {
+        seenGroup.add(gk); const pi = plKeys.indexOf(gk);
+        mv = `<span class="ct-rowmove"><button type="button" class="ct-rup" data-k="${esc(gk)}" aria-label="เลื่อน ${esc(nameOf(r))} ขึ้นในลำดับที่ปักหมุด"${pi === 0 ? ' disabled' : ''}>▲</button><button type="button" class="ct-rdown" data-k="${esc(gk)}" aria-label="เลื่อน ${esc(nameOf(r))} ลงในลำดับที่ปักหมุด"${pi === plKeys.length - 1 ? ' disabled' : ''}>▼</button></span>`;
+      }
+      return `<tr${pinned(r) ? ' class="ct-pinned"' : ''}><td class="ct-pin-cell">${pin}${mv}</td>${cells}</tr>`;
     }).join('');
     const more = Math.min(data.length, limit) - PREVIEW;
     scroller.innerHTML = data.length
@@ -3139,14 +3206,18 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
       th.addEventListener('click', toggle);
       th.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
     });
+    scroller.querySelectorAll('.ct-rup').forEach((b) => b.addEventListener('click', () => pmove(b.dataset.k, -1, 'row')));
+    scroller.querySelectorAll('.ct-rdown').forEach((b) => b.addEventListener('click', () => pmove(b.dataset.k, 1, 'row')));
     scroller.querySelectorAll('.ct-pin[data-i]').forEach((b) => b.addEventListener('click', () => {
       const r = shown[Number(b.dataset.i)];
       const k = keyOf(r);
       if (!k) return;
       const was = prefs.pins.includes(k);
       prefs.pins = was ? prefs.pins.filter((x) => x !== k) : [...prefs.pins, k];
+      if (was) prefs.pin_order = prefs.pin_order.filter((x) => x !== k);
+      else if (prefs.pin_order.length && !prefs.pin_order.includes(k)) prefs.pin_order = [...prefs.pin_order, k];
       msg.textContent = was ? `เลิกปักหมุด ${nameOf(r)}` : `ปักหมุด ${nameOf(r)} ไว้บนสุดแล้ว`;
-      save(); drawTools(); drawTable();
+      save(); drawPanel(); drawTools(); drawTable();
       // keep the keyboard on the same product's pin, wherever it moved
       const idx = shown.length && [...scroller.querySelectorAll('.ct-pin[data-i]')].find((x) => keyOf(shownNow()[Number(x.dataset.i)]) === k);
       if (idx) idx.focus();
@@ -3154,7 +3225,36 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
   }
   const shownNow = () => dataNow().slice(0, expanded ? limit : PREVIEW);
 
+  // every pinned product (one entry each, whatever branch or search is on), in the order shown
+  const pinList = () => {
+    const out = []; const seen = new Set();
+    orderPins(sortRows(rows)).forEach((r) => { const k = keyOf(r) || nameOf(r); if (!seen.has(k)) { seen.add(k); out.push({ k, name: nameOf(r) }); } });
+    return out;
+  };
+
+  // order of the pinned products: the first change writes the whole list down
+  const setPinOrder = (keys, say, focus) => {
+    if (keys.length) undoPin = null;
+    prefs.pin_order = keys; msg.textContent = say;
+    save(); drawPanel(focus); drawTable();
+  };
+  // d = -1 up, +1 down; from = which button to keep the keyboard on afterwards
+  const pmove = (k, d, from) => {
+    const pl = pinList(); const keys = pl.map((x) => x.k); const i = keys.indexOf(k); const j = i + d;
+    if (i < 0 || j < 0 || j >= keys.length) return;
+    [keys[i], keys[j]] = [keys[j], keys[i]];
+    setPinOrder(keys, `ย้าย ${pl[i].name} ไปลำดับที่ ${j + 1} จาก ${keys.length}`, from === 'row' ? null : `.${d < 0 ? 'ct-pup' : 'ct-pdown'}[data-k="${CSS.escape(k)}"]`);
+    if (from === 'row') {
+      const sel = (c) => scroller.querySelector(`.${c}[data-k="${CSS.escape(k)}"]`);
+      let el = sel(d < 0 ? 'ct-rup' : 'ct-rdown');
+      if (!el || el.disabled) el = sel(d < 0 ? 'ct-rdown' : 'ct-rup');
+      if (el) el.focus();
+    }
+  };
+
   function drawPanel(focusSel) {
+    const plist = pinList();
+    const touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
     const cols = prefs.order.map((f) => byField.get(f));
     panel.innerHTML = `
       <fieldset class="ct-cols"><legend>คอลัมน์ที่แสดง และลำดับ</legend>
@@ -3167,6 +3267,17 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
             <button type="button" class="ct-down" data-f="${esc(c.field)}" aria-label="เลื่อน ${esc(label(c))} ลง"${i === cols.length - 1 ? ' disabled' : ''}>▼</button>
           </span></li>`).join('')}</ol>
       </fieldset>
+      ${plist.length > 1 ? `<fieldset class="ct-cols ct-pinorder"><legend>ลำดับสินค้าที่ปักหมุด</legend>
+        <p class="muted ct-hint">${touch ? 'เรียงสินค้าที่ปักหมุดตามที่ต้องการ ใช้ปุ่มขึ้นลง ตารางจะเรียงตามนี้เสมอ' : 'เรียงสินค้าที่ปักหมุดตามที่ต้องการ ใช้ปุ่มขึ้นลงหรือลาก ตารางจะเรียงตามนี้เสมอ'}</p>
+        <ol>${plist.map((x, i) => `<li${touch ? '' : ' draggable="true"'} data-k="${esc(x.k)}">
+          <span class="ct-grip" aria-hidden="true">⋮⋮</span>
+          <span class="ct-pname">${esc(x.name)}</span>
+          <span class="ct-move">
+            <button type="button" class="ct-pup" data-k="${esc(x.k)}" aria-label="เลื่อน ${esc(x.name)} ขึ้น"${i === 0 ? ' disabled' : ''}>▲</button>
+            <button type="button" class="ct-pdown" data-k="${esc(x.k)}" aria-label="เลื่อน ${esc(x.name)} ลง"${i === plist.length - 1 ? ' disabled' : ''}>▼</button>
+          </span></li>`).join('')}</ol>
+        ${prefs.pin_order.length ? '<button type="button" class="link-btn ct-pauto">ล้างลำดับที่จัดเอง (กลับไปเรียงตามตาราง)</button>' : undoPin ? '<button type="button" class="link-btn ct-pundo">ย้อนกลับลำดับที่จัดไว้</button>' : ''}
+      </fieldset>` : ''}
       ${cats.length ? `<fieldset class="ct-cats"><legend>ปักหมุดทั้งหมวด</legend>
         <p class="muted ct-hint">สินค้าทุกตัวในหมวดที่เลือกจะขึ้นไปอยู่บนสุด</p>
         <div class="ct-chips">${cats.map((c) => { const on = prefs.pin_cats.includes(c); const n = rows.filter((r) => catOf(r) === c).length; return `<button type="button" class="ct-cat${on ? ' on' : ''}" data-c="${esc(c)}" aria-pressed="${on}">${on ? PIN_SVG + ' ' : ''}${esc(c)} <span class="muted">${n}</span></button>`; }).join('')}</div>
@@ -3205,6 +3316,26 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
         prefs.order = o; save(); drawPanel(); drawTable();
       });
     });
+    panel.querySelectorAll('.ct-pup').forEach((b) => b.addEventListener('click', () => pmove(b.dataset.k, -1)));
+    panel.querySelectorAll('.ct-pdown').forEach((b) => b.addEventListener('click', () => pmove(b.dataset.k, 1)));
+    let dragK = null;
+    panel.querySelectorAll('li[data-k]').forEach((li) => {
+      li.addEventListener('dragstart', (e) => { dragK = li.dataset.k; li.classList.add('dragging'); try { e.dataTransfer.setData('text/plain', dragK); e.dataTransfer.effectAllowed = 'move'; } catch (er) { /* old browser */ } });
+      li.addEventListener('dragend', () => { li.classList.remove('dragging'); dragK = null; });
+      li.addEventListener('dragover', (e) => { if (dragK && dragK !== li.dataset.k) { e.preventDefault(); li.classList.add('drop'); } });
+      li.addEventListener('dragleave', () => li.classList.remove('drop'));
+      li.addEventListener('drop', (e) => {
+        e.preventDefault(); li.classList.remove('drop');
+        if (!dragK || dragK === li.dataset.k) return;
+        const keys = plist.map((x) => x.k); const from = keys.indexOf(dragK); const to = keys.indexOf(li.dataset.k);
+        keys.splice(from, 1); keys.splice(to, 0, dragK);
+        setPinOrder(keys, `ย้าย ${plist[from].name} ไปลำดับที่ ${to + 1} จาก ${keys.length}`);
+      });
+    });
+    const pauto = panel.querySelector('.ct-pauto');
+    if (pauto) pauto.addEventListener('click', () => { const was = prefs.pin_order; setPinOrder([], 'ล้างลำดับที่จัดเองแล้ว สินค้าที่ปักหมุดเรียงตามตาราง', '.ct-pundo'); undoPin = was; drawPanel('.ct-pundo'); });
+    const pundo = panel.querySelector('.ct-pundo');
+    if (pundo) pundo.addEventListener('click', () => { const was = undoPin; setPinOrder(was, 'คืนลำดับที่จัดไว้แล้ว', '.ct-pauto'); });
     panel.querySelectorAll('.ct-cat').forEach((b) => b.addEventListener('click', () => {
       const c = b.dataset.c; const was = prefs.pin_cats.includes(c);
       prefs.pin_cats = was ? prefs.pin_cats.filter((x) => x !== c) : [...prefs.pin_cats, c];
@@ -3216,7 +3347,13 @@ function renderCustomTable(body, rows, cfg, ctx = {}) {
       save(); drawPanel('.ct-reset'); drawTools(); drawTable();
     });
     panel.querySelector('.ct-done').addEventListener('click', () => { CT_OPEN.set(wid, false); drawTools(); $('.ct-open').focus(); });
-    if (focusSel) { const el = panel.querySelector(focusSel); if (el && !el.disabled) el.focus(); else { const any = panel.querySelector(focusSel.replace(/^\.ct-(up|down)/, '.ct-$1')); if (any) any.focus(); } }
+    if (focusSel) {
+      // a button that just became disabled (top or bottom of the list) hands focus to its partner
+      const opp = { 'ct-up': 'ct-down', 'ct-down': 'ct-up', 'ct-pup': 'ct-pdown', 'ct-pdown': 'ct-pup' };
+      let el = panel.querySelector(focusSel);
+      if (el && el.disabled) el = panel.querySelector(focusSel.replace(/ct-(up|down|pup|pdown)/, (m, c) => opp['ct-' + c].slice(0))) || el;
+      if (el && !el.disabled) el.focus();
+    }
   }
 
   $('.ct-open').addEventListener('click', () => {

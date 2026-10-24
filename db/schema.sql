@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS companies (
   onboarding_json TEXT NULL,
   self_serve BOOLEAN NOT NULL DEFAULT FALSE,
   data_purged_at TIMESTAMP NULL,
+  -- The automatic (1am + boot) FMH pull for this company. all = every report every
+  -- night; light = big full-table reports (stock balance) only weekly; off = only when
+  -- someone presses 'ดึงข้อมูลใหม่'. The monthly row quota is what this protects.
+  auto_sync_mode ENUM('all','light','off') NOT NULL DEFAULT 'all',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) DEFAULT CHARSET=utf8mb4;
 

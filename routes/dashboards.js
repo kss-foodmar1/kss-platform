@@ -14,7 +14,7 @@ const express = require('express');
 const pool = require('../db/pool');
 const { requireAuth } = require('../middleware/auth');
 const { wrap, isSuperadmin, resolveCompanyId, getDashboardForUser } = require('../lib/access');
-const { FMH_REPORTS, getCached, getSaved, getSyncHealth, syncOne, cacheKeyFor, pullsForWidget } = require('../lib/fmhCache');
+const { FMH_REPORTS, getCached, getSaved, getSyncHealth, syncOne, cacheKeyFor, pullsForWidget, estimatePulls } = require('../lib/fmhCache');
 const { withTrigger } = require('../lib/fmhUsage');
 const { listWidgets } = require('../lib/widgetCatalog');
 const fmhFiles = require('../lib/fmhFiles');
@@ -187,15 +187,15 @@ router.get(
       const byId = new Map(prefs.map((p) => [p.widget_id, p.prefs_json]));
       widgets.forEach((w) => { try { w.my_prefs = byId.has(w.id) ? JSON.parse(byId.get(w.id)) : null; } catch (e) { w.my_prefs = null; } });
     }
-    const [[co]] = await pool.query(`SELECT data_source, onboarding_json FROM companies WHERE id = ?`, [dashboard.company_id]);
+    const [[co]] = await pool.query(`SELECT data_source, onboarding_json, auto_sync_mode FROM companies WHERE id = ?`, [dashboard.company_id]);
     // the first-run answers pick which findings lead the page (public/app.js renderInsights)
     let profile = null;
     try { profile = co && co.onboarding_json ? JSON.parse(co.onboarding_json) : null; } catch (e) { /* none */ }
-    res.json({ dashboard: { ...dashboard, data_source: co ? co.data_source : 'fmh', profile }, widgets, sources });
+    res.json({ dashboard: { ...dashboard, data_source: co ? co.data_source : 'fmh', auto_sync_mode: co ? co.auto_sync_mode : 'all', profile }, widgets, sources });
   })
 );
 
-// One viewer's arrangement of one table widget: { order, hidden, pins, pin_cats, pinned_only }.
+// One viewer's arrangement of one table widget: { order, hidden, pins, pin_order, pin_cats, pinned_only }.
 // Anyone who can see the dashboard may arrange it for themselves; it changes nothing for others.
 const strList = (v, max) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string' && x.length <= 200).slice(0, max) : []);
 router.put(
@@ -215,6 +215,7 @@ router.put(
       order: strList(p.order, 60),
       hidden: strList(p.hidden, 60),
       pins: strList(p.pins, 500),
+      pin_order: strList(p.pin_order, 500),
       pin_cats: strList(p.pin_cats, 100),
       pinned_only: !!p.pinned_only,
       branch: typeof p.branch === 'string' ? p.branch.slice(0, 200) : '',
@@ -303,11 +304,14 @@ async function serveData(req, res, companyId, widgets) {
     });
   }
   if (!cached) {
-    const [[company]] = await pool.query(`SELECT fmh_api_key_enc, data_source FROM companies WHERE id = ?`, [companyId]);
+    const [[company]] = await pool.query(`SELECT fmh_api_key_enc, data_source, auto_sync_mode FROM companies WHERE id = ?`, [companyId]);
     const connected = company && (company.fmh_api_key_enc || company.data_source === 'demo');
+    const manualOnly = company && company.data_source !== 'demo' && company.auto_sync_mode === 'off';
     return res.status(409).json({
       error: connected
-        ? 'ยังไม่มีข้อมูล — ระบบจะ sync ให้ตอนตี 1 หรือกด Refresh ด่วนได้เลย'
+        ? manualOnly
+          ? 'ยังไม่มีข้อมูล — ปิดการดึงข้อมูลอัตโนมัติอยู่ กด “ดึงข้อมูลใหม่” เพื่อดึงครั้งแรก'
+          : 'ยังไม่มีข้อมูล — ระบบจะ sync ให้ตอนตี 1 หรือกด Refresh ด่วนได้เลย'
         : 'ยังไม่ได้ตั้งค่า FMH API Key ของบริษัทนี้',
       code: connected ? 'FMH_NOT_SYNCED' : 'FMH_KEY_MISSING',
       health,
@@ -335,6 +339,37 @@ router.get(
     const dashboard = await getDashboardForUser(req.user, req.params.id);
     if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
     await serveData(req, res, dashboard.company_id, await listWidgets(dashboard.id));
+  })
+);
+
+// What pressing 'ดึงข้อมูลใหม่' would cost: the pulls it would run (those past their cooldown),
+// each with the rows its last pull returned, and the company's quota line. Spends nothing.
+router.get(
+  '/:id/refresh-estimate',
+  requireAuth,
+  wrap(async (req, res) => {
+    const dashboard = await getDashboardForUser(req.user, req.params.id);
+    if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
+    const [[company]] = await pool.query(`SELECT data_source FROM companies WHERE id = ?`, [dashboard.company_id]);
+    const widgets = await listWidgets(dashboard.id);
+    const pulls = new Map();
+    widgets.forEach((w) => pullsForWidget(w.report_source, w.config).forEach((p) => pulls.set(cacheKeyFor(p.source, p.grouping), p)));
+    if (company && company.data_source === 'demo') return res.json({ demo: true, items: [], total: 0, quota: null });
+    const { items, quota } = await estimatePulls(dashboard.company_id, [...pulls.values()]);
+    const [ages] = await pool.query(`SELECT cache_key, synced_at FROM fmh_report_cache WHERE company_id = ?`, [dashboard.company_id]);
+    const syncedAt = new Map(ages.map((r) => [r.cache_key, new Date(r.synced_at).getTime()]));
+    const out = items.map((i) => {
+      const waitMs = !i.free && syncedAt.has(i.key) ? REFRESH_COOLDOWN_MS - (Date.now() - syncedAt.get(i.key)) : 0;
+      return { key: i.key, label: i.label, est_rows: i.est_rows, heavy: i.heavy, free: i.free, wait_min: waitMs > 0 ? Math.ceil(waitMs / 60000) : 0 };
+    });
+    const willPull = out.filter((i) => !i.free && !i.wait_min);
+    res.json({
+      items: out.filter((i) => !i.free),
+      will_pull: willPull.length,
+      total: willPull.reduce((n, i) => n + (i.est_rows || 0), 0),
+      unknown: willPull.filter((i) => i.est_rows === null).length,
+      quota,
+    });
   })
 );
 
