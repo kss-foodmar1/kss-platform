@@ -257,6 +257,22 @@ router.put(
   })
 );
 
+router.put(
+  '/:id/par-uom',
+  requireAuth,
+  wrap(async (req, res) => {
+    const dashboard = await getDashboardForUser(req.user, req.params.id);
+    if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
+    if (req.user.role !== 'company_admin' && !isSuperadmin(req.user)) return res.status(403).json({ error: 'เฉพาะผู้ดูแลบริษัทที่ตั้งหน่วยสั่งได้' });
+    try {
+      res.json({ ...(await require('../lib/parLevel').setUom(dashboard.company_id, req.user.id, req.body || {})), can_edit: true });
+    } catch (err) {
+      if (err.status) return res.status(err.status).json({ error: err.message });
+      throw err;
+    }
+  })
+);
+
 // Cached rows of one report for a page: a dashboard, or one widget previewed
 // in the library. Never spends FMH quota: only demo data, uploaded files and
 // computed reports are built on view.

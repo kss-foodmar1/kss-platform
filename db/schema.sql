@@ -355,6 +355,20 @@ CREATE TABLE IF NOT EXISTS par_settings (
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;
 
+-- Auto PAR Level: how many base units (g / ml / pieces, the unit recipes are
+-- written in) one ORDER unit holds, set by a person when the purchase data
+-- does not say. PAR is meaningful in the order unit only.
+CREATE TABLE IF NOT EXISTS par_uom (
+  company_id INT NOT NULL,
+  ingredient_code VARCHAR(190) NOT NULL,
+  order_uom VARCHAR(60) NOT NULL,
+  ratio DECIMAL(16,4) NOT NULL,
+  updated_by INT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (company_id, ingredient_code),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
 -- LINE bot (lib/line.js): one LINE Official Account per company. The channel
 -- secret and access token are the company's own, encrypted at rest. The bot
 -- binds to the first group that talks to it (group_id); last_alert_key is the

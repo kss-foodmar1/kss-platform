@@ -34,7 +34,13 @@ days.forEach((d) => {
 posLines.push({ sale_date: days[27], branch: 'A', menu_name: 'ค่าส่ง', qty: 1, net_sales: 50 });
 posLines.push({ sale_date: days[3], branch: 'A', menu_name: 'เมนูไม่รู้จัก', qty: 3, net_sales: 300 });
 
-const out = par.compute({ posLines, recipeRows, resolve });
+// Order units from the purchase data: pork bought by the KG, basil by an unreadable "ถุง", lime by the piece.
+const orderHints = new Map([
+  ['PORK', { uom: 'KG', name: 'หมูสับ' }],
+  ['BASIL', { uom: 'ถุง', name: 'ใบกะเพรา' }],
+  ['LIME', { uom: 'PIECE', name: 'มะนาว' }],
+]);
+const out = par.compute({ posLines, recipeRows, resolve, orderHints });
 const row = (code) => out.rows.find((r) => r.ingredient_code === code && r.branch === 'A');
 
 // Per-week usage of pork: กะเพรา (10×5 weekdays + 20 Sat) = 70 servings × 200 g = 14,000 g;
@@ -54,6 +60,16 @@ check('window is 28 days ending on the last sale', out.meta.par.from === days[0]
 check('unmatched menu counted, delivery fee ignored', out.meta.par.unmatched_menus === 1);
 // matched 1000×24 + 400×24 = 33,600 of food 33,900 (the unmatched 300 is food; the fee is not)
 check('coverage % = matched ÷ food sales', near(out.meta.par.coverage_pct, 99.1, 0.06), out.meta.par.coverage_pct);
+
+check('pork order unit: 1 KG = 1,000 g', pork.order_uom === 'KG' && pork.order_ratio === 1000, JSON.stringify(pork));
+check('basil order unit unknown (ถุง says nothing about size)', row('BASIL').order_uom === 'ถุง' && row('BASIL').order_ratio === null);
+check('pieces ordered by the piece: ratio 1', row('LIME').order_ratio === 1);
+check('no purchase data → no order unit', par.compute({ posLines, recipeRows, resolve }).rows[0].order_uom === null);
+check('pack size in the product name (500 กรัม/แพ็ค) gives the ratio', par.orderUnitOf('PACK', 'กุ้ง 500 กรัม/แพ็ค', 'g') === 500);
+check('BAG (5KG) read as 5,000 g, and not for a volume ingredient', par.orderUnitOf('BAG (5KG)', '', 'g') === 5000 && par.orderUnitOf('BAG (5KG)', '', 'ml') === null);
+check('litres to ml', par.orderUnitOf('ขวด', 'น้ำมัน 1 ลิตร/ขวด', 'ml') === 1000);
+// closed Sundays: 28 calendar days; 24 trading days + the last Sunday, which has one delivery-fee line (a POS line is a trading day)
+check('days with no sales counted: 3 closed Sundays', pork.days === 28 && pork.sales_days === 25 && pork.missing_days === 3, JSON.stringify(pork));
 
 // A branch that opened 7 days before the end is averaged over its own 7 days.
 const young = par.compute({

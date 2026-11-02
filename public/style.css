@@ -1726,9 +1726,14 @@ td.num .par-code { text-align: right; }
 td.num .par-flag { display: block; width: fit-content; margin: 2px 0 0 auto; }
 .par-min, .par-max { font-variant-numeric: tabular-nums; }
 .par-formula { margin-top: 8px; }
-@media (max-width: 700px) {
-  .par-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .par-cat-name, .par-actions { grid-column: 1 / -1; }
-  .par-actions .btn.small { min-height: 44px; flex: 1 1 120px; }
-  .par-field input { min-height: 44px; }
-}
+.par-uom-row { grid-template-columns: minmax(180px, 1.4fr) minmax(130px, 1fr) minmax(130px, 1fr) auto; }
+.par-err { grid-column: 1 / -1; margin: 0; padding: 6px 10px; border: 1px solid var(--danger-line); border-radius: 8px; background: var(--danger-soft); color: var(--danger-ink); font-size: 13px; }
+.par-err[hidden] { display: none; }
+.par-field input[aria-invalid="true"] { border-color: var(--danger); }
+.par-flag-warn { border-color: var(--danger-line); background: var(--danger-soft); color: var(--danger-ink); margin-left: 0; }
+.par-warn { margin: 4px 0 8px; padding: 8px 12px 8px 28px; border: 1px solid var(--amber-line); border-radius: 10px; background: var(--amber-soft); color: var(--amber-ink); font-size: 13px; line-height: 1.5; }
+.par-warn li + li { margin-top: 3px; }
+.par-notes .widget-foot { margin: 0 0 4px; }
+.par-caveat { margin-top: 2px; }
+.desktop-only { padding: 18px 16px; border: 1px dashed var(--line-strong); border-radius: 12px; background: var(--surface-2); color: var(--ink-2); text-align: center; }
+.desktop-only p { margin: 6px 0 0; font-size: 13.5px; }
