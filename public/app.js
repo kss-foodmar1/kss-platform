@@ -1669,13 +1669,10 @@ class DashboardView {
     return active.filter(([f]) => !(f in rows[0])).map(([f]) => f);
   }
 
-  // Saved mode: anchor "today" to the newest saved pull and move the date range
-  // with it; live mode: back to the real today.
+  // "Today" is always the real today (Thai time), in saved mode too, so "this month"
+  // means the current calendar month even when the last sync is older.
   applyAnchor() {
-    const times = this.useSaved
-      ? Object.values(this.results).filter((r) => r && r.meta && r.meta.synced_at).map((r) => new Date(r.meta.synced_at).getTime())
-      : [];
-    dataAnchor = times.length ? Math.max(...times) : null;
+    dataAnchor = null;
     if (this.rangePreset) this.range = RangePresets.compute(this.rangePreset, todayIso());
     const s = this.wrap.querySelector('.range-start');
     const e = this.wrap.querySelector('.range-end');
