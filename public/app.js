@@ -34,6 +34,8 @@ const withAlpha = (c, a) => {
   const m = /rgba?\(\s*(\d+)[ ,]+(\d+)[ ,]+(\d+)/.exec(String(c));
   return m ? `rgba(${m[1]}, ${m[2]}, ${m[3]}, ${a})` : c;
 };
+// Thai text, or the English one when the user's language is English (for text built in code).
+const L = (th, en) => (window.I18N && window.I18N.lang === 'en' ? en : th);
 const SKELETON = '<div class="skel" role="status" aria-label="กำลังโหลด"><span></span><span></span><span></span></div>';
 const tokenList = (names) => new Proxy(names, { get: (t, k) => (/^\d+$/.test(String(k)) ? cssv(t[k]) : t[k]) });
 
@@ -1259,6 +1261,8 @@ const nowRef = () => (dataAnchor ? new Date(dataAnchor) : new Date());
 const todayIso = () => localIso(nowRef());
 // Report sources that can take older months from FMH export files (fmh-file.js).
 const FILE_SOURCES = ['sales-analysis', 'purchase-analysis'];
+// YYYY-MM-DD shifted by n days (local calendar days).
+const dayShift = (iso, n) => localIso(new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)) + n));
 const dayLabel = (iso) => (iso ? new Date(String(iso).slice(0, 10) + 'T00:00:00').toLocaleDateString(I18N.locale(), { day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const nextDay = (iso) => localIso(new Date(Date.parse(iso + 'T00:00:00') + 86400000));
 const prevDay = (iso) => localIso(new Date(Date.parse(iso + 'T00:00:00') - 86400000));
@@ -1300,12 +1304,16 @@ class DashboardView {
       : `/api/dashboards/${dashboard.id}`;
     this.results = {}; // source -> { data, meta } | { error, code }
     this.hasDateSource = Object.values(sources).some((s) => s.date_field);
+    // Which date column the range counts by, for Sales / Purchase Analysis (public/date-basis.js):
+    // Order Date unless this user picked another, which the server remembers for them.
+    this.hasBasis = Object.values(sources).some((s) => s.date_basis);
+    this.dateBasis = DateBasis.normalize(dashboard.my_date_basis);
     // Reports whose older months can come from FMH export files: these pages
     // offer 6-month / 1-year ranges.
     this.fileCapable = Object.values(sources).some((s) => FILE_SOURCES.includes(s.source) && !s.grouping);
     this.useSaved = savedMode.get();
-    this.rangeDays = 30; // the active chip; null after a custom date pick
-    this.range = { start: daysAgoIso(30), end: todayIso() };
+    this.rangePreset = RangePresets.DEFAULT; // the picked ready-made range; null after a custom date pick
+    this.range = RangePresets.compute(this.rangePreset, todayIso());
     this.build();
   }
 
@@ -1342,14 +1350,15 @@ class DashboardView {
         ${
           this.hasDateSource
             ? `<div class="range-control" role="group" aria-label="ช่วงวันที่">
-                 <button type="button" class="range-chip" data-days="7">7 วัน</button>
-                 <button type="button" class="range-chip active" data-days="30">30 วัน</button>
-                 <button type="button" class="range-chip" data-days="80">80 วัน</button>
-                 ${this.fileCapable ? '<button type="button" class="range-chip" data-days="182">6 เดือน</button><button type="button" class="range-chip" data-days="365">1 ปี</button>' : ''}
+                 <select class="range-preset" aria-label="${esc(L('ช่วงเวลา', 'Period'))}">
+                   ${RangePresets.available(this.fileCapable).map((p) => `<option value="${p.key}"${p.key === this.rangePreset ? ' selected' : ''}>${esc(RangePresets.label(p.key, I18N.lang))}</option>`).join('')}
+                   <option value="custom" hidden>${esc(L('กำหนดเอง', 'Custom'))}</option>
+                 </select>
                  <input type="date" class="range-start" value="${this.range.start}" aria-label="วันที่เริ่ม">
                  <span class="muted">–</span>
                  <input type="date" class="range-end" value="${this.range.end}" aria-label="วันที่สิ้นสุด">
-               </div>`
+               </div>
+               ${this.hasBasis ? '<div class="basis-control" hidden></div>' : ''}`
             : ''
         }
       </div>`;
@@ -1528,9 +1537,9 @@ class DashboardView {
 
   // A custom range picked from code (the POS "show the file's days" button).
   setRange(startIso, endIso) {
-    this.rangeDays = null;
+    this.rangePreset = null;
     this.range = { start: startIso, end: endIso };
-    this.wrap.querySelectorAll('.range-chip').forEach((c) => c.classList.remove('active'));
+    this.syncPresetSelect();
     const s = this.wrap.querySelector('.range-start');
     const e = this.wrap.querySelector('.range-end');
     if (s) s.value = startIso;
@@ -1538,25 +1547,40 @@ class DashboardView {
     this.renderWidgets();
   }
 
+  // The dropdown shows the ready-made range in use, or "กำหนดเอง" after a date was typed.
+  syncPresetSelect() {
+    const sel = this.wrap.querySelector('.range-preset');
+    if (!sel) return;
+    const custom = sel.querySelector('option[value="custom"]');
+    if (this.rangePreset) {
+      custom.hidden = true;
+      sel.value = this.rangePreset;
+    } else {
+      // a custom pick that happens to equal a ready-made range shows as that range
+      const m = RangePresets.match(this.range.start, this.range.end, todayIso());
+      if (m && [...sel.options].some((o) => o.value === m)) sel.value = m;
+      else { custom.hidden = false; sel.value = 'custom'; }
+    }
+  }
+
   bindRange(header) {
     const start = header.querySelector('.range-start');
     const end = header.querySelector('.range-end');
-    const chips = header.querySelectorAll('.range-chip');
-    chips.forEach((chip) =>
-      chip.addEventListener('click', () => {
-        chips.forEach((c) => c.classList.toggle('active', c === chip));
-        this.rangeDays = Number(chip.dataset.days);
-        this.range = { start: daysAgoIso(this.rangeDays), end: todayIso() };
-        start.value = this.range.start;
-        end.value = this.range.end;
-        this.renderWidgets();
-      })
-    );
+    const sel = header.querySelector('.range-preset');
+    sel.addEventListener('change', () => {
+      if (sel.value === 'custom') return;
+      this.rangePreset = sel.value;
+      this.range = RangePresets.compute(this.rangePreset, todayIso());
+      start.value = this.range.start;
+      end.value = this.range.end;
+      this.syncPresetSelect();
+      this.renderWidgets();
+    });
     [start, end].forEach((input) =>
       input.addEventListener('change', () => {
-        chips.forEach((c) => c.classList.remove('active'));
-        this.rangeDays = null;
+        this.rangePreset = null;
         this.range = { start: start.value, end: end.value };
+        this.syncPresetSelect();
         this.renderWidgets();
       })
     );
@@ -1652,7 +1676,7 @@ class DashboardView {
       ? Object.values(this.results).filter((r) => r && r.meta && r.meta.synced_at).map((r) => new Date(r.meta.synced_at).getTime())
       : [];
     dataAnchor = times.length ? Math.max(...times) : null;
-    if (this.rangeDays) this.range = { start: daysAgoIso(this.rangeDays), end: todayIso() };
+    if (this.rangePreset) this.range = RangePresets.compute(this.rangePreset, todayIso());
     const s = this.wrap.querySelector('.range-start');
     const e = this.wrap.querySelector('.range-end');
     if (s) s.value = this.range.start;
@@ -1671,17 +1695,119 @@ class DashboardView {
     return widget.grouping ? `${widget.report_source}|${widget.grouping}` : widget.report_source;
   }
 
+  // The row column the range counts by for one pull: the user's chosen date for Sales / Purchase
+  // Analysis (Order Date when the report has no such column), else the report's own.
+  dateFieldOf(key) {
+    const info = this.sources[key];
+    if (!info) return null;
+    if (!info.date_basis) return info.date_field;
+    const r = this.results[key];
+    return DateBasis.fieldFor(this.dateBasis, r && !r.error ? r.data : []).field;
+  }
+
+  // The "นับยอดตามวันที่" picker, a line on what the choice means, and what to watch for. Rebuilt
+  // only when the choices change, so a keyboard user keeps their place after picking.
+  renderBasis() {
+    const box = this.wrap.querySelector('.basis-control');
+    if (!box) return;
+    const lang = I18N.lang;
+    const keys = Object.keys(this.sources).filter((k) => this.sources[k].date_basis);
+    const okKeys = keys.filter((k) => this.results[k] && !this.results[k].error);
+    const sets = okKeys.map((k) => this.results[k].data);
+    if (!sets.some((x) => x.length)) { box.hidden = true; return; }
+    const opts = DateBasis.available(sets);
+    if (!opts.includes(this.dateBasis)) opts.push(this.dateBasis);
+    const sig = `${opts.join(',')}|${lang}`;
+    if (box.dataset.sig !== sig) {
+      box.dataset.sig = sig;
+      box.innerHTML = `<div class="basis-label"><label for="basis-select">${esc(L('นับยอดตามวันที่', 'Count by date'))}</label>
+        <select id="basis-select" class="basis-select" aria-describedby="basis-note">${opts.map((k) => `<option value="${k}">${esc(DateBasis.label(k, lang))}${k === DateBasis.DEFAULT ? esc(L(' — ตรงกับ FMH', ' — same as FMH')) : ''}</option>`).join('')}</select></div>
+        <div id="basis-note" class="basis-note" aria-live="polite"></div>`;
+      box.querySelector('select').addEventListener('change', (e) => {
+        this.dateBasis = DateBasis.normalize(e.target.value);
+        if (!this.preview) {
+          api('/api/dashboards/me/date-basis', { method: 'PUT', body: JSON.stringify({ basis: this.dateBasis }) })
+            .then(() => { this.basisSaveFailed = false; this.renderBasis(); })
+            .catch(() => { this.basisSaveFailed = true; this.renderBasis(); });
+        }
+        this.renderWidgets();
+      });
+    }
+    box.hidden = false;
+    box.querySelector('select').value = this.dateBasis;
+    const baht = (n) => `฿${Math.round(n).toLocaleString(lang === 'en' ? 'en-GB' : 'th-TH')}`;
+    const num = (n) => n.toLocaleString(lang === 'en' ? 'en-GB' : 'th-TH');
+    const lines = [];
+    // what the chosen date means (and that it differs from FMH)
+    if (this.dateBasis !== DateBasis.DEFAULT) {
+      lines.push(`<strong>${esc(DateBasis.hint(this.dateBasis, lang))}</strong>`);
+      lines.push(esc(L(`ต่างจาก FMH ที่นับตาม ${DateBasis.label(DateBasis.DEFAULT, lang)} ยอดรวมจึงอาจไม่ตรงกัน`, `FMH counts by ${DateBasis.label(DateBasis.DEFAULT, lang)}, so totals may not match.`)));
+    }
+    okKeys.forEach((k) => {
+      const r = this.results[k];
+      const name = this.sources[k].label;
+      const f = DateBasis.fieldFor(this.dateBasis, r.data);
+      if (f.fellBack) {
+        lines.push(esc(L(`${name} ไม่มี ${DateBasis.label(this.dateBasis, lang)} จึงใช้ ${DateBasis.label(f.field, lang)} แทน`, `${name} has no ${DateBasis.label(this.dateBasis, lang)}, so ${DateBasis.label(f.field, lang)} is used instead.`)));
+        return;
+      }
+      if (f.field === DateBasis.DEFAULT) return;
+      // orders that have no value in this date leave the range: say how many and how much
+      const inWindow = r.data.filter((row) => row.order_date && row.order_date.slice(0, 10) >= this.range.start && row.order_date.slice(0, 10) <= this.range.end);
+      const n = new Set(inWindow.filter((row) => !row[f.field]).map((row) => row.so_number || row.po_number)).size;
+      if (n) lines.push(esc(L(`${name}: ${num(n)} ใบ (${baht(DateBasis.money(inWindow, f.field))}) ที่สั่งในช่วงนี้ยังไม่มี ${DateBasis.label(f.field, lang)} จึงไม่ถูกนับ`, `${name}: ${num(n)} orders (${baht(DateBasis.money(inWindow, f.field))}) placed in this range have no ${DateBasis.label(f.field, lang)} yet and are not counted.`)));
+      // data is pulled by order date: near its start, orders placed earlier but dated in the range are missing
+      const from = this.coverageFrom(k);
+      if (from && this.range.end >= from && this.range.start < dayShift(from, 30)) {
+        lines.push(`<span class="basis-warn">${esc(L(`ข้อมูลเริ่มที่ใบสั่งวันที่ ${dayLabel(from)} ยอดช่วงต้น (ก่อน ${dayLabel(dayShift(from, 30))}) อาจต่ำกว่าจริง เพราะขาดใบที่สั่งก่อนหน้านั้น`, `Data starts with orders placed on ${dayLabel(from)}; figures before ${dayLabel(dayShift(from, 30))} may be too low because earlier orders are missing.`))}</span>`);
+      }
+    });
+    // Orders still open after a week: their amount is the order total until they close, then it can change.
+    const open = this.openOrders();
+    if (open && open.count) {
+      const list = open.top.map((o) => `<li>${esc(o.so)} · ${esc(dayLabel(o.date))} · ${esc(o.customer)} · ${esc(baht(o.total))}</li>`).join('');
+      lines.push(`<details class="basis-open"><summary class="basis-warn">${esc(L(
+        `มี ${num(open.count)} ใบสั่งขายที่สั่งเกิน 7 วันแล้วยังไม่ปิด (รวม ${baht(open.total)})`,
+        `${num(open.count)} sales orders older than 7 days are still not closed (${baht(open.total)} in total)`
+      ))}</summary><p>${esc(L(
+        'ยอดของใบเหล่านี้เป็นยอดใบสั่ง และจะเปลี่ยนเมื่อปิด (ยอดสลับเป็นยอดใบแจ้งหนี้) ตัวเลขรวมจึงอาจต่างจาก FMH ที่เปิดดูทีหลัง ให้ตรวจและปิดใบที่ค้างใน FMH',
+        'These amounts are order totals and change when the order closes (the total switches to the invoice). Totals may differ from FMH later. Check and close the open orders in FMH.'
+      ))}</p><ul>${list}</ul>${open.count > open.top.length ? `<p>${esc(L(`และอีก ${num(open.count - open.top.length)} ใบ`, `and ${num(open.count - open.top.length)} more`))}</p>` : ''}</details>`);
+    }
+    if (this.basisSaveFailed) lines.push(`<span class="basis-warn">${esc(L('บันทึกตัวเลือกนี้ไม่สำเร็จ ครั้งหน้าอาจกลับเป็นวันที่สั่ง', 'Could not save this choice; next time it may go back to Order Date.'))}</span>`);
+    box.querySelector('.basis-note').innerHTML = lines.map((x) => (x.startsWith('<details') ? x : `<p>${x}</p>`)).join('');
+  }
+
+  // Sales orders placed in the range that were placed more than 7 days ago and have no completed date.
+  openOrders() {
+    const key = Object.keys(this.sources).find((k) => this.sources[k].source === 'sales-analysis' && this.sources[k].date_basis);
+    const r = key && this.results[key];
+    if (!r || r.error || !(r.data || []).some((row) => row.completed_date)) return null; // no way to tell open from closed
+    const cutoff = daysAgoIso(7);
+    const bySo = new Map();
+    r.data.forEach((row) => {
+      const d = row.order_date && row.order_date.slice(0, 10);
+      if (!d || d > cutoff || d < this.range.start || d > this.range.end || row.completed_date) return;
+      const o = bySo.get(row.so_number) || { so: row.so_number, date: d, customer: partyShort(row.customer || ''), total: 0 };
+      o.total += Number(row.total) || 0;
+      bySo.set(row.so_number, o);
+    });
+    const all = [...bySo.values()].sort((a, b) => b.total - a.total);
+    return { count: all.length, total: all.reduce((n, o) => n + o.total, 0), top: all.slice(0, 15) };
+  }
+
   // First day a pull has data for: uploaded files first, then the API window,
   // else the oldest row. Null when the pull is undated.
   coverageFrom(key) {
     const r = this.results[key];
     const info = this.sources[key];
     if (!r || r.error || !info || !info.date_field) return null;
+    const df = info.date_basis ? 'order_date' : info.date_field; // the pull is cut by order date
     const h = r.meta && r.meta.history;
     if (h && (h.archive_from || h.file_from || h.api_from)) return [h.archive_from, h.file_from, h.api_from].filter(Boolean).sort()[0];
     let min = null;
     (r.data || []).forEach((row) => {
-      const d = row[info.date_field] ? String(row[info.date_field]).slice(0, 10) : null;
+      const d = row[df] ? String(row[df]).slice(0, 10) : null;
       if (d && (!min || d < min)) min = d;
     });
     return min;
@@ -1735,7 +1861,7 @@ class DashboardView {
     // Exception lists (unreceived lines, over-billing…) are about now: archived history keeps the last
     // status a line had in FMH's window, so it would list lines that were settled later.
     const r = widget && RECENT_ONLY.has(widget.category) && r0.data.some((x) => x._arch) ? { ...r0, data: r0.data.filter((x) => !x._arch) } : r0;
-    const dateField = dateOverride || (this.sources[key] && this.sources[key].date_field);
+    const dateField = dateOverride || this.dateFieldOf(key);
     const active = Object.entries(this.filters).filter(([, v]) => v !== null && v !== undefined);
     const byFilter = (rows) => (active.length ? rows.filter((row) => active.every(([f, v]) => !(f in row) || String(row[f]) === v)) : rows);
     if (!dateField || !this.hasDateSource) return byFilter(r.data);
@@ -2163,6 +2289,7 @@ class DashboardView {
 
   renderWidgets() {
     destroyCharts();
+    this.renderBasis();
     this.renderCoverage();
     // What each widget drew, for its "อธิบาย" button (public/explain.js).
     this.explainData = new Map();
@@ -2183,7 +2310,7 @@ class DashboardView {
         }
         return;
       }
-      const cfg = themedCfg(widget.config || {});
+      const cfg = DateBasis.applyToConfig(themedCfg(widget.config || {}), widget.report_source, widget.pulls ? null : this.dateFieldOf(key), I18N.lang);
       // A composite widget draws several small charts, each from its own pull.
       if (widget.pulls && cfg.panels) {
         const byAlias = {};
