@@ -4190,6 +4190,7 @@ function renderDateGrid(body, rows, cfg, ctx) {
     }
     const active = filters.some((f) => chosen[f.key].size) || !!query;
     clearBtn.hidden = !active;
+    msg.classList.remove('dg-bad'); msg.setAttribute('role', 'status');
     msg.textContent = `${list.length.toLocaleString('th-TH')} รายการสินค้า · ${branches.length.toLocaleString('th-TH')} สาขา · ${days.length.toLocaleString('th-TH')} วัน${active ? ` · กรองแล้ว ${view.sel.length.toLocaleString('th-TH')} จาก ${lines.length.toLocaleString('th-TH')} บรรทัด` : ''}${view.multiUnit ? ` · มี ${view.multiUnit.toLocaleString('th-TH')} รหัสสินค้าที่สั่งหลายหน่วย (แยกเป็นคนละแถว)` : ''}${view.skipped ? ' · ช่วงยาวเกิน 120 วัน แสดงเฉพาะวันที่มีออเดอร์' : ''}`;
   }
 
@@ -4241,6 +4242,7 @@ function renderDateGrid(body, rows, cfg, ctx) {
   // dialog does the rest (a printer, or "Save as PDF") — nothing is generated on the server.
   let printAsk = 0;
   const printSheets = (mode) => {
+    msg.classList.remove('dg-bad'); msg.setAttribute('role', 'status');
     const sel = view.sel;
     if (!sel.length) { msg.textContent = 'ไม่มีรายการให้พิมพ์ — ลองล้างตัวกรองหรือเลือกช่วงวันที่อื่น'; return; }
     // by product: one sheet per delivery day (and supplying kitchen); the list runs product by product, the picker
@@ -4441,7 +4443,9 @@ function renderDateGrid(body, rows, cfg, ctx) {
   // needed, then in the order the report sent them.
   const exportGridCsv = () => {
     const { sel, cell, branches } = view;
-    if (!sel.length || !view.days.length) { msg.textContent = 'ไม่มีข้อมูลให้ส่งออก — ล้างตัวกรองหรือเปลี่ยนช่วงวันที่ก่อน'; return; }
+    // a failure is said in the alert style and read out at once; success stays a quiet status line
+    const say = (t, bad) => { msg.classList.toggle('dg-bad', !!bad); msg.setAttribute('role', bad ? 'alert' : 'status'); msg.textContent = bad ? `ส่งออกไม่ได้: ${t}` : t; };
+    if (!sel.length || !view.days.length) { say('ไม่มีข้อมูลให้ส่งออก — ล้างตัวกรองหรือเปลี่ยนช่วงวันที่ก่อน', true); return; }
     // the columns are the days of the range picked on the page (a day with no orders stays as "-", as in FMH's file),
     // plus any day outside it that still has data; a range over 120 days uses only the days with data
     const iso = (t) => new Date(t).toISOString().slice(0, 10);
@@ -4453,33 +4457,39 @@ function renderDateGrid(body, rows, cfg, ctx) {
       days = [...set].sort();
     }
     const q = (v) => { const t = String(v ?? ''); return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
-    // a product name Excel would read as a formula (starts with = + - @) is kept as text with a leading '; codes are left as FMH has them
-    const safe = (v) => { const t = String(v ?? ''); return /^[=+\-@]/.test(t) && !/^-$/.test(t) ? `'${t}` : t; };
     const n2 = (v) => String(Math.round(v * 100) / 100);
     const first = new Map(); const seen = new Map();
     sel.forEach((r) => { const k = rowKey(r); const d = dayOf(r); if (!seen.has(k)) seen.set(k, { r, at: seen.size }); if (!first.has(k) || d < first.get(k)) first.set(k, d); });
     const prods = [...seen.entries()].sort((a, b) => (first.get(a[0]) < first.get(b[0]) ? -1 : first.get(a[0]) > first.get(b[0]) ? 1 : 0) || a[1].at - b[1].at);
     // Excel stops at 16,384 columns and drops the rest without a word, so refuse a file that wide
     const width = 5 + branches.length * days.length;
-    if (width > 16000) { msg.textContent = `ไฟล์กว้างเกินที่ Excel เปิดได้ (${width.toLocaleString('th-TH')} คอลัมน์ จากสาขา ${branches.length.toLocaleString('th-TH')} × ${days.length.toLocaleString('th-TH')} วัน) — ลดช่วงวันที่หรือเลือกลูกค้าก่อน แล้วส่งออกใหม่`; return; }
+    if (width > 16000) { say(`ไฟล์กว้างเกินที่ Excel เปิดได้ (${width.toLocaleString('th-TH')} คอลัมน์ จากสาขา ${branches.length.toLocaleString('th-TH')} × ${days.length.toLocaleString('th-TH')} วัน) — ลดช่วงวันที่หรือเลือกลูกค้าก่อน แล้วส่งออกใหม่`, true); return; }
     const out = [];
     out.push(['', '', '', '', ...branches.flatMap((b) => days.map(() => b)), ''].map(q).join(','));
     out.push(['Product', 'Product code', 'UOM', 'Category', ...branches.flatMap(() => days.map(dmy)), 'Grand total'].map(q).join(','));
     prods.forEach(([k, { r }]) => {
       let tot = 0;
       const vals = branches.flatMap((b) => days.map((d) => { const v = cell.get(`${k}\u0002${b}\u0002${d}`) || 0; tot += v; return v ? n2(v) : '-'; }));
-      out.push([safe(pick(r, 'product')), pick(r, 'product_code'), pick(r, 'uom'), pick(r, 'category'), ...vals, n2(tot)].map(q).join(','));
+      out.push([pick(r, 'product'), pick(r, 'product_code'), pick(r, 'uom'), pick(r, 'category'), ...vals, n2(tot)].map(q).join(','));
     });
     const mdy = (d) => `${Number(d.slice(5, 7))}-${Number(d.slice(8, 10))}-${d.slice(0, 4)}`;
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob(['﻿' + out.join('\r\n')], { type: 'text/csv;charset=utf-8;' }));
     const filtered = filters.some((f) => chosen[f.key].size) || !!query;
-    link.download = `Order_Items_By_Branch_Report_${mdy(days[0])}_-_${mdy(days[days.length - 1])}${filtered ? '_filtered' : ''}.csv`;
+    const at = ctx && ctx.syncedAt ? new Date(ctx.syncedAt) : null;
+    const p2 = (n) => String(n).padStart(2, '0');
+    const stampName = at && !Number.isNaN(at.getTime()) ? `_asof_${at.getFullYear()}${p2(at.getMonth() + 1)}${p2(at.getDate())}_${p2(at.getHours())}${p2(at.getMinutes())}` : '';
+    link.download = `Order_Items_By_Branch_Report_${mdy(days[0])}_-_${mdy(days[days.length - 1])}${filtered ? '_filtered' : ''}${stampName}.csv`;
     link.click();
-    const asOf = ctx && ctx.syncedAt ? new Date(ctx.syncedAt).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }) : null;
-    msg.textContent = `บันทึกไฟล์ ${link.download} แล้ว · ${prods.length.toLocaleString('th-TH')} สินค้า · ${branches.length.toLocaleString('th-TH')} สาขา · ${days.length.toLocaleString('th-TH')} วัน`
-      + (filtered ? ` · ไฟล์นี้เฉพาะที่กรองไว้ (${sel.length.toLocaleString('th-TH')} จาก ${lines.length.toLocaleString('th-TH')} บรรทัด) ไม่ใช่ไฟล์เต็ม` : '')
-      + ` · นับเฉพาะออเดอร์ที่อนุมัติแล้ว${asOf ? ` · ข้อมูล ณ ${asOf}` : ''}`;
+    const asOf = at && !Number.isNaN(at.getTime()) ? `ข้อมูล ณ ${at.toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' })}` : 'ไม่ทราบเวลาที่โหลดข้อมูล';
+    const zeroCode = prods.some(([, { r }]) => /^0\d/.test(String(pick(r, 'product_code') ?? '')));
+    say([
+      filtered ? `ไฟล์นี้เฉพาะที่กรองไว้ (${sel.length.toLocaleString('th-TH')} จาก ${lines.length.toLocaleString('th-TH')} รายการสั่ง) ไม่ใช่ไฟล์เต็ม` : '',
+      'สร้างไฟล์แล้ว — ดูในโฟลเดอร์ดาวน์โหลด',
+      `${prods.length.toLocaleString('th-TH')} สินค้า · ${branches.length.toLocaleString('th-TH')} สาขา · ${days.length.toLocaleString('th-TH')} วันทั้งช่วง`,
+      `นับเฉพาะออเดอร์ที่อนุมัติแล้ว · ${asOf}`,
+      zeroCode ? 'รหัสสินค้าบางตัวขึ้นต้นด้วย 0 — เปิดใน Excel ให้ตั้งคอลัมน์รหัสเป็นข้อความ ไม่เช่นนั้น 0 หน้ารหัสจะหาย' : '',
+    ].filter(Boolean).join(' · '));
     setTimeout(() => URL.revokeObjectURL(link.href), 4000);
   };
   body.querySelector('.dg-csv').addEventListener('click', exportGridCsv);
