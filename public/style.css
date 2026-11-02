@@ -1692,8 +1692,14 @@ table.report-table.ct-table td { vertical-align: middle; }
   .ps-warn { text-decoration: underline; }
   .ps-sheet .ps-runwarn th { background: #fff !important; border: 0; padding: 1mm 0 2mm; font-size: 9.5pt; font-weight: 400; }
   .ps-sheet .ps-real { width: 24mm; }
+  .ps-sheet.ps-compact th, .ps-sheet.ps-compact td { padding-top: 1mm; padding-bottom: 1mm; }
+  .ps-sheet small { font-size: 10pt; }
+  .ps-end { margin: 6mm 0 0; text-align: center; font-size: 10pt; letter-spacing: 0.3mm; }
   .ps-sign { display: flex; gap: 8mm; margin-top: 14mm; }
   .ps-sign span { flex: 1; border-top: 0.4mm solid #000; padding-top: 1.5mm; font-size: 11pt; text-align: center; }
 }
 
 @media print { .ps-run .ps-cust { font-size: 16pt; } }
+
+.dg-hint { font-size: 12.5px; margin: 0 0 6px; }
+@media print { .ps-sheet .ps-tag td { padding-left: 6mm; font-weight: 600; background: #fafafa !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; } .ps-sheet tbody.ps-catb { break-after: avoid; page-break-after: avoid; } }

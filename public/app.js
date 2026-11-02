@@ -4065,7 +4065,7 @@ const RENDERERS = {
 // branch, each with every day of the range, so a kitchen reads "what did each branch
 // order on which day" across the page. Quantities of the same product / branch / day
 // add up. Paged like FMH, with a product search and a CSV of the underlying lines.
-function renderDateGrid(body, rows, cfg) {
+function renderDateGrid(body, rows, cfg, ctx) {
   const cols = cfg.row_fields || [{ field: 'product', label: 'Product' }];
   const GF = cfg.group_field || 'branch';
   const DF = cfg.date_field || 'requested_delivery_date';
@@ -4105,10 +4105,11 @@ function renderDateGrid(body, rows, cfg) {
       <div class="dg-filters" role="group" aria-label="ตัวกรอง"></div>
       <button type="button" class="btn small ghost dg-clear" hidden>ล้างตัวกรอง</button>
       <button type="button" class="btn small ghost dg-csv">ส่งออก CSV</button>
-      <button type="button" class="btn small dg-print" data-mode="product">พิมพ์ใบจัดตามสินค้า</button>
-      <button type="button" class="btn small dg-print" data-mode="branch">พิมพ์ใบจัดตามสาขา</button>
+      <button type="button" class="btn small dg-print" data-mode="product" title="เดินคลังทีละสินค้า แล้วแบ่งลงตะกร้าของแต่ละสาขา" aria-describedby="dg-hint">พิมพ์ใบจัดตามสินค้า</button>
+      <button type="button" class="btn small dg-print" data-mode="branch" title="จัดทีละสาขา ได้ใบแยกต่อสาขา" aria-describedby="dg-hint">พิมพ์ใบจัดตามสาขา</button>
     </div>
     <p class="ct-msg dg-msg" role="status"></p>
+    <p class="muted dg-hint" id="dg-hint">ใบจัดตามสินค้า = เดินคลังทีละสินค้าแล้วแบ่งลงตะกร้าสาขา · ใบจัดตามสาขา = จัดทีละสาขา ใช้ตัวกรองด้านบนกำหนดว่าจะพิมพ์อะไร</p>
     <div class="dg-win" hidden><button type="button" class="btn small ghost dg-prev">◀ วันก่อนหน้า</button><span class="dg-win-lbl" role="status"></span><button type="button" class="btn small ghost dg-next">วันถัดไป ▶</button></div>
     <div class="table-scroll dg-scroll" tabindex="0" role="region" aria-label="ตารางรายการสั่งของแต่ละสาขาตามวัน เลื่อนไปทางขวาเพื่อดูวันถัดไป"></div>
     <nav class="dg-pages" aria-label="หน้าของตาราง"></nav>`);
@@ -4252,7 +4253,10 @@ function renderDateGrid(body, rows, cfg) {
     const sheets = bySheet.size;
     if (sheets > 60 && Date.now() - printAsk > 15000) { printAsk = Date.now(); msg.textContent = `จะพิมพ์ ${sheets.toLocaleString('th-TH')} ใบ — กดปุ่มพิมพ์เดิมอีกครั้งภายใน 15 วินาทีเพื่อยืนยัน หรือกรองให้แคบลงก่อน`; return; }
     const thDate = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-    const stamp = new Date().toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' });
+    const fmtT = (t) => new Date(t).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' });
+    const printedAt = fmtT(Date.now());
+    // "ข้อมูล ณ" is when the report was last pulled, not when the button was pressed
+    const stamp = ctx && ctx.syncedAt ? fmtT(ctx.syncedAt) : `${printedAt} (ไม่ทราบเวลาที่โหลดข้อมูล)`;
     const used = filters.filter((f) => chosen[f.key].size).map((f) => `${f.label}: ${[...chosen[f.key]].join(', ')}`);
     if (query) used.push(`ค้นหา: ${query}`);
     const str = (r, f) => String(pick(r, f) ?? '');
@@ -4260,16 +4264,41 @@ function renderDateGrid(body, rows, cfg) {
     // matches the product's category or tags). Without zones the list falls back to category order.
     const zones = Array.isArray(cfg.zones) ? cfg.zones : [];
     const unzoned = new Set();
+    const UNZ = 'อื่นๆ (ยังไม่จัดโซน)';
+    const unzNote = (its) => { const c = its.filter((i) => i.zone === UNZ).length; return zones.length && c ? `<p class="ps-alert"><b>มี ${c.toLocaleString('th-TH')} รายการยังไม่จัดโซน</b> (อยู่ท้ายใบ) — ตั้งค่าโซนคลังเพื่อให้เรียงตามเส้นทางเดิน</p>` : ''; };
+    // order numbers, when the report carries them; this report is a per-line pull, so say so when it does not
+    const poField = ['order_number', 'so_number', 'po_number', 'order_no'].find((f) => lines.some((r) => pick(r, f)));
+    const poNote = poField ? '' : '<p class="ps-note">รายงานนี้ไม่มีเลขออเดอร์ ใบนี้รวมทุกออเดอร์ของสาขาในวันเดียวกัน</p>';
+    const orderNos = (rs2) => (poField ? [...new Set(rs2.map((r) => str(r, poField)).filter(Boolean))] : []);
     const zoneOf = (r) => {
       if (!zones.length) return str(r, 'category') || 'ไม่ระบุหมวด';
       const hay = `${str(r, 'category')} ${valuesOf(r, { field: 'tags', split: ',' }).join(' ')}`.toLowerCase();
       // the longest matching word wins ("ผักแห้ง" beats "ผัก"); a tie goes to the zone listed first
+      // a whole category/tag equal to the word beats a word found inside text ("นม" the category, not "ขนมปัง")
+      const toks = [str(r, 'category'), ...valuesOf(r, { field: 'tags', split: ',' })].map((x) => x.trim().toLowerCase());
       let best = -1; let bestLen = 0;
-      zones.forEach((z, i) => (z.match || []).forEach((w) => { const ww = String(w).toLowerCase(); if (ww && hay.includes(ww) && ww.length > bestLen) { best = i; bestLen = ww.length; } }));
-      if (best < 0) { unzoned.add(str(r, 'product')); return 'อื่นๆ (ยังไม่จัดโซน)'; }
+      zones.forEach((z, i) => (z.match || []).forEach((w) => {
+        const ww = String(w).trim().toLowerCase(); if (!ww) return;
+        const score = toks.includes(ww) ? 1000 + ww.length : hay.includes(ww) ? ww.length : 0;
+        if (score > bestLen) { best = i; bestLen = score; }
+      }));
+      if (best < 0) { unzoned.add(str(r, 'product')); return UNZ; }
       return zones[best].name;
     };
     const zoneRank = (name) => { const i = zones.findIndex((z) => z.name === name); return i < 0 ? 1e6 : i; };
+    // The list is grouped by category, and inside a category by the product's (first) tag. When zones are set they
+    // only decide which category comes first along the route; the headings stay category / tag.
+    const NOTAG = 'ไม่มีแท็ก';
+    const catOf = (r) => str(r, 'category') || 'ไม่ระบุหมวด';
+    const tagOf = (r) => valuesOf(r, { field: 'tags', split: ',' })[0] || NOTAG;
+    const tagCmp = (a, b) => (a === NOTAG) - (b === NOTAG) || a.localeCompare(b, 'th', { numeric: true });
+    const groupCmp = (x, y) => (zones.length ? zoneRank(x.zone) - zoneRank(y.zone) : 0) || x.cat.localeCompare(y.cat, 'th') || tagCmp(x.tag, y.tag);
+    const heads = (it, st, cols, wrapTbody) => {
+      let out = '';
+      if (it.cat !== st.cat) { out += `<tr class="ps-cat"><td colspan="${cols}">หมวด ${esc(it.cat)}${zones.length ? ` · โซน ${esc(it.zone)}` : ''}</td></tr>`; st.cat = it.cat; st.tag = null; }
+      if (it.tag !== st.tag) { out += `<tr class="ps-tag"><td colspan="${cols}">แท็ก ${esc(it.tag)}</td></tr>`; st.tag = it.tag; }
+      return wrapTbody && out ? `<tbody class="ps-catb">${out}</tbody>` : out;
+    };
     const CHUNK = 12; // a product shared by more branches than this continues in a second block, name and total repeated
     // A sheet's number is fixed by what it is (day, kitchen, customer), in the Buddhist year the sheet shows, so a reprint
     // keeps its number; how many times it was printed, and whether the orders changed since, is kept in this browser.
@@ -4280,14 +4309,29 @@ function renderDateGrid(body, rows, cfg) {
       get: (k) => { try { return JSON.parse(localStorage.getItem(`kss.pl.${k}`) || 'null'); } catch (e) { return null; } },
       set: (k, v) => { try { localStorage.setItem(`kss.pl.${k}`, JSON.stringify(v)); } catch (e) { /* storage unavailable: numbers still print, counts just restart */ } },
     };
+    // The reference for "changed since last print" is kept per sheet AND per filter set (a filtered sheet never
+    // becomes the baseline for the full one), compared product by product and branch by branch, and only
+    // written when the print dialog closes. The count is "in this browser": it is a local aid, not a ledger.
+    const commits = [];
     const meta = (docNo, rs) => {
-      const lines = rs.length; const qty = Math.round(rs.reduce((t, r) => t + (Number(pick(r, VF)) || 0), 0) * 100) / 100;
-      const prev = memo.get(docNo); const n = (prev ? prev.n : 0) + 1; const fl = used.join('|');
-      memo.set(docNo, { n, lines, qty, at: stamp, f: fl });
+      const sig = short(used.join('|'));
+      const key = `${docNo}.${sig}`;
+      const cur = new Map();
+      rs.forEach((r) => { const k = `${str(r, 'product_code')}|${str(r, 'uom')}|${str(r, GF)}`; cur.set(k, Math.round(((cur.get(k) || 0) + (Number(pick(r, VF)) || 0)) * 100) / 100); });
+      const prev = memo.get(key);
+      const n = (prev ? prev.n : 0) + 1;
       let note = '';
-      if (prev && (prev.lines !== lines || prev.qty !== qty)) {
-        note = `<p class="ps-alert"><b>ยอดเปลี่ยนจากครั้งก่อน</b> (พิมพ์ ${esc(prev.at)}: ${prev.lines} บรรทัด รวม ${esc(fmt(prev.qty))} → ตอนนี้ ${lines} บรรทัด รวม ${esc(fmt(qty))}${prev.f !== fl ? ' · ตัวกรองต่างจากครั้งก่อน' : ' · มีออเดอร์เปลี่ยนหรือเข้าใหม่'}) ตรวจส่วนต่างก่อนจัด</p>`;
-      } else if (prev) note = `<p class="ps-note">ยอดเท่ากับที่พิมพ์ครั้งก่อน (${esc(prev.at)})</p>`;
+      if (prev && prev.items) {
+        const diffs = [];
+        new Set([...Object.keys(prev.items), ...cur.keys()]).forEach((k) => { const x = prev.items[k] || 0; const y = cur.get(k) || 0; if (Math.abs(x - y) > 1e-9) diffs.push(`${k.split('|').join(' · ')}: ${fmt(x)} → ${fmt(y)}`); });
+        note = diffs.length
+          ? `<p class="ps-alert"><b>ยอดเปลี่ยนจากครั้งก่อน ${diffs.length.toLocaleString('th-TH')} จุด</b> (พิมพ์ ${esc(prev.at)}) เช่น ${esc(diffs.slice(0, 3).join(' ; '))}${diffs.length > 3 ? ' …' : ''} — ตรวจส่วนต่างก่อนจัด</p>`
+          : `<p class="ps-note">ยอดเท่ากับที่พิมพ์ครั้งก่อน (${esc(prev.at)})</p>`;
+      } else if (prev) {
+        const tot = Math.round([...cur.values()].reduce((t, v) => t + v, 0) * 100) / 100;
+        if (prev.qty !== tot) note = `<p class="ps-alert"><b>ยอดรวมเปลี่ยนจากครั้งก่อน</b> (${esc(fmt(prev.qty))} → ${esc(fmt(tot))}) ตรวจส่วนต่างก่อนจัด</p>`;
+      }
+      commits.push(() => memo.set(key, { n, at: printedAt, qty: Math.round([...cur.values()].reduce((t, v) => t + v, 0) * 100) / 100, items: cur.size <= 800 ? Object.fromEntries(cur) : null }));
       return { n, note };
     };
     const html = [...bySheet.entries()].sort((x, y) => x[0].localeCompare(y[0], 'th')).map(([k, rs], si) => {
@@ -4296,62 +4340,64 @@ function renderDateGrid(body, rows, cfg) {
         const agg = new Map();
         rs.forEach((r) => {
           const pk = `${str(r, 'product_code')}\u0001${str(r, 'uom')}\u0001${str(r, 'product')}`;
-          const e = agg.get(pk) || { r, qty: 0, zone: zoneOf(r) };
+          const e = agg.get(pk) || { r, qty: 0, zone: zoneOf(r), cat: catOf(r), tag: tagOf(r), po: new Set() };
           e.qty += Number(pick(r, VF)) || 0; agg.set(pk, e);
+          if (poField && str(r, poField)) e.po.add(str(r, poField));
         });
         const unitsOfB = new Map();
         agg.forEach((e) => { const c = str(e.r, 'product_code'); if (c) unitsOfB.set(c, (unitsOfB.get(c) || 0) + 1); });
-        const list = [...agg.values()].sort((x, y) => zoneRank(x.zone) - zoneRank(y.zone) || x.zone.localeCompare(y.zone, 'th')
+        const list = [...agg.values()].sort((x, y) => groupCmp(x, y)
           || str(x.r, 'product').localeCompare(str(y.r, 'product'), 'th', { numeric: true }) || str(x.r, 'product_code').localeCompare(str(y.r, 'product_code')) || str(x.r, 'uom').localeCompare(str(y.r, 'uom'), 'th'));
         const docB = docNoOf('PB', d, kitchen, customer); const mB = meta(docB, rs);
-        let lz = null; let nb = 0;
+        const stB = { cat: null, tag: null }; let nb = 0;
         const rowsB = list.map((it) => {
-          const head = it.zone !== lz ? `<tr class="ps-cat"><td colspan="5">${zones.length ? 'โซน ' : ''}${esc(it.zone)}</td></tr>` : '';
-          lz = it.zone; nb += 1;
+          const head = heads(it, stB, 5, false); nb += 1;
           const multi = unitsOfB.get(str(it.r, 'product_code')) > 1;
-          return `${head}<tr><td class="ps-n">${nb}</td><td><b>${esc(str(it.r, 'product'))}</b><br><small>${esc(str(it.r, 'product_code'))} · ${esc(it.zone)}${multi ? ' · <b class="ps-warn">มีหลายหน่วย ดูแถวอื่นด้วย</b>' : ''}</small></td><td class="ps-q ps-tot">${esc(fmt(it.qty))} <small>${esc(str(it.r, 'uom'))}</small></td><td class="ps-real"></td><td class="ps-box"><i></i></td></tr>`;
+          return `${head}<tr><td class="ps-n">${nb}</td><td><b>${esc(str(it.r, 'product'))}</b><br><small>${esc(str(it.r, 'product_code'))}${multi ? ' · <b class="ps-warn">มีหลายหน่วย ดูแถวอื่นด้วย</b>' : ''}${it.po.size ? `<br>ออเดอร์ ${esc([...it.po].join(', '))}` : ''}</small></td><td class="ps-q ps-tot">${esc(fmt(it.qty))} <small>${esc(str(it.r, 'uom'))}</small></td><td class="ps-real"></td><td class="ps-box"><i></i></td></tr>`;
         }).join('');
         const filteredB = used.length ? `<p class="ps-alert"><b>ใบนี้ถูกกรอง ไม่ใช่ใบเต็ม</b> — ${esc(used.join(' | '))}</p>` : '';
-        return `<section class="ps-sheet">
-          <div class="ps-banner"><p class="ps-alert"><b>นับเฉพาะออเดอร์ที่อนุมัติแล้ว</b> ออเดอร์ที่รออนุมัติ ยกเลิก หรือเข้ามาหลัง ${esc(stamp)} ไม่อยู่ในใบนี้</p>${filteredB}${mB.note}</div>
+        return `<section class="ps-sheet ps-compact">
+          <div class="ps-banner"><p class="ps-alert"><b>นับเฉพาะออเดอร์ที่อนุมัติแล้ว</b> ออเดอร์ที่รออนุมัติ ยกเลิก หรือเข้ามาหลัง ${esc(stamp)} ไม่อยู่ในใบนี้</p>${filteredB}${poNote}${unzNote(list)}${mB.note}</div>
           <table><thead><tr class="ps-run"><th colspan="5"><span>ใบจัดของ (ตามสาขา)</span> ${esc(thDate(d))}${kitchen ? ` · ครัว ${esc(kitchen)}` : ''}<br><b class="ps-cust">${esc(customer)}</b><em>เลขที่ ${esc(docB)}</em></th></tr>
-          <tr class="ps-runwarn"><th colspan="5">ใบที่ ${si + 1} จาก ${sheets} · ${esc(docB)} · พิมพ์ครั้งที่ ${mB.n} · เฉพาะออเดอร์ที่อนุมัติแล้ว${used.length ? ' · ใบกรอง ไม่ใช่ใบเต็ม' : ''}</th></tr>
+          <tr class="ps-runwarn"><th colspan="5">ใบที่ ${si + 1} จาก ${sheets} · ${esc(docB)} · พิมพ์ครั้งที่ ${mB.n} (ในเครื่องนี้) · เฉพาะออเดอร์ที่อนุมัติแล้ว${used.length ? ' · ใบกรอง ไม่ใช่ใบเต็ม' : ''}</th></tr>
           <tr><th>#</th><th>สินค้า</th><th class="ps-q">สั่ง</th><th>จัดจริง</th><th>จัดแล้ว</th></tr></thead><tbody>${rowsB}</tbody></table>
-          <footer><p class="ps-note">${list.length.toLocaleString('th-TH')} รายการสินค้า · ข้อมูล ณ ${esc(stamp)} · ใบเลขที่ ${esc(docB)}</p>
+          <footer><p class="ps-note">${list.length.toLocaleString('th-TH')} รายการสินค้า · ข้อมูล ณ ${esc(stamp)} · พิมพ์เมื่อ ${esc(printedAt)} · ใบเลขที่ ${esc(docB)}</p>
+          <p class="ps-end">— จบใบ ${esc(customer)} · ${esc(docB)} —</p>
           <div class="ps-sign"><span>ผู้จัด</span><span>ผู้ตรวจ</span><span>ผู้รับ</span></div></footer></section>`;
       }
       const prods = new Map();
       rs.forEach((r) => {
         const pk = `${str(r, 'product_code')}\u0001${str(r, 'uom')}\u0001${str(r, 'product')}`;
-        const e = prods.get(pk) || { r, total: 0, by: new Map(), zone: zoneOf(r) };
+        const e = prods.get(pk) || { r, total: 0, by: new Map(), po: new Map(), zone: zoneOf(r), cat: catOf(r), tag: tagOf(r) };
         const c = String(pick(r, GF) ?? 'ไม่ระบุ'); const q = Number(pick(r, VF)) || 0;
         e.total += q; e.by.set(c, (e.by.get(c) || 0) + q); prods.set(pk, e);
+        if (poField && str(r, poField)) { if (!e.po.has(c)) e.po.set(c, new Set()); e.po.get(c).add(str(r, poField)); }
       });
       // a code sold in more than one unit stays together and is flagged, so the second line is not missed
       const unitsOf = new Map();
       prods.forEach((e) => { const c = str(e.r, 'product_code'); if (c) unitsOf.set(c, (unitsOf.get(c) || 0) + 1); });
-      const items = [...prods.values()].sort((x, y) => zoneRank(x.zone) - zoneRank(y.zone) || x.zone.localeCompare(y.zone, 'th')
+      const items = [...prods.values()].sort((x, y) => groupCmp(x, y)
         || str(x.r, 'product').localeCompare(str(y.r, 'product'), 'th', { numeric: true }) || str(x.r, 'product_code').localeCompare(str(y.r, 'product_code')) || str(x.r, 'uom').localeCompare(str(y.r, 'uom'), 'th'));
       const branches = new Set(rs.map((r) => String(pick(r, GF) ?? 'ไม่ระบุ')));
       const docNo = docNoOf('PL', d, kitchen); const mP = meta(docNo, rs);
-      let lastZone = null; let n = 0;
+      const stP = { cat: null, tag: null }; let n = 0;
       const blocks = items.map((it) => {
-        const catRow = it.zone !== lastZone ? `<tbody class="ps-catb"><tr class="ps-cat"><td colspan="7">${zones.length ? 'โซน ' : ''}${esc(it.zone)}</td></tr></tbody>` : '';
-        lastZone = it.zone; n += 1;
+        const catRow = heads(it, stP, 7, true); n += 1;
         const parts = [...it.by.entries()].sort((x, y) => cmpBranch(x[0], y[0]));
         const multi = unitsOf.get(str(it.r, 'product_code')) > 1;
-        const sub = `${esc(str(it.r, 'product_code'))} · ${esc(it.zone)}${multi ? ' · <b class="ps-warn">มีหลายหน่วย ดูแถวถัดไปด้วย</b>' : ''}`;
+        const sub = `${esc(str(it.r, 'product_code'))}${multi ? ' · <b class="ps-warn">มีหลายหน่วย ดูแถวถัดไปด้วย</b>' : ''}`;
         const chunks = []; for (let i = 0; i < parts.length; i += CHUNK) chunks.push(parts.slice(i, i + CHUNK));
-        return catRow + chunks.map((ch, ci) => `<tbody class="ps-prod">${ch.map(([cust, q], i) => `<tr>${i === 0 ? `<td class="ps-n" rowspan="${ch.length}">${n}</td><td rowspan="${ch.length}"><b>${esc(str(it.r, 'product'))}</b>${ci ? ' <small>(ต่อ)</small>' : ''}<br><small>${sub}</small></td><td class="ps-q ps-tot" rowspan="${ch.length}">${esc(fmt(it.total))}<br><small>${esc(str(it.r, 'uom'))}</small></td>` : ''}<td>${esc(cust)}</td><td class="ps-q">${esc(fmt(q))}</td><td class="ps-real"></td><td class="ps-box"><i></i></td></tr>`).join('')}</tbody>`).join('');
+        return catRow + chunks.map((ch, ci) => `<tbody class="ps-prod">${ch.map(([cust, q], i) => `<tr>${i === 0 ? `<td class="ps-n" rowspan="${ch.length}">${n}</td><td rowspan="${ch.length}"><b>${esc(str(it.r, 'product'))}</b>${ci ? ' <small>(ต่อ)</small>' : ''}<br><small>${sub}</small></td><td class="ps-q ps-tot" rowspan="${ch.length}">${esc(fmt(it.total))}<br><small>${esc(str(it.r, 'uom'))}</small></td>` : ''}<td>${esc(cust)}${it.po.get(cust) ? `<br><small>ออเดอร์ ${esc([...it.po.get(cust)].join(', '))}</small>` : ''}</td><td class="ps-q">${esc(fmt(q))}</td><td class="ps-real"></td><td class="ps-box"><i></i></td></tr>`).join('')}</tbody>`).join('');
       }).join('');
       const label = `${thDate(d)}${kitchen ? ` · ครัว ${kitchen}` : ''}`;
       const filtered = used.length ? `<p class="ps-alert"><b>ใบนี้ถูกกรอง ไม่ใช่ใบเต็ม</b> — ${esc(used.join(' | '))}</p>` : '';
       return `<section class="ps-sheet">
-        <div class="ps-banner"><p class="ps-alert"><b>นับเฉพาะออเดอร์ที่อนุมัติแล้ว</b> ออเดอร์ที่รออนุมัติ ยกเลิก หรือเข้ามาหลัง ${esc(stamp)} ไม่อยู่ในใบนี้</p>${filtered}${mP.note}</div>
+        <div class="ps-banner"><p class="ps-alert"><b>นับเฉพาะออเดอร์ที่อนุมัติแล้ว</b> ออเดอร์ที่รออนุมัติ ยกเลิก หรือเข้ามาหลัง ${esc(stamp)} ไม่อยู่ในใบนี้</p>${filtered}${poNote}${unzNote(items)}${mP.note}</div>
         <table><thead><tr class="ps-run"><th colspan="7"><span>ใบจัดของ</span> ${esc(label)}<em>เลขที่ ${esc(docNo)}</em></th></tr>
-        <tr class="ps-runwarn"><th colspan="7">ใบที่ ${si + 1} จาก ${sheets} · ${esc(docNo)} · พิมพ์ครั้งที่ ${mP.n} · เฉพาะออเดอร์ที่อนุมัติแล้ว${used.length ? ' · ใบกรอง ไม่ใช่ใบเต็ม' : ''}</th></tr>
+        <tr class="ps-runwarn"><th colspan="7">ใบที่ ${si + 1} จาก ${sheets} · ${esc(docNo)} · พิมพ์ครั้งที่ ${mP.n} (ในเครื่องนี้) · เฉพาะออเดอร์ที่อนุมัติแล้ว${used.length ? ' · ใบกรอง ไม่ใช่ใบเต็ม' : ''}</th></tr>
         <tr><th>#</th><th>สินค้า</th><th class="ps-q">รวม</th><th>สาขา</th><th class="ps-q">สั่ง</th><th>จัดจริง</th><th>จัดแล้ว</th></tr></thead>${blocks}</table>
-        <footer><p class="ps-note">${items.length.toLocaleString('th-TH')} รายการสินค้า · ${branches.size.toLocaleString('th-TH')} สาขา · ข้อมูล ณ ${esc(stamp)} · ใบเลขที่ ${esc(docNo)}</p>
+        <footer><p class="ps-note">${items.length.toLocaleString('th-TH')} รายการสินค้า · ${branches.size.toLocaleString('th-TH')} สาขา · ข้อมูล ณ ${esc(stamp)} · พิมพ์เมื่อ ${esc(printedAt)} · ใบเลขที่ ${esc(docNo)}</p>
+        <p class="ps-end">— จบใบ ${esc(docNo)} —</p>
         <div class="ps-sign"><span>ผู้จัด</span><span>ผู้ตรวจ</span><span>ผู้รับ</span></div></footer></section>`;
     }).join('');
     document.getElementById('print-sheet')?.remove();
@@ -4359,10 +4405,10 @@ function renderDateGrid(body, rows, cfg) {
     host.id = 'print-sheet';
     host.innerHTML = html;
     document.body.appendChild(host);
-    const done = () => { host.remove(); window.removeEventListener('afterprint', done); };
+    const done = () => { host.remove(); commits.forEach((f) => f()); window.removeEventListener('afterprint', done); };
     window.addEventListener('afterprint', done);
     const un = [...unzoned];
-    msg.textContent = `เปิดหน้าต่างพิมพ์ ${sheets.toLocaleString('th-TH')} ใบ (เลือก "Save as PDF" ในหน้าต่างพิมพ์ถ้าต้องการไฟล์)${un.length ? ` · มี ${un.length.toLocaleString('th-TH')} รายการที่ยังไม่จัดโซน (อยู่ท้ายใบ): ${un.slice(0, 5).join(', ')}${un.length > 5 ? ' …' : ''} — เพิ่มคำของโซนในค่าตั้งค่า zones` : ''}`;
+    msg.textContent = `เปิดหน้าต่างพิมพ์ ${sheets.toLocaleString('th-TH')} ใบ (เลือก "Save as PDF" ในหน้าต่างพิมพ์ถ้าต้องการไฟล์)${un.length ? ` · มี ${un.length.toLocaleString('th-TH')} รายการที่ยังไม่จัดโซน (อยู่ท้ายใบ): ${un.slice(0, 5).join(', ')}${un.length > 5 ? ' …' : ''} — ตั้งค่าโซนคลังเพื่อให้เรียงตามเส้นทางเดิน` : ''}`;
     window.print();
   };
   body.querySelectorAll('.dg-print').forEach((btn) => btn.addEventListener('click', () => printSheets(btn.dataset.mode)));
