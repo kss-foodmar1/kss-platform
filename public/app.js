@@ -4064,7 +4064,7 @@ const RENDERERS = {
 // One row per product (code, unit, tag, category); above the dates sits a band per
 // branch, each with every day of the range, so a kitchen reads "what did each branch
 // order on which day" across the page. Quantities of the same product / branch / day
-// add up. Paged like FMH, with a product search and a CSV of the underlying lines.
+// add up. Paged like FMH, with a product search and a CSV laid out like FMH's own export (branch x day, "-" for none, Grand total).
 function renderDateGrid(body, rows, cfg, ctx) {
   const cols = cfg.row_fields || [{ field: 'product', label: 'Product' }];
   const GF = cfg.group_field || 'branch';
@@ -4441,9 +4441,9 @@ function renderDateGrid(body, rows, cfg, ctx) {
   // needed, then in the order the report sent them.
   const exportGridCsv = () => {
     const { sel, cell, branches } = view;
-    if (!sel.length || !view.days.length) return;
-    // the columns are the days of the range picked on the page (a day with no orders stays as "-", as in FMH's file);
-    // a range over 120 days, or one the data runs outside, falls back to the days with data
+    if (!sel.length || !view.days.length) { msg.textContent = 'ไม่มีข้อมูลให้ส่งออก — ล้างตัวกรองหรือเปลี่ยนช่วงวันที่ก่อน'; return; }
+    // the columns are the days of the range picked on the page (a day with no orders stays as "-", as in FMH's file),
+    // plus any day outside it that still has data; a range over 120 days uses only the days with data
     const iso = (t) => new Date(t).toISOString().slice(0, 10);
     let days = view.days;
     const rg = ctx && ctx.range;
@@ -4453,23 +4453,33 @@ function renderDateGrid(body, rows, cfg, ctx) {
       days = [...set].sort();
     }
     const q = (v) => { const t = String(v ?? ''); return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+    // a product name Excel would read as a formula (starts with = + - @) is kept as text with a leading '; codes are left as FMH has them
+    const safe = (v) => { const t = String(v ?? ''); return /^[=+\-@]/.test(t) && !/^-$/.test(t) ? `'${t}` : t; };
     const n2 = (v) => String(Math.round(v * 100) / 100);
     const first = new Map(); const seen = new Map();
     sel.forEach((r) => { const k = rowKey(r); const d = dayOf(r); if (!seen.has(k)) seen.set(k, { r, at: seen.size }); if (!first.has(k) || d < first.get(k)) first.set(k, d); });
     const prods = [...seen.entries()].sort((a, b) => (first.get(a[0]) < first.get(b[0]) ? -1 : first.get(a[0]) > first.get(b[0]) ? 1 : 0) || a[1].at - b[1].at);
+    // Excel stops at 16,384 columns and drops the rest without a word, so refuse a file that wide
+    const width = 5 + branches.length * days.length;
+    if (width > 16000) { msg.textContent = `ไฟล์กว้างเกินที่ Excel เปิดได้ (${width.toLocaleString('th-TH')} คอลัมน์ จากสาขา ${branches.length.toLocaleString('th-TH')} × ${days.length.toLocaleString('th-TH')} วัน) — ลดช่วงวันที่หรือเลือกลูกค้าก่อน แล้วส่งออกใหม่`; return; }
     const out = [];
     out.push(['', '', '', '', ...branches.flatMap((b) => days.map(() => b)), ''].map(q).join(','));
     out.push(['Product', 'Product code', 'UOM', 'Category', ...branches.flatMap(() => days.map(dmy)), 'Grand total'].map(q).join(','));
     prods.forEach(([k, { r }]) => {
       let tot = 0;
       const vals = branches.flatMap((b) => days.map((d) => { const v = cell.get(`${k}\u0002${b}\u0002${d}`) || 0; tot += v; return v ? n2(v) : '-'; }));
-      out.push([pick(r, 'product'), pick(r, 'product_code'), pick(r, 'uom'), pick(r, 'category'), ...vals, n2(tot)].map(q).join(','));
+      out.push([safe(pick(r, 'product')), pick(r, 'product_code'), pick(r, 'uom'), pick(r, 'category'), ...vals, n2(tot)].map(q).join(','));
     });
     const mdy = (d) => `${Number(d.slice(5, 7))}-${Number(d.slice(8, 10))}-${d.slice(0, 4)}`;
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob(['﻿' + out.join('\r\n')], { type: 'text/csv;charset=utf-8;' }));
-    link.download = `Order_Items_By_Branch_Report_${mdy(days[0])}_-_${mdy(days[days.length - 1])}.csv`;
+    const filtered = filters.some((f) => chosen[f.key].size) || !!query;
+    link.download = `Order_Items_By_Branch_Report_${mdy(days[0])}_-_${mdy(days[days.length - 1])}${filtered ? '_filtered' : ''}.csv`;
     link.click();
+    const asOf = ctx && ctx.syncedAt ? new Date(ctx.syncedAt).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }) : null;
+    msg.textContent = `บันทึกไฟล์ ${link.download} แล้ว · ${prods.length.toLocaleString('th-TH')} สินค้า · ${branches.length.toLocaleString('th-TH')} สาขา · ${days.length.toLocaleString('th-TH')} วัน`
+      + (filtered ? ` · ไฟล์นี้เฉพาะที่กรองไว้ (${sel.length.toLocaleString('th-TH')} จาก ${lines.length.toLocaleString('th-TH')} บรรทัด) ไม่ใช่ไฟล์เต็ม` : '')
+      + ` · นับเฉพาะออเดอร์ที่อนุมัติแล้ว${asOf ? ` · ข้อมูล ณ ${asOf}` : ''}`;
     setTimeout(() => URL.revokeObjectURL(link.href), 4000);
   };
   body.querySelector('.dg-csv').addEventListener('click', exportGridCsv);
