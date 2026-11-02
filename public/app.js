@@ -4101,6 +4101,7 @@ function renderDateGrid(body, rows, cfg) {
       <div class="dg-filters" role="group" aria-label="ตัวกรอง"></div>
       <button type="button" class="btn small ghost dg-clear" hidden>ล้างตัวกรอง</button>
       <button type="button" class="btn small ghost dg-csv">ส่งออก CSV</button>
+      <button type="button" class="btn small dg-print">พิมพ์ใบจัดของ</button>
     </div>
     <p class="ct-msg dg-msg" role="status"></p>
     <div class="dg-win" hidden><button type="button" class="btn small ghost dg-prev">◀ วันก่อนหน้า</button><span class="dg-win-lbl" role="status"></span><button type="button" class="btn small ghost dg-next">วันถัดไป ▶</button></div>
@@ -4229,6 +4230,56 @@ function renderDateGrid(body, rows, cfg) {
   clearBtn.addEventListener('click', () => { filters.forEach((f) => f.reset()); query = ''; body.querySelector('.ct-search input').value = ''; page = 1; draw(); });
   body.querySelector('.ct-search input').addEventListener('input', (e) => { query = e.target.value.trim().toLowerCase(); page = 1; draw(); });
   // The CSV is the underlying lines of exactly what the filters leave, not the whole pull.
+  // Pick list: one A4 sheet per delivery day and ordering customer, from exactly the rows the filters leave.
+  // It is built into a hidden #print-sheet that only the print stylesheet shows, then the browser's own print
+  // dialog does the rest (a printer, or "Save as PDF") — nothing is generated on the server.
+  let printAsk = 0;
+  body.querySelector('.dg-print').addEventListener('click', () => {
+    const sel = view.sel;
+    if (!sel.length) { msg.textContent = 'ไม่มีรายการให้พิมพ์ — ลองล้างตัวกรองหรือเลือกช่วงวันที่อื่น'; return; }
+    const byDay = new Map();
+    sel.forEach((r) => {
+      const d = dayOf(r); const c = String(pick(r, GF) ?? 'ไม่ระบุ');
+      if (!byDay.has(d)) byDay.set(d, new Map());
+      const m = byDay.get(d); if (!m.has(c)) m.set(c, []);
+      m.get(c).push(r);
+    });
+    const sheets = [...byDay.values()].reduce((n, m) => n + m.size, 0);
+    if (sheets > 60 && Date.now() - printAsk > 15000) { printAsk = Date.now(); msg.textContent = `จะพิมพ์ ${sheets.toLocaleString('th-TH')} ใบ — กดพิมพ์ใบจัดของอีกครั้งภายใน 15 วินาทีเพื่อยืนยัน หรือกรองให้แคบลงก่อน`; return; }
+    const days = [...byDay.keys()].sort();
+    const thDate = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    const stamp = new Date().toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' });
+    const used = filters.filter((f) => chosen[f.key].size).map((f) => `${f.label}: ${[...chosen[f.key]].join(', ')}`);
+    if (query) used.push(`ค้นหา: ${query}`);
+    const keyOf = (r) => `${pick(r, 'product_code') ?? ''}\u0001${pick(r, 'uom') ?? ''}\u0001${pick(r, 'product') ?? ''}`;
+    const html = days.flatMap((d) => [...byDay.get(d).entries()].sort((a, b) => a[0].localeCompare(b[0], 'th')).map(([cust, rs]) => {
+      const agg = new Map();
+      rs.forEach((r) => { const k = keyOf(r); const a = agg.get(k) || { r, qty: 0 }; a.qty += Number(pick(r, VF)) || 0; agg.set(k, a); });
+      const items = [...agg.values()].sort((a, b) => String(pick(a.r, 'category') ?? '').localeCompare(String(pick(b.r, 'category') ?? ''), 'th') || String(pick(a.r, 'product') ?? '').localeCompare(String(pick(b.r, 'product') ?? ''), 'th', { numeric: true }));
+      const kitchens = [...new Set(rs.map((r) => pick(r, 'ck_branch')).filter(Boolean))];
+      let lastCat = null;
+      const lines = items.map((it, i) => {
+        const cat = String(pick(it.r, 'category') ?? '');
+        const head = cat !== lastCat ? `<tr class="ps-cat"><td colspan="6">${esc(cat || 'ไม่ระบุหมวด')}</td></tr>` : '';
+        lastCat = cat;
+        return `${head}<tr><td class="ps-n">${i + 1}</td><td>${esc(pick(it.r, 'product_code') ?? '')}</td><td>${esc(pick(it.r, 'product') ?? '')}</td><td class="ps-q">${esc(fmt(it.qty))}</td><td>${esc(pick(it.r, 'uom') ?? '')}</td><td class="ps-box"><i></i></td></tr>`;
+      }).join('');
+      return `<section class="ps-sheet">
+        <header><h1>ใบจัดของ</h1><div class="ps-meta"><div><b>วันส่ง</b> ${esc(thDate(d))}</div><div><b>${esc((filters.find((f) => f.key === 'customer') || {}).label || 'ลูกค้า')}</b> ${esc(cust)}</div>${kitchens.length ? `<div><b>ครัวที่ส่ง</b> ${esc(kitchens.join(', '))}</div>` : ''}</div></header>
+        <table><thead><tr><th>#</th><th>รหัส</th><th>สินค้า</th><th class="ps-q">จำนวน</th><th>หน่วย</th><th>จัดแล้ว</th></tr></thead><tbody>${lines}</tbody></table>
+        <footer><p class="ps-note">${items.length.toLocaleString('th-TH')} รายการ · ข้อมูล ณ ${esc(stamp)} · นับเฉพาะออเดอร์ที่อนุมัติแล้ว ออเดอร์ที่เข้ามาหลังเวลานี้ไม่อยู่ในใบนี้${used.length ? `<br>ตัวกรอง: ${esc(used.join(' | '))}` : ''}</p>
+        <div class="ps-sign"><span>ผู้จัด</span><span>ผู้ตรวจ</span><span>ผู้รับ</span></div></footer></section>`;
+    })).join('');
+    document.getElementById('print-sheet')?.remove();
+    const host = document.createElement('div');
+    host.id = 'print-sheet';
+    host.innerHTML = html;
+    document.body.appendChild(host);
+    const done = () => { host.remove(); window.removeEventListener('afterprint', done); };
+    window.addEventListener('afterprint', done);
+    msg.textContent = `เปิดหน้าต่างพิมพ์ ${sheets.toLocaleString('th-TH')} ใบ (เลือก "Save as PDF" ในหน้าต่างพิมพ์ถ้าต้องการไฟล์)`;
+    window.print();
+  });
   body.querySelector('.dg-csv').addEventListener('click', () => exportCsv(view.sel, [...cols, { field: GF }, { field: DF }, { field: VF }]));
   draw();
 }
