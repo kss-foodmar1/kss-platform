@@ -1694,3 +1694,5 @@ table.report-table.ct-table td { vertical-align: middle; }
   .ps-sign { display: flex; gap: 8mm; margin-top: 14mm; }
   .ps-sign span { flex: 1; border-top: 0.4mm solid #000; padding-top: 1.5mm; font-size: 11pt; text-align: center; }
 }
+
+@media print { .ps-run .ps-cust { font-size: 16pt; } }

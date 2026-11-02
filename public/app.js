@@ -4101,7 +4101,8 @@ function renderDateGrid(body, rows, cfg) {
       <div class="dg-filters" role="group" aria-label="ตัวกรอง"></div>
       <button type="button" class="btn small ghost dg-clear" hidden>ล้างตัวกรอง</button>
       <button type="button" class="btn small ghost dg-csv">ส่งออก CSV</button>
-      <button type="button" class="btn small dg-print">พิมพ์ใบจัดของ</button>
+      <button type="button" class="btn small dg-print" data-mode="product">พิมพ์ใบจัดตามสินค้า</button>
+      <button type="button" class="btn small dg-print" data-mode="branch">พิมพ์ใบจัดตามสาขา</button>
     </div>
     <p class="ct-msg dg-msg" role="status"></p>
     <div class="dg-win" hidden><button type="button" class="btn small ghost dg-prev">◀ วันก่อนหน้า</button><span class="dg-win-lbl" role="status"></span><button type="button" class="btn small ghost dg-next">วันถัดไป ▶</button></div>
@@ -4234,16 +4235,18 @@ function renderDateGrid(body, rows, cfg) {
   // It is built into a hidden #print-sheet that only the print stylesheet shows, then the browser's own print
   // dialog does the rest (a printer, or "Save as PDF") — nothing is generated on the server.
   let printAsk = 0;
-  body.querySelector('.dg-print').addEventListener('click', () => {
+  const printSheets = (mode) => {
     const sel = view.sel;
     if (!sel.length) { msg.textContent = 'ไม่มีรายการให้พิมพ์ — ลองล้างตัวกรองหรือเลือกช่วงวันที่อื่น'; return; }
-    // One sheet per delivery day (and per supplying kitchen when there are several). Inside it the list runs
-    // product by product: the picker stands at one product and sets out every branch's share in turn.
-    const sheetKey = (r) => `${dayOf(r)}\u0002${pick(r, 'ck_branch') ?? ''}`;
+    // by product: one sheet per delivery day (and supplying kitchen); the list runs product by product, the picker
+    // stands at one product and sets out every branch's share in turn.
+    // by branch: one sheet per delivery day, customer and kitchen, the traditional "walk this branch's order" list.
+    const byBranch = mode === 'branch';
+    const sheetKey = (r) => `${dayOf(r)}\u0002${pick(r, 'ck_branch') ?? ''}${byBranch ? `\u0002${pick(r, GF) ?? 'ไม่ระบุ'}` : ''}`;
     const bySheet = new Map();
     sel.forEach((r) => { const k = sheetKey(r); if (!bySheet.has(k)) bySheet.set(k, []); bySheet.get(k).push(r); });
     const sheets = bySheet.size;
-    if (sheets > 60 && Date.now() - printAsk > 15000) { printAsk = Date.now(); msg.textContent = `จะพิมพ์ ${sheets.toLocaleString('th-TH')} ใบ — กดพิมพ์ใบจัดของอีกครั้งภายใน 15 วินาทีเพื่อยืนยัน หรือกรองให้แคบลงก่อน`; return; }
+    if (sheets > 60 && Date.now() - printAsk > 15000) { printAsk = Date.now(); msg.textContent = `จะพิมพ์ ${sheets.toLocaleString('th-TH')} ใบ — กดปุ่มพิมพ์เดิมอีกครั้งภายใน 15 วินาทีเพื่อยืนยัน หรือกรองให้แคบลงก่อน`; return; }
     const thDate = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
     const stamp = new Date().toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' });
     const used = filters.filter((f) => chosen[f.key].size).map((f) => `${f.label}: ${[...chosen[f.key]].join(', ')}`);
@@ -4261,8 +4264,35 @@ function renderDateGrid(body, rows, cfg) {
     const zoneRank = (name) => { const i = zones.findIndex((z) => z.name === name); return i < 0 ? 1e6 : i; };
     const CHUNK = 12; // a product shared by more branches than this continues in a second block, name and total repeated
     const hhmm = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }).replace(':', '');
-    const html = [...bySheet.entries()].sort((x, y) => x[0].localeCompare(y[0])).map(([k, rs], si) => {
-      const [d, kitchen] = k.split('\u0002');
+    const html = [...bySheet.entries()].sort((x, y) => x[0].localeCompare(y[0], 'th')).map(([k, rs], si) => {
+      const [d, kitchen, customer] = k.split('\u0002');
+      if (byBranch) {
+        const agg = new Map();
+        rs.forEach((r) => {
+          const pk = `${str(r, 'product_code')}\u0001${str(r, 'uom')}\u0001${str(r, 'product')}`;
+          const e = agg.get(pk) || { r, qty: 0, zone: zoneOf(r) };
+          e.qty += Number(pick(r, VF)) || 0; agg.set(pk, e);
+        });
+        const unitsOfB = new Map();
+        agg.forEach((e) => { const c = str(e.r, 'product_code'); if (c) unitsOfB.set(c, (unitsOfB.get(c) || 0) + 1); });
+        const list = [...agg.values()].sort((x, y) => zoneRank(x.zone) - zoneRank(y.zone) || x.zone.localeCompare(y.zone, 'th')
+          || str(x.r, 'product').localeCompare(str(y.r, 'product'), 'th', { numeric: true }) || str(x.r, 'product_code').localeCompare(str(y.r, 'product_code')) || str(x.r, 'uom').localeCompare(str(y.r, 'uom'), 'th'));
+        const docB = `PB-${d.replace(/-/g, '')}-${String(si + 1).padStart(2, '0')}-${hhmm}`;
+        let lz = null; let nb = 0;
+        const rowsB = list.map((it) => {
+          const head = it.zone !== lz ? `<tr class="ps-cat"><td colspan="5">${zones.length ? 'โซน ' : ''}${esc(it.zone)}</td></tr>` : '';
+          lz = it.zone; nb += 1;
+          const multi = unitsOfB.get(str(it.r, 'product_code')) > 1;
+          return `${head}<tr><td class="ps-n">${nb}</td><td><b>${esc(str(it.r, 'product'))}</b><br><small>${esc(str(it.r, 'product_code'))} · ${esc(it.zone)}${multi ? ' · <b class="ps-warn">มีหลายหน่วย ดูแถวอื่นด้วย</b>' : ''}</small></td><td class="ps-q ps-tot">${esc(fmt(it.qty))} <small>${esc(str(it.r, 'uom'))}</small></td><td class="ps-real"></td><td class="ps-box"><i></i></td></tr>`;
+        }).join('');
+        const filteredB = used.length ? `<p class="ps-alert"><b>ใบนี้ถูกกรอง ไม่ใช่ใบเต็ม</b> — ${esc(used.join(' | '))}</p>` : '';
+        return `<section class="ps-sheet">
+          <div class="ps-banner"><p class="ps-alert"><b>นับเฉพาะออเดอร์ที่อนุมัติแล้ว</b> ออเดอร์ที่รออนุมัติ ยกเลิก หรือเข้ามาหลัง ${esc(stamp)} ไม่อยู่ในใบนี้</p>${filteredB}</div>
+          <table><thead><tr class="ps-run"><th colspan="5"><span>ใบจัดของ (ตามสาขา)</span> ${esc(thDate(d))}${kitchen ? ` · ครัว ${esc(kitchen)}` : ''}<br><b class="ps-cust">${esc(customer)}</b><em>เลขที่ ${esc(docB)}</em></th></tr>
+          <tr><th>#</th><th>สินค้า</th><th class="ps-q">สั่ง</th><th>จัดจริง</th><th>จัดแล้ว</th></tr></thead><tbody>${rowsB}</tbody></table>
+          <footer><p class="ps-note">${list.length.toLocaleString('th-TH')} รายการสินค้า · ข้อมูล ณ ${esc(stamp)} · ใบเลขที่ ${esc(docB)}</p>
+          <div class="ps-sign"><span>ผู้จัด</span><span>ผู้ตรวจ</span><span>ผู้รับ</span></div></footer></section>`;
+      }
       const prods = new Map();
       rs.forEach((r) => {
         const pk = `${str(r, 'product_code')}\u0001${str(r, 'uom')}\u0001${str(r, 'product')}`;
@@ -4305,7 +4335,8 @@ function renderDateGrid(body, rows, cfg) {
     window.addEventListener('afterprint', done);
     msg.textContent = `เปิดหน้าต่างพิมพ์ ${sheets.toLocaleString('th-TH')} ใบ (เลือก "Save as PDF" ในหน้าต่างพิมพ์ถ้าต้องการไฟล์)`;
     window.print();
-  });
+  };
+  body.querySelectorAll('.dg-print').forEach((btn) => btn.addEventListener('click', () => printSheets(btn.dataset.mode)));
   body.querySelector('.dg-csv').addEventListener('click', () => exportCsv(view.sel, [...cols, { field: GF }, { field: DF }, { field: VF }]));
   draw();
 }
