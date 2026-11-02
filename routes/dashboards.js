@@ -19,6 +19,8 @@ const { withTrigger } = require('../lib/fmhUsage');
 const { listWidgets } = require('../lib/widgetCatalog');
 const fmhFiles = require('../lib/fmhFiles');
 
+const DateBasis = require('../public/date-basis');
+
 const router = express.Router();
 
 // Which (source, grouping) pulls the page fetches, and the pull aliases of
@@ -35,6 +37,8 @@ function describeWidgets(widgets) {
       // per-row date left for the range picker to filter on.
       date_field: p.grouping ? null : cfg ? cfg.rowDateField || cfg.dateField : null,
       date_is_bucket: !p.grouping && !!(cfg && cfg.rowDateIsBucket),
+      // an itemized pull whose range can follow the user's chosen date column (public/date-basis.js)
+      date_basis: DateBasis.isBasisSource(p.source, p.grouping),
     };
   };
   widgets.forEach((w) => {
@@ -170,6 +174,22 @@ router.post(
   })
 );
 
+// This user's own choice of which date the page's range counts by (Order Date by default, as in FMH).
+router.put(
+  '/me/date-basis',
+  requireAuth,
+  wrap(async (req, res) => {
+    const basis = req.body && req.body.basis;
+    if (!DateBasis.KEYS.includes(basis)) return res.status(400).json({ error: 'ฐานวันที่ไม่ถูกต้อง' });
+    await pool.query(
+      `INSERT INTO user_prefs (user_id, pref_key, pref_value) VALUES (?, 'date_basis', ?)
+       ON DUPLICATE KEY UPDATE pref_value = VALUES(pref_value)`,
+      [req.user.id, basis]
+    );
+    res.json({ ok: true, basis });
+  })
+);
+
 router.get(
   '/:id',
   requireAuth,
@@ -191,7 +211,8 @@ router.get(
     // the first-run answers pick which findings lead the page (public/app.js renderInsights)
     let profile = null;
     try { profile = co && co.onboarding_json ? JSON.parse(co.onboarding_json) : null; } catch (e) { /* none */ }
-    res.json({ dashboard: { ...dashboard, data_source: co ? co.data_source : 'fmh', auto_sync_mode: co ? co.auto_sync_mode : 'all', profile }, widgets, sources });
+    const [[bp]] = await pool.query(`SELECT pref_value FROM user_prefs WHERE user_id = ? AND pref_key = 'date_basis'`, [req.user.id]).catch(() => [[]]);
+    res.json({ dashboard: { ...dashboard, data_source: co ? co.data_source : 'fmh', auto_sync_mode: co ? co.auto_sync_mode : 'all', profile, my_date_basis: DateBasis.normalize(bp && bp.pref_value) }, widgets, sources });
   })
 );
 
