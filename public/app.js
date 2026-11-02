@@ -2301,7 +2301,7 @@ class DashboardView {
       const base = widget.pulls ? this.results[widget.pulls[0].key] : res;
       const skipped = this.unfilteredBy(base && base.data);
       try {
-        renderer(body, rows, useCfg, { widget, dashboardId: this.dashboard.id, persist: !this.preview, syncedAt: res && res.meta ? res.meta.synced_at : null });
+        renderer(body, rows, useCfg, { widget, dashboardId: this.dashboard.id, persist: !this.preview, syncedAt: res && res.meta ? res.meta.synced_at : null, range: this.range });
         this.explainData.set(widget.id, { rows, cfg: useCfg, range: this.range });
         if (skipped.length) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">widget นี้ไม่มีข้อมูล${esc(skipped.map((f) => ({ customer: 'ลูกค้า', branch: 'สาขา', supplier: 'ซัพพลายเออร์' })[f] || f).join(', '))} จึงแสดงทั้งหมด ไม่ได้กรองตามตัวเลือกด้านบน</p>`);
         // A note on how to read the widget. Renderers that place it themselves
@@ -4064,7 +4064,7 @@ const RENDERERS = {
 // One row per product (code, unit, tag, category); above the dates sits a band per
 // branch, each with every day of the range, so a kitchen reads "what did each branch
 // order on which day" across the page. Quantities of the same product / branch / day
-// add up. Paged like FMH, with a product search and a CSV of the underlying lines.
+// add up. Paged like FMH, with a product search and a CSV laid out like FMH's own export (branch x day, "-" for none, Grand total).
 function renderDateGrid(body, rows, cfg, ctx) {
   const cols = cfg.row_fields || [{ field: 'product', label: 'Product' }];
   const GF = cfg.group_field || 'branch';
@@ -4109,11 +4109,14 @@ function renderDateGrid(body, rows, cfg, ctx) {
       <button type="button" class="btn small dg-print" data-mode="branch" title="จัดทีละสาขา ได้ใบแยกต่อสาขา" aria-describedby="dg-hint">พิมพ์ใบจัดตามสาขา</button>
     </div>
     <p class="ct-msg dg-msg" role="status"></p>
+    <p class="ct-msg dg-export" role="status" hidden></p>
+    <p class="ct-msg dg-export dg-bad" role="alert" hidden></p>
     <p class="muted dg-hint" id="dg-hint">ใบจัดตามสินค้า = เดินคลังทีละสินค้าแล้วแบ่งลงตะกร้าสาขา · ใบจัดตามสาขา = จัดทีละสาขา ใช้ตัวกรองด้านบนกำหนดว่าจะพิมพ์อะไร</p>
     <div class="dg-win" hidden><button type="button" class="btn small ghost dg-prev">◀ วันก่อนหน้า</button><span class="dg-win-lbl" role="status"></span><button type="button" class="btn small ghost dg-next">วันถัดไป ▶</button></div>
     <div class="table-scroll dg-scroll" tabindex="0" role="region" aria-label="ตารางรายการสั่งของแต่ละสาขาตามวัน เลื่อนไปทางขวาเพื่อดูวันถัดไป"></div>
     <nav class="dg-pages" aria-label="หน้าของตาราง"></nav>`);
   const scroller = body.querySelector('.dg-scroll'); const pager = body.querySelector('.dg-pages'); const msg = body.querySelector('.dg-msg');
+  const expOk = body.querySelector('.dg-export:not(.dg-bad)'); const expBad = body.querySelector('.dg-export.dg-bad');
   const filterBox = body.querySelector('.dg-filters'); const clearBtn = body.querySelector('.dg-clear');
 
   const selected = () => lines.filter((r) => filters.every((f) => {
@@ -4241,6 +4244,7 @@ function renderDateGrid(body, rows, cfg, ctx) {
   // dialog does the rest (a printer, or "Save as PDF") — nothing is generated on the server.
   let printAsk = 0;
   const printSheets = (mode) => {
+    expOk.hidden = true; expBad.hidden = true;
     const sel = view.sel;
     if (!sel.length) { msg.textContent = 'ไม่มีรายการให้พิมพ์ — ลองล้างตัวกรองหรือเลือกช่วงวันที่อื่น'; return; }
     // by product: one sheet per delivery day (and supplying kitchen); the list runs product by product, the picker
@@ -4435,7 +4439,75 @@ function renderDateGrid(body, rows, cfg, ctx) {
     window.print();
   };
   body.querySelectorAll('.dg-print').forEach((btn) => btn.addEventListener('click', () => printSheets(btn.dataset.mode)));
-  body.querySelector('.dg-csv').addEventListener('click', () => exportCsv(view.sel, [...cols, { field: GF }, { field: DF }, { field: VF }]));
+  // CSV in the layout FMH's own export uses: two heading rows (the branch repeated over its dates, then the dates),
+  // product / code / unit / category on the left, "-" where nothing was ordered, a Grand total column on the right.
+  // It carries every day of the picked range and follows the filters; products come out by the first day they are
+  // needed, then in the order the report sent them.
+  const exportGridCsv = () => {
+    const { sel, cell, branches } = view;
+    // the result stays on screen until the next export or print, since the warnings in it matter after the file is opened;
+    // a failure is a separate alert line, so it is read out whenever it appears
+    const say = (html, bad) => {
+      const el = bad ? expBad : expOk; const other = bad ? expOk : expBad;
+      other.hidden = true; el.hidden = false; el.innerHTML = html;
+    };
+    if (!sel.length || !view.days.length) { say(`<b>ส่งออกไม่ได้:</b> ไม่มีข้อมูลให้ส่งออก — ล้างตัวกรองหรือเปลี่ยนช่วงวันที่ก่อน`, true); return; }
+    // the columns are the days of the range picked on the page (a day with no orders stays as "-", as in FMH's file),
+    // plus any day outside it that still has data; a range over 120 days uses only the days with data
+    const iso = (t) => new Date(t).toISOString().slice(0, 10);
+    let days = view.days;
+    const rg = ctx && ctx.range;
+    if (rg && /^\d{4}-\d{2}-\d{2}$/.test(rg.start || '') && /^\d{4}-\d{2}-\d{2}$/.test(rg.end || '') && (Date.parse(rg.end) - Date.parse(rg.start)) / 86400000 <= 120) {
+      const set = new Set(view.days);
+      for (let t = Date.parse(rg.start); t <= Date.parse(rg.end); t += 86400000) set.add(iso(t));
+      days = [...set].sort();
+    }
+    const q = (v) => { const t = String(v ?? ''); return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+    const n2 = (v) => String(Math.round(v * 100) / 100);
+    const first = new Map(); const seen = new Map();
+    sel.forEach((r) => { const k = rowKey(r); const d = dayOf(r); if (!seen.has(k)) seen.set(k, { r, at: seen.size }); if (!first.has(k) || d < first.get(k)) first.set(k, d); });
+    const prods = [...seen.entries()].sort((a, b) => (first.get(a[0]) < first.get(b[0]) ? -1 : first.get(a[0]) > first.get(b[0]) ? 1 : 0) || a[1].at - b[1].at);
+    // Excel stops at 16,384 columns and drops the rest without a word, so refuse a file that wide
+    const width = 5 + branches.length * days.length;
+    if (width > 16000) { say(`<b>ส่งออกไม่ได้:</b> ไฟล์กว้างเกินที่ Excel เปิดได้ (${width.toLocaleString('th-TH')} คอลัมน์ จากสาขา ${branches.length.toLocaleString('th-TH')} × ${days.length.toLocaleString('th-TH')} วัน) — ลดช่วงวันที่หรือเลือกลูกค้าก่อน แล้วส่งออกใหม่`, true); return; }
+    const out = [];
+    out.push(['', '', '', '', ...branches.flatMap((b) => days.map(() => b)), ''].map(q).join(','));
+    out.push(['Product', 'Product code', 'UOM', 'Category', ...branches.flatMap(() => days.map(dmy)), 'Grand total'].map(q).join(','));
+    prods.forEach(([k, { r }]) => {
+      let tot = 0;
+      const vals = branches.flatMap((b) => days.map((d) => { const v = cell.get(`${k}\u0002${b}\u0002${d}`) || 0; tot += v; return v ? n2(v) : '-'; }));
+      out.push([pick(r, 'product'), pick(r, 'product_code'), pick(r, 'uom'), pick(r, 'category'), ...vals, n2(tot)].map(q).join(','));
+    });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob(['﻿' + out.join('\r\n')], { type: 'text/csv;charset=utf-8;' }));
+    // which filters are on, in words for the message and shortened for the file name
+    const used = filters.filter((f) => chosen[f.key].size).map((f) => ({ label: f.label, vals: [...chosen[f.key]] }));
+    if (query) used.push({ label: 'ค้นหา', vals: [query] });
+    const filtered = used.length > 0;
+    const short = used.flatMap((u) => u.vals).slice(0, 2).map((v) => String(v).replace(/[\\/:*?"<>|\s.,()[\]]+/g, '').slice(0, 14)).filter(Boolean).join('+');
+    // the data's own time, always in Thai time whatever the computer's clock says
+    const at = ctx && ctx.syncedAt ? new Date(ctx.syncedAt) : null;
+    const okAt = at && !Number.isNaN(at.getTime());
+    const bk = okAt ? Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(at).map((x) => [x.type, x.value])) : null;
+    const ymd = (d) => d.replace(/-/g, '');
+    // the days are written year-month-day so a Thai reader cannot mistake 5 Nov for 11 May
+    link.download = `Order_Items_By_Branch_Report_${ymd(days[0])}-${ymd(days[days.length - 1])}_approved${filtered ? `_filtered${short ? `_${short}` : ''}` : ''}${okAt ? `_asof_${bk.year}${bk.month}${bk.day}_${bk.hour}${bk.minute}` : ''}.csv`;
+    try {
+      link.click();
+    } catch (e) {
+      say(`<b>ส่งออกไม่ได้:</b> เบราว์เซอร์ไม่ยอมให้ดาวน์โหลด — ลองใหม่หรือเปิดหน้านี้ใน Chrome`, true);
+      return;
+    }
+    setTimeout(() => URL.revokeObjectURL(link.href), 4000);
+    const asOf = okAt ? `ข้อมูลซิงก์ ณ ${bk.day}/${bk.month}/${bk.year} ${bk.hour}:${bk.minute} (เวลาไทย)` : 'ไม่ทราบเวลาที่โหลดข้อมูล';
+    const zeroCode = prods.some(([, { r }]) => /^0\d/.test(String(pick(r, 'product_code') ?? '')));
+    const nowT = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' });
+    const warn = [];
+    if (filtered) warn.push(`ไฟล์นี้เฉพาะที่กรองไว้ ไม่ใช่ไฟล์เต็ม (${sel.length.toLocaleString('th-TH')} จาก ${lines.length.toLocaleString('th-TH')} รายการสั่ง) — ${used.map((u) => `${u.label}: ${u.vals.slice(0, 3).join(', ')}${u.vals.length > 3 ? ` +${u.vals.length - 3}` : ''}`).join(' · ')}`);
+    if (zeroCode) warn.push('รหัสสินค้าบางตัวขึ้นต้นด้วย 0 — เปิดใน Excel ให้ตั้งคอลัมน์รหัสเป็นข้อความ ไม่เช่นนั้น 0 หน้ารหัสจะหาย');
+    say(`${warn.map((w) => `<b>⚠ ${esc(w)}</b><br>`).join('')}สั่งดาวน์โหลดแล้ว (${esc(nowT)}) — ดูในโฟลเดอร์ดาวน์โหลด · ${prods.length.toLocaleString('th-TH')} สินค้า · ${branches.length.toLocaleString('th-TH')} สาขา · ${days.length.toLocaleString('th-TH')} วันทั้งช่วง · นับเฉพาะออเดอร์ที่อนุมัติแล้ว · ${esc(asOf)}`);
+  };
+  body.querySelector('.dg-csv').addEventListener('click', exportGridCsv);
   draw();
 }
 
