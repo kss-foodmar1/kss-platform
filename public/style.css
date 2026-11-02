@@ -1607,3 +1607,25 @@ table.report-table.ct-table td { vertical-align: middle; }
 .refresh-confirm .rc-quota, .refresh-confirm .rc-unknown { color: var(--muted); }
 .refresh-confirm-over .rc-quota { color: var(--bad, #c0392b); font-weight: 600; }
 .refresh-confirm .rc-actions { display: flex; gap: 8px; margin-top: 4px; }
+
+/* ---------- date_grid: FMH-style product x branch x date grid ---------- */
+.widget-date_grid .table-scroll.dg-scroll { max-height: 600px; overflow: auto; }
+.widget-card.rows-3.widget-date_grid .dg-scroll { max-height: 560px; }
+.dg-table { border-collapse: separate; border-spacing: 0; font-size: 13px; width: max-content; min-width: 100%; }
+.dg-table th, .dg-table td { padding: 7px 10px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); white-space: nowrap; background: var(--white); }
+.dg-table thead th { position: sticky; background: var(--surface-2, var(--white)); font-weight: 700; z-index: 2; }
+.dg-table thead tr:first-child th { top: 0; }
+.dg-table thead tr:nth-child(2) th { top: 35px; font-weight: 600; color: var(--ink-2); }
+.dg-table .dg-branch { text-align: center; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.dg-table .dg-h { text-align: left; vertical-align: bottom; }
+.dg-table th.dg-c0, .dg-table td.dg-c0 { position: sticky; left: 0; z-index: 1; text-align: left; font-weight: 600; min-width: 180px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.dg-table thead th.dg-c0 { z-index: 3; }
+.dg-n { text-align: right; font-variant-numeric: tabular-nums; }
+.dg-0 { color: var(--ink-3, #8a8f98); }
+.dg-pages { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; justify-content: center; margin-top: 10px; }
+.dg-page { min-width: 44px; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; background: var(--white); color: var(--ink); font: inherit; font-weight: 600; cursor: pointer; }
+.dg-page[aria-current="page"] { background: var(--primary); border-color: var(--primary); color: #fff; }
+.dg-page:focus-visible, .dg-scroll:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.dg-gap { color: var(--ink-3, #8a8f98); }
+.dg-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.arr-locked { font-size: 12.5px; font-weight: 600; color: var(--ink-2); padding: 4px 8px; }

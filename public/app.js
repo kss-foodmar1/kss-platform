@@ -1437,7 +1437,7 @@ class DashboardView {
     grid.className = 'widget-grid';
     this.cards = this.widgets.map((w) => {
       const card = document.createElement('section');
-      card.className = `widget-card size-${w.config.size || 'half'} widget-${w.chart_type}${[2, 3].includes(Number(w.config.rows)) ? ` rows-${w.config.rows}` : ''}`;
+      card.className = `widget-card size-${w.config.size || 'half'} widget-${w.chart_type}${[2, 3].includes(Number(w.config.rows)) ? ` rows-${w.config.rows}` : ''}${w.config.lock_layout ? ' layout-locked' : ''}`;
       card.dataset.wid = w.id;
       card.innerHTML = `<div class="widget-head"><h3 class="widget-title">${esc(w.title)}</h3>${this.dashboard.data_source === 'demo' ? '<span class="demo-pill widget-sample">ตัวอย่าง</span>' : ''}${
         this.preview ? '' : '<button type="button" class="widget-explain" aria-expanded="false" title="กราฟนี้บอกอะไร"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>อธิบาย</button>'
@@ -2038,18 +2038,19 @@ class DashboardView {
     const setRows = (c, n) => { c.classList.remove('rows-2', 'rows-3'); if (n > 1) c.classList.add(`rows-${n}`); };
 
     cards().forEach((c) => {
+      const locked = c.classList.contains('layout-locked');
       const t = (c.querySelector('.widget-title') || {}).textContent || 'widget';
       const tools = document.createElement('div');
       tools.className = 'arr-tools';
       tools.innerHTML = `<button type="button" class="arr-grip" aria-label="ย้าย ${esc(t)} (ใช้ลูกศรซ้าย/ขวาก็ได้)" title="ลากเพื่อย้าย"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg><span>ลากเพื่อย้าย</span></button>
-        <span class="arr-size" role="group" aria-label="ความกว้าง">${SIZES.map(([k, , l]) => `<button type="button" data-size="${k}" aria-pressed="${sizeOf(c) === k}">${l}</button>`).join('')}</span>`;
+        ${locked ? '<span class="arr-locked">ขนาดล็อกไว้ (เต็มแถว สูง 3 แถว)</span>' : `<span class="arr-size" role="group" aria-label="ความกว้าง">${SIZES.map(([k, , l]) => `<button type="button" data-size="${k}" aria-pressed="${sizeOf(c) === k}">${l}</button>`).join('')}</span>`}`;
       c.prepend(tools);
       const rz = document.createElement('button');
       rz.type = 'button';
       rz.className = 'arr-resize';
       rz.setAttribute('aria-label', `ปรับขนาด ${t}`);
       rz.title = 'ลากเพื่อปรับขนาด';
-      c.appendChild(rz);
+      if (!locked) c.appendChild(rz);
       tools.querySelectorAll('.arr-size button').forEach((b) => b.addEventListener('click', () => { setSize(c, b.dataset.size); markDirty(); }));
       setSize(c, sizeOf(c));
       const grip = tools.querySelector('.arr-grip');
@@ -4056,7 +4057,82 @@ const RENDERERS = {
   stack: renderStack,
   tabs_bar: renderTabsBar,
   heatmap: renderHeatmap,
+  date_grid: renderDateGrid,
 };
+
+// ---------- date_grid: product rows x branch groups x delivery dates (FMH "Order Items by Branch") ----------
+// One row per product (code, unit, tag, category); above the dates sits a band per
+// branch, each with every day of the range, so a kitchen reads "what did each branch
+// order on which day" across the page. Quantities of the same product / branch / day
+// add up. Paged like FMH, with a product search and a CSV of the underlying lines.
+function renderDateGrid(body, rows, cfg) {
+  const cols = cfg.row_fields || [{ field: 'product', label: 'Product' }];
+  const GF = cfg.group_field || 'branch';
+  const DF = cfg.date_field || 'requested_delivery_date';
+  const VF = cfg.value_field || 'quantity';
+  const PAGE = cfg.page_size || 12;
+  const dayOf = (r) => { const d = String(pick(r, DF) ?? '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : ''; };
+  const lines = rows.filter((r) => dayOf(r));
+  if (!lines.length) { body.insertAdjacentHTML('beforeend', '<p class="muted ct-empty">ไม่มีข้อมูล</p>'); return; }
+  const rowKey = (r) => cols.map((c) => String(pick(r, c.field) ?? '')).join('\u0001');
+  const products = new Map();
+  const branchSet = new Set();
+  const cell = new Map();
+  let min = '9999-99-99'; let max = '0000-00-00';
+  lines.forEach((r) => {
+    const rk = rowKey(r); const b = String(pick(r, GF) ?? 'ไม่ระบุ'); const d = dayOf(r);
+    if (!products.has(rk)) products.set(rk, r);
+    branchSet.add(b);
+    if (d < min) min = d; if (d > max) max = d;
+    const k = `${rk}\u0002${b}\u0002${d}`;
+    cell.set(k, (cell.get(k) || 0) + (Number(pick(r, VF)) || 0));
+  });
+  // every day between the first and the last (a gap day shows "-"); a very long range falls back to days with data
+  const days = [];
+  const span = (Date.parse(max) - Date.parse(min)) / 86400000;
+  if (span <= 120) { for (let t = Date.parse(min); t <= Date.parse(max); t += 86400000) days.push(new Date(t).toISOString().slice(0, 10)); }
+  else { [...new Set(lines.map(dayOf))].sort().forEach((d) => days.push(d)); }
+  const branches = [...branchSet].sort((a, b) => a.localeCompare(b, 'th'));
+  const dmy = (d) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
+  const fmt = (v) => v.toLocaleString('th-TH', { maximumFractionDigits: 2 });
+  const sorted = [...products.entries()].sort((a, b) => String(pick(a[1], cfg.sort_field || cols[0].field) ?? '').localeCompare(String(pick(b[1], cfg.sort_field || cols[0].field) ?? ''), 'th', { numeric: true }));
+  let query = ''; let page = 1;
+  body.insertAdjacentHTML('beforeend', `
+    <div class="ct-tools dg-tools">
+      <label class="ct-search"><span class="sr-only">ค้นหาสินค้า</span><input type="search" placeholder="ค้นหาชื่อหรือรหัสสินค้า" autocomplete="off"></label>
+      <button type="button" class="btn small ghost dg-csv">Export CSV</button>
+    </div>
+    <p class="ct-msg dg-msg" role="status"></p>
+    <div class="table-scroll dg-scroll" tabindex="0" role="region" aria-label="ตารางรายการสั่งของแต่ละสาขาตามวัน เลื่อนไปทางขวาเพื่อดูวันถัดไป"></div>
+    <nav class="dg-pages" aria-label="หน้าของตาราง"></nav>`);
+  const scroller = body.querySelector('.dg-scroll'); const pager = body.querySelector('.dg-pages'); const msg = body.querySelector('.dg-msg');
+  const filtered = () => (query ? sorted.filter(([, r]) => cols.some((c) => String(pick(r, c.field) ?? '').toLowerCase().includes(query))) : sorted);
+  function draw() {
+    const list = filtered();
+    const pages = Math.max(1, Math.ceil(list.length / PAGE));
+    if (page > pages) page = pages;
+    const part = list.slice((page - 1) * PAGE, page * PAGE);
+    const head1 = cols.map((c, i) => `<th rowspan="2" scope="col" class="dg-h dg-c${i}">${esc(c.label || c.field)}</th>`).join('')
+      + branches.map((b) => `<th colspan="${days.length}" scope="colgroup" class="dg-branch" title="${esc(b)}">${esc(b)}</th>`).join('');
+    const head2 = branches.map(() => days.map((d) => `<th scope="col" class="dg-day">${dmy(d)}</th>`).join('')).join('');
+    const rowsHtml = part.map(([rk, r]) => {
+      const lead = cols.map((c, i) => `<${i === 0 ? 'th scope="row"' : 'td'} class="dg-c${i}">${esc(pick(r, c.field) == null || pick(r, c.field) === '' ? '-' : pick(r, c.field))}</${i === 0 ? 'th' : 'td'}>`).join('');
+      const cells = branches.map((b) => days.map((d) => { const v = cell.get(`${rk}\u0002${b}\u0002${d}`); return v === undefined ? '<td class="dg-n dg-0">-</td>' : `<td class="dg-n">${fmt(v)}</td>`; }).join('')).join('');
+      return `<tr>${lead}${cells}</tr>`;
+    }).join('');
+    scroller.innerHTML = list.length
+      ? `<table class="dg-table"><thead><tr>${head1}</tr><tr>${head2}</tr></thead><tbody>${rowsHtml}</tbody></table>`
+      : '<p class="muted ct-empty">ไม่พบสินค้าที่ค้นหา</p>';
+    const nums = [];
+    for (let i = 1; i <= pages; i++) if (i === 1 || i === pages || Math.abs(i - page) <= 2) nums.push(i);
+    pager.innerHTML = pages < 2 ? '' : nums.map((n, i) => `${i && n - nums[i - 1] > 1 ? '<span class="dg-gap" aria-hidden="true">…</span>' : ''}<button type="button" class="dg-page" data-p="${n}"${n === page ? ' aria-current="page"' : ''} aria-label="หน้า ${n}">${n}</button>`).join('');
+    pager.querySelectorAll('.dg-page').forEach((b) => b.addEventListener('click', () => { page = Number(b.dataset.p); draw(); const again = pager.querySelector(`.dg-page[data-p="${page}"]`); if (again) again.focus(); scroller.scrollTop = 0; }));
+    msg.textContent = `${list.length.toLocaleString('th-TH')} รายการสินค้า · ${branches.length.toLocaleString('th-TH')} สาขา · ${days.length.toLocaleString('th-TH')} วัน`;
+  }
+  body.querySelector('.ct-search input').addEventListener('input', (e) => { query = e.target.value.trim().toLowerCase(); page = 1; draw(); });
+  body.querySelector('.dg-csv').addEventListener('click', () => exportCsv(lines, [...cols, { field: GF }, { field: DF }, { field: VF }]));
+  draw();
+}
 
 // ---------- change password ----------
 el('open-password-btn').addEventListener('click', () => el('password-modal').classList.remove('hidden'));
