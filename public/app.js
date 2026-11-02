@@ -1253,20 +1253,26 @@ function keepOverlappingBuckets(rows, field, start, end) {
   });
 }
 
-// Local calendar, not UTC: before 07:00 in Bangkok the UTC date is still yesterday.
-// In saved-data mode "today" is the day that data was pulled, so "last 30 days"
-// and every "within N days" rule still land on the saved rows.
+// Thai calendar day (Asia/Bangkok), whatever the browser's time zone: data dates are Thai
+// dates, and before 07:00 in Bangkok the UTC date is still yesterday.
+const bkkIso = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+// In saved-data mode the "within N days" rules count from the day that data was pulled,
+// so saved rows still land in them. The range picker never does: see realTodayIso.
 let dataAnchor = null;
 const nowRef = () => (dataAnchor ? new Date(dataAnchor) : new Date());
-const todayIso = () => localIso(nowRef());
+const todayIso = () => bkkIso(nowRef());
+// The real today. "This month", "last 7 days"… and the stale-data check use this.
+const realTodayIso = () => bkkIso(new Date());
 // Report sources that can take older months from FMH export files (fmh-file.js).
 const FILE_SOURCES = ['sales-analysis', 'purchase-analysis'];
+// A report synced longer ago than this many days, with a range running past that day, gets a notice.
+const STALE_DAYS = 2;
 // YYYY-MM-DD shifted by n days (local calendar days).
 const dayShift = (iso, n) => localIso(new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)) + n));
 const dayLabel = (iso) => (iso ? new Date(String(iso).slice(0, 10) + 'T00:00:00').toLocaleDateString(I18N.locale(), { day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const nextDay = (iso) => localIso(new Date(Date.parse(iso + 'T00:00:00') + 86400000));
 const prevDay = (iso) => localIso(new Date(Date.parse(iso + 'T00:00:00') - 86400000));
-const daysAgoIso = (n) => localIso(new Date(nowRef().getTime() - n * 86400000));
+const daysAgoIso = (n) => bkkIso(new Date(nowRef().getTime() - n * 86400000));
 
 // "Use saved data" is a per-browser switch, so a demo stays on it while the
 // presenter moves between dashboards.
@@ -1313,7 +1319,7 @@ class DashboardView {
     this.fileCapable = Object.values(sources).some((s) => FILE_SOURCES.includes(s.source) && !s.grouping);
     this.useSaved = savedMode.get();
     this.rangePreset = RangePresets.DEFAULT; // the picked ready-made range; null after a custom date pick
-    this.range = RangePresets.compute(this.rangePreset, todayIso());
+    this.range = RangePresets.compute(this.rangePreset, realTodayIso());
     this.build();
   }
 
@@ -1557,7 +1563,7 @@ class DashboardView {
       sel.value = this.rangePreset;
     } else {
       // a custom pick that happens to equal a ready-made range shows as that range
-      const m = RangePresets.match(this.range.start, this.range.end, todayIso());
+      const m = RangePresets.match(this.range.start, this.range.end, realTodayIso());
       if (m && [...sel.options].some((o) => o.value === m)) sel.value = m;
       else { custom.hidden = false; sel.value = 'custom'; }
     }
@@ -1570,7 +1576,7 @@ class DashboardView {
     sel.addEventListener('change', () => {
       if (sel.value === 'custom') return;
       this.rangePreset = sel.value;
-      this.range = RangePresets.compute(this.rangePreset, todayIso());
+      this.range = RangePresets.compute(this.rangePreset, realTodayIso());
       start.value = this.range.start;
       end.value = this.range.end;
       this.syncPresetSelect();
@@ -1669,11 +1675,14 @@ class DashboardView {
     return active.filter(([f]) => !(f in rows[0])).map(([f]) => f);
   }
 
-  // "Today" is always the real today (Thai time), in saved mode too, so "this month"
-  // means the current calendar month even when the last sync is older.
+  // The range picker follows the real today, in saved mode too ("this month" is the calendar
+  // month). Saved mode only anchors the "within N days" rules to the day the data was pulled.
   applyAnchor() {
-    dataAnchor = null;
-    if (this.rangePreset) this.range = RangePresets.compute(this.rangePreset, todayIso());
+    const times = this.useSaved
+      ? Object.values(this.results).filter((r) => r && r.meta && r.meta.synced_at).map((r) => new Date(r.meta.synced_at).getTime())
+      : [];
+    dataAnchor = times.length ? Math.max(...times) : null;
+    if (this.rangePreset) this.range = RangePresets.compute(this.rangePreset, realTodayIso());
     const s = this.wrap.querySelector('.range-start');
     const e = this.wrap.querySelector('.range-end');
     if (s) s.value = this.range.start;
@@ -1817,7 +1826,9 @@ class DashboardView {
     if (!info || !info.date_field || !this.range.start) return null;
     const from = this.coverageFrom(key);
     if (!from || Date.parse(from) - Date.parse(this.range.start) < 3 * 86400000) return null;
-    return `${info.label} มีข้อมูลตั้งแต่ ${dayLabel(from)}${FILE_SOURCES.includes(info.source) ? ' — อัปโหลดไฟล์จาก FMH เพื่อดูย้อนหลังกว่านี้' : ' (FMH API ย้อนหลังได้ราว 90 วัน)'}`;
+    const file = FILE_SOURCES.includes(info.source);
+    return L(`${info.label} มีข้อมูลตั้งแต่ ${dayLabel(from)}${file ? ' — อัปโหลดไฟล์จาก FMH เพื่อดูย้อนหลังกว่านี้' : ' (FMH API ย้อนหลังได้ราว 90 วัน)'}`,
+      `${info.label} has data from ${dayLabel(from)}${file ? ' — upload FMH export files to see further back' : ' (the FMH API reaches back about 90 days)'}`);
   }
 
   // A report whose last sync is older than 2 days while the picked range runs past it:
@@ -1827,17 +1838,25 @@ class DashboardView {
     const r = this.results[key];
     const at = r && !r.error && r.meta && r.meta.synced_at;
     if (!info || !info.date_field || !at || !this.range.end) return null;
-    const synced = localIso(new Date(at));
-    if (this.range.end <= synced || Date.parse(todayIso()) - Date.parse(synced) <= 2 * 86400000) return null;
-    return L(`${info.label}: ซิงก์ล่าสุด ${dayLabel(synced)} — ข้อมูลหลังวันนั้นยังไม่เข้า ยอดของช่วงที่เลือกอาจต่ำกว่าจริง`,
-      `${info.label}: last synced ${dayLabel(synced)} — newer data has not arrived, so figures for this range may be too low.`);
+    const synced = bkkIso(new Date(at));
+    const today = realTodayIso();
+    const age = Math.round((Date.parse(today) - Date.parse(synced)) / 86400000);
+    if (this.range.end <= synced || age <= STALE_DAYS) return null;
+    // sync it now (admins) or ask whoever looks after the account; saved data never refreshes
+    const fix = this.useSaved ? L('กลับไปใช้ข้อมูลล่าสุดเพื่อดึงใหม่', 'switch back to latest data to refresh')
+      : (isCompanyAdmin() || isSuper()) ? L('กด “ดึงข้อมูล” ที่แถบด้านบน', 'press “Sync” in the bar above')
+        : L('แจ้งผู้ดูแลของร้านให้ดึงข้อมูลใหม่', 'ask your account admin to sync again');
+    return L(`${info.label}: ข้อมูลเก่า ${age} วัน (ดึงล่าสุด ${dayLabel(synced)}) ข้อมูลหลังวันนั้นยังไม่เข้า ตัวเลขช่วงที่เลือกอาจไม่ครบ — ${fix}`,
+      `${info.label}: data is ${age} days old (last synced ${dayLabel(synced)}); newer data has not arrived, so figures for this range may be incomplete — ${fix}`);
   }
 
   // Page level: every report the page reads.
   renderCoverage() {
     if (!this.coverageEl) return;
     const lines = [...new Set(Object.keys(this.sources).flatMap((k) => [this.staleLine(k), this.coverageLine(k)]).filter(Boolean))];
-    this.coverageEl.innerHTML = lines.length ? `<div class="warn-msg coverage-banner">${lines.map(esc).join('<br>')}</div>` : '';
+    this.coverageEl.innerHTML = lines.length
+      ? `<div class="warn-msg coverage-banner" role="status"><strong>${esc(L('แจ้งเตือน', 'Notice'))}</strong>${lines.map((l) => `<div>${esc(l)}</div>`).join('')}</div>`
+      : '';
   }
 
   // Widget level, only where it changes how to read that widget: two reports
@@ -1852,7 +1871,7 @@ class DashboardView {
       const info = this.sources[key];
       if (!info) return;
       if (!info.date_field) {
-        if (info.grouping && spanDays > 85) notes.push(`${info.label}: ยอดรวมจาก FMH ไม่เกิน 80 วันล่าสุด ไม่เปลี่ยนตามช่วงวันที่`);
+        if (info.grouping && spanDays > 85) notes.push(L(`${info.label}: ยอดรวมจาก FMH ไม่เกิน 80 วันล่าสุด ไม่เปลี่ยนตามช่วงวันที่`, `${info.label}: totals from FMH cover at most the last 80 days and do not follow the date range`));
         return;
       }
       if (keys.length > 1) {
@@ -1916,7 +1935,7 @@ class DashboardView {
         : '';
     bar.innerHTML = this.useSaved
       ? `<div class="fmh-sync-line saved-mode-line">
-           <span><strong>กำลังใช้ข้อมูลที่เก็บไว้</strong>${savedAsOf ? ` · ดึงไว้เมื่อ ${esc(savedAsOf)}` : ''} · ช่วงวันที่นับจากวันนั้น ไม่ดึงข้อมูลใหม่จาก FMH</span>
+           <span><strong>กำลังใช้ข้อมูลที่เก็บไว้</strong>${savedAsOf ? ` · ดึงไว้เมื่อ ${esc(savedAsOf)}` : ''} · ช่วงวันที่นับจากวันนี้จริง แต่ข้อมูลหยุดที่วันที่ดึง ไม่ดึงข้อมูลใหม่จาก FMH</span>
            ${toggle}
          </div>`
       : `<div class="fmh-sync-line">
