@@ -2301,7 +2301,7 @@ class DashboardView {
       const base = widget.pulls ? this.results[widget.pulls[0].key] : res;
       const skipped = this.unfilteredBy(base && base.data);
       try {
-        renderer(body, rows, useCfg, { widget, dashboardId: this.dashboard.id, persist: !this.preview, syncedAt: res && res.meta ? res.meta.synced_at : null, range: this.range });
+        renderer(body, rows, useCfg, { widget, dashboardId: this.dashboard.id, persist: !this.preview, syncedAt: res && res.meta ? res.meta.synced_at : null, range: this.range, quota: res && res.meta ? res.meta.quota : null });
         this.explainData.set(widget.id, { rows, cfg: useCfg, range: this.range });
         if (skipped.length) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">widget นี้ไม่มีข้อมูล${esc(skipped.map((f) => ({ customer: 'ลูกค้า', branch: 'สาขา', supplier: 'ซัพพลายเออร์' })[f] || f).join(', '))} จึงแสดงทั้งหมด ไม่ได้กรองตามตัวเลือกด้านบน</p>`);
         // A note on how to read the widget. Renderers that place it themselves
@@ -4058,7 +4058,190 @@ const RENDERERS = {
   tabs_bar: renderTabsBar,
   heatmap: renderHeatmap,
   date_grid: renderDateGrid,
+  par_table: renderParTable,
 };
+
+// ---------- par_table: Auto PAR Level (Min / Max PAR from POS sales × recipes) ----------
+// The server sends average daily usage per ingredient × branch (lib/parLevel.js).
+// The PAR itself is worked out here from the company's per-category settings, so a
+// changed setting shows at once:
+//   Min PAR (reorder point) = avg daily usage × (lead time + safety days)
+//   Max PAR                 = avg daily usage × order frequency (days)
+// FMH tells the buyer to refill to Max when stock falls below Min, so a Max under
+// Min is lifted to Min and marked.
+const PAR_DEFAULTS = { lead_days: 2, safety_days: 1, order_days: 7 };
+const PAR_WEEKDAYS = ['จันทร์', 'อังคาร', 'พุธ', 'พฤหัสฯ', 'ศุกร์', 'เสาร์', 'อาทิตย์'];
+const parUp = (x) => (x >= 10 ? Math.ceil(x) : Math.ceil(x * 10 - 1e-9) / 10); // round up: a short PAR is a stock-out
+function parCalc(r, s) {
+  const min = parUp(num(r.avg_daily) * (s.lead_days + s.safety_days));
+  const rawMax = parUp(num(r.avg_daily) * s.order_days);
+  return { min, max: Math.max(rawMax, min), lifted: rawMax < min, tight: rawMax <= min };
+}
+
+function renderParTable(body, rows, cfg, ctx) {
+  const wid = (ctx.widget && ctx.widget.id) || 0;
+  const quota = (ctx.quota && ctx.quota.par) || null;
+  const minDays = (quota && quota.min_days) || 7;
+  let settings = { defaults: { ...PAR_DEFAULTS }, categories: {}, can_edit: false, loaded: !ctx.dashboardId };
+  let branch = '', query = '', catSel = '';
+  let sort = { field: 'category', dir: 'asc' };
+  let open = null;
+  const cats = [...new Set(rows.map((r) => r.category))].sort((a, b) => a.localeCompare(b, 'th'));
+  const branches = [...new Set(rows.map((r) => r.branch))].sort((a, b) => a.localeCompare(b, 'th'));
+  const setFor = (c) => settings.categories[c] || settings.defaults;
+  const isOwn = (c) => !!settings.categories[c];
+  const fmt = (v) => v.toLocaleString('th-TH', { maximumFractionDigits: 1 });
+
+  body.insertAdjacentHTML('beforeend', `
+    <div class="ct-tools">
+      ${branches.length > 1 ? `<label class="ct-branch"><span class="sr-only">สาขา</span><select class="par-branch">${['', ...branches].map((b) => `<option value="${esc(b)}">${b ? esc(b) : 'ทุกสาขา'}</option>`).join('')}</select></label>` : ''}
+      ${cats.length > 1 ? `<label class="ct-branch"><span class="sr-only">หมวด</span><select class="par-cat">${['', ...cats].map((c) => `<option value="${esc(c)}">${c ? esc(c) : 'ทุกหมวด'}</option>`).join('')}</select></label>` : ''}
+      <label class="ct-search"><span class="sr-only">ค้นหาวัตถุดิบ</span><input type="search" placeholder="ค้นหาชื่อหรือรหัสวัตถุดิบ" autocomplete="off"></label>
+      <button type="button" class="btn small ghost par-open" aria-expanded="false" aria-controls="par-set-${wid}">ตั้งค่าตามหมวด</button>
+      <button type="button" class="btn small ghost par-csv">Export CSV</button>
+    </div>
+    <div class="par-settings" id="par-set-${wid}" hidden></div>
+    <p class="ct-msg" role="status"></p>
+    <p class="widget-foot par-note"></p>
+    <div class="table-scroll" tabindex="0" role="region" aria-label="ตาราง Min PAR และ Max PAR ของแต่ละวัตถุดิบ"></div>
+    <p class="widget-foot par-formula"><b>Min PAR</b> = ใช้เฉลี่ยต่อวัน × (Lead time + วันสำรอง) &nbsp;·&nbsp; <b>Max PAR</b> = ใช้เฉลี่ยต่อวัน × ความถี่สั่ง ปัดขึ้นเสมอ ใน FMH: สต็อกต่ำกว่า Min แจ้งให้เติม และเติมถึง Max</p>`);
+  const $ = (s) => body.querySelector(s);
+  const msg = $('.ct-msg');
+  const panel = $('.par-settings');
+  const scroller = $('.table-scroll');
+
+  const viewRows = () => {
+    const q = query.toLowerCase();
+    let out = rows.filter((r) => (!branch || r.branch === branch) && (!catSel || r.category === catSel)
+      && (!q || `${r.ingredient_name} ${r.ingredient_code}`.toLowerCase().includes(q)));
+    out = out.map((r) => ({ ...r, ...parCalc(r, setFor(r.category)) }));
+    const f = sort.field;
+    out.sort((a, b) => {
+      const x = a[f], y = b[f];
+      const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? ''), 'th');
+      return (sort.dir === 'asc' ? c : -c) || String(a.ingredient_name).localeCompare(String(b.ingredient_name), 'th') || String(a.branch).localeCompare(String(b.branch), 'th');
+    });
+    return out;
+  };
+
+  function drawNote(data) {
+    const thin = data.filter((r) => r.sales_days < minDays).length;
+    const tight = data.filter((r) => r.tight).length;
+    const bits = [];
+    if (quota) bits.push(`คำนวณจากยอดขาย POS ${quota.from} ถึง ${quota.to} (${quota.window_days} วันล่าสุด)`);
+    if (quota && quota.coverage_pct != null) bits.push(`จับคู่สูตรได้ ${quota.coverage_pct}% ของยอดขาย`);
+    $('.par-note').innerHTML = `${esc(bits.join(' · '))}${quota && quota.unmatched_menus ? ` · <b>มี ${quota.unmatched_menus} เมนูยังไม่จับคู่สูตร</b> วัตถุดิบของเมนูเหล่านั้นยังไม่ถูกนับ` : ''}${thin ? ` · <b>${thin} แถวมีข้อมูลขายไม่ถึง ${minDays} วัน</b> ตัวเลขอาจไม่นิ่ง` : ''}${tight ? ` · <b>${tight} แถว Max ไม่สูงกว่า Min</b> เติมกลับขึ้น Max แล้วจะไม่เหลือส่วนให้สั่ง ถ้าต้องการให้ Max สูงกว่า ให้ตั้งความถี่สั่งมากกว่า Lead time + วันสำรอง` : ''}`;
+  }
+
+  function drawTable() {
+    const data = viewRows();
+    drawNote(data);
+    const cols = [
+      ['ingredient_name', 'วัตถุดิบ', false], ['category', 'หมวด', false], ['branch', 'สาขา', false], ['uom', 'หน่วย', false],
+      ['avg_daily', 'ใช้เฉลี่ย/วัน', true], ['peak_daily', 'ใช้สูงสุด/วัน', true], ['min', 'Min PAR', true], ['max', 'Max PAR', true], ['sales_days', 'ข้อมูล (วัน)', true],
+    ];
+    const head = cols.map(([f, l, n]) => {
+      const on = sort.field === f;
+      return `<th class="${n ? 'num' : ''}" tabindex="0" data-field="${f}" aria-sort="${on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}">${esc(l)}${on ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}</th>`;
+    }).join('');
+    const shown = data.slice(0, cfg.top_n || 500);
+    const tr = shown.map((r) => `<tr>
+      <td data-label="วัตถุดิบ">${esc(r.ingredient_name)}<span class="par-code">${esc(r.ingredient_code)}</span></td>
+      <td data-label="หมวด">${esc(r.category)}</td>
+      <td data-label="สาขา">${esc(r.branch)}</td>
+      <td data-label="หน่วย">${esc(r.uom)}</td>
+      <td class="num" data-label="ใช้เฉลี่ย/วัน">${fmt(r.avg_daily)}</td>
+      <td class="num" data-label="ใช้สูงสุด/วัน">${fmt(r.peak_daily)}<span class="par-code">${esc(PAR_WEEKDAYS[r.peak_weekday - 1] || '')}</span></td>
+      <td class="num par-min" data-label="Min PAR"><b>${fmt(r.min)}</b></td>
+      <td class="num par-max" data-label="Max PAR"><b>${fmt(r.max)}</b>${r.lifted ? '<span class="par-flag" title="ความถี่สั่ง × ยอดใช้ ต่ำกว่า Min จึงปรับ Max ให้เท่า Min">ปรับตาม Min</span>' : ''}</td>
+      <td class="num${r.sales_days < minDays ? ' par-thin' : ''}" data-label="ข้อมูล (วัน)">${r.sales_days}${r.sales_days < minDays ? '<span class="par-flag">ข้อมูลน้อย</span>' : ''}</td></tr>`).join('');
+    scroller.innerHTML = data.length
+      ? `<table class="report-table ct-table nums-many"><thead><tr>${head}</tr></thead><tbody>${tr}</tbody></table>`
+      : '<p class="muted">ไม่พบวัตถุดิบที่ตรงกับตัวกรอง</p>';
+    $('.par-csv').disabled = !data.length;
+    scroller.querySelectorAll('th').forEach((th) => {
+      const go = () => { const f = th.dataset.field; sort = sort.field === f ? { field: f, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { field: f, dir: ['ingredient_name', 'category', 'branch', 'uom'].includes(f) ? 'asc' : 'desc' }; drawTable(); const again = scroller.querySelector(`th[data-field="${f}"]`); if (again) again.focus(); };
+      th.addEventListener('click', go);
+      th.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+    });
+  }
+
+  // ---- per-category settings ----
+  const lead = (c) => { const v = rows.filter((r) => r.category === c && r.obs_lead_days != null); return v.length ? v.reduce((a, r) => a + r.obs_lead_days, 0) / v.length : null; };
+  function drawPanel() {
+    const own = Object.keys(settings.categories).length;
+    const can = settings.can_edit;
+    const line = (key, label, s, isDef, hint) => `<div class="par-row" data-cat="${esc(key)}" role="group" aria-label="${esc(label)}">
+      <div class="par-cat-name"><b>${esc(label)}</b>${hint ? `<span class="par-code">${esc(hint)}</span>` : ''}</div>
+      ${[['lead_days', 'Lead time (วัน)'], ['safety_days', 'วันสำรอง'], ['order_days', 'ความถี่สั่ง (วัน)']].map(([f, l]) => `<label class="par-field"><span>${l}</span><input type="number" inputmode="decimal" min="0" max="60" step="0.5" value="${s[f]}" data-f="${f}"${can ? '' : ' disabled'}></label>`).join('')}
+      ${can ? `<div class="par-actions"><button type="button" class="btn small par-save">บันทึก</button>${!isDef && isOwn(key) ? '<button type="button" class="btn small ghost par-reset">ใช้ค่าเริ่มต้น</button>' : ''}</div>` : ''}</div>`;
+    panel.innerHTML = `<p class="ct-hint">${can ? 'ตั้งค่าแยกตามหมวดวัตถุดิบ หมวดที่ไม่ได้ตั้งจะใช้ "ค่าเริ่มต้น" ตารางคำนวณใหม่ทันทีหลังบันทึก' : 'ผู้ดูแลบริษัทเป็นผู้ตั้งค่านี้ คุณดูตัวเลขได้อย่างเดียว'}${own ? '' : ' ตอนนี้ทุกหมวดใช้ค่าเริ่มต้น'}</p>
+      ${line('', 'ค่าเริ่มต้น', settings.defaults, true, 'ใช้กับหมวดที่ไม่ได้ตั้งเอง')}
+      ${cats.map((c) => { const o = lead(c); return line(c, c, setFor(c), false, o != null ? `ส่งของจริงเฉลี่ย ${fmt(o)} วัน` : ''); }).join('')}`;
+    panel.querySelectorAll('.par-row').forEach((rowEl) => {
+      const cat = rowEl.dataset.cat;
+      const sv = rowEl.querySelector('.par-save');
+      if (sv) sv.addEventListener('click', async () => {
+        const v = {};
+        let bad = false;
+        rowEl.querySelectorAll('input').forEach((i) => { const n = Number(i.value); if (i.value === '' || !Number.isFinite(n) || n < 0 || n > 60) bad = true; v[i.dataset.f] = n; });
+        if (bad) { msg.textContent = 'ตัวเลขต้องอยู่ระหว่าง 0–60 วัน'; return; }
+        sv.disabled = true;
+        try {
+          settings = { ...(await api(`/api/dashboards/${ctx.dashboardId}/par-settings`, { method: 'PUT', body: JSON.stringify({ category: cat, ...v }) })), loaded: true };
+          msg.textContent = `บันทึกค่าของ "${cat || 'ค่าเริ่มต้น'}" แล้ว ตารางคำนวณใหม่`;
+        } catch (e) { msg.textContent = e.message || 'บันทึกไม่สำเร็จ ลองอีกครั้ง'; }
+        drawPanel(); drawTable();
+      });
+      const rs = rowEl.querySelector('.par-reset');
+      if (rs) rs.addEventListener('click', async () => {
+        try {
+          settings = { ...(await api(`/api/dashboards/${ctx.dashboardId}/par-settings`, { method: 'PUT', body: JSON.stringify({ category: cat, reset: true }) })), loaded: true };
+          msg.textContent = `"${cat}" กลับไปใช้ค่าเริ่มต้นแล้ว`;
+        } catch (e) { msg.textContent = e.message || 'บันทึกไม่สำเร็จ ลองอีกครั้ง'; }
+        drawPanel(); drawTable();
+      });
+    });
+  }
+  const toggle = (want) => {
+    open = want;
+    panel.hidden = !open;
+    $('.par-open').setAttribute('aria-expanded', String(!!open));
+    if (open) drawPanel();
+  };
+
+  function exportParCsv() {
+    const data = viewRows();
+    if (!data.length) return;
+    const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const head = ['Product code', 'Product name', 'Category', 'Branch', 'UOM', 'Avg daily usage', 'Peak daily usage', 'Lead time (days)', 'Safety days', 'Order every (days)', 'Min PAR', 'Max PAR', 'Days of data'];
+    const out = [head.map(q).join(',')].concat(data.map((r) => { const s = setFor(r.category); return [r.ingredient_code, r.ingredient_name, r.category, r.branch, r.uom, r.avg_daily, r.peak_daily, s.lead_days, s.safety_days, s.order_days, r.min, r.max, r.sales_days].map(q).join(','); }));
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob(['﻿' + out.join('\r\n')], { type: 'text/csv;charset=utf-8;' }));
+    link.download = `auto-par-level${branch ? '_' + branch.replace(/[\\/:*?"<>|\s]+/g, '-') : ''}.csv`;
+    link.click();
+    msg.textContent = `ส่งออก ${data.length.toLocaleString('th-TH')} แถวแล้ว`;
+  }
+
+  $('.par-open').addEventListener('click', () => toggle(!open));
+  $('.par-csv').addEventListener('click', exportParCsv);
+  const bsel = $('.par-branch');
+  if (bsel) bsel.addEventListener('change', () => { branch = bsel.value; msg.textContent = branch ? `แสดงเฉพาะ ${branch}` : 'แสดงทุกสาขา'; drawTable(); });
+  const csel = $('.par-cat');
+  if (csel) csel.addEventListener('change', () => { catSel = csel.value; msg.textContent = catSel ? `แสดงเฉพาะหมวด ${catSel}` : 'แสดงทุกหมวด'; drawTable(); });
+  $('.ct-search input').addEventListener('input', (e) => { query = e.target.value.trim(); drawTable(); });
+  drawTable();
+
+  // Settings load after the first draw (defaults show at once); the panel opens
+  // by itself while nothing has been set, so the numbers are not taken as final.
+  if (ctx.dashboardId) {
+    api(`/api/dashboards/${ctx.dashboardId}/par-settings`).then((s) => {
+      settings = { ...s, loaded: true };
+      drawTable();
+      toggle(!Object.keys(s.categories).length && s.can_edit);
+    }).catch(() => { msg.textContent = 'โหลดการตั้งค่า PAR ไม่สำเร็จ ตอนนี้ใช้ค่าเริ่มต้น (Lead 2 วัน, สำรอง 1 วัน, สั่งทุก 7 วัน)'; });
+  }
+}
 
 // ---------- date_grid: product rows x branch groups x delivery dates (FMH "Order Items by Branch") ----------
 // One row per product (code, unit, tag, category); above the dates sits a band per

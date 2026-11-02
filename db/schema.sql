@@ -340,6 +340,21 @@ CREATE TABLE IF NOT EXISTS ck_branch_map (
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;
 
+-- Auto PAR Level (lib/parLevel.js): per ingredient category, the three numbers
+-- that turn average daily usage into a Min / Max PAR. category '' is the
+-- company-wide default; a row here is a person's choice.
+CREATE TABLE IF NOT EXISTS par_settings (
+  company_id INT NOT NULL,
+  category VARCHAR(190) NOT NULL,
+  lead_days DECIMAL(6,2) NOT NULL,
+  safety_days DECIMAL(6,2) NOT NULL,
+  order_days DECIMAL(6,2) NOT NULL,
+  updated_by INT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (company_id, category),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
 -- LINE bot (lib/line.js): one LINE Official Account per company. The channel
 -- secret and access token are the company's own, encrypted at rest. The bot
 -- binds to the first group that talks to it (group_id); last_alert_key is the

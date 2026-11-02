@@ -229,6 +229,34 @@ router.put(
   })
 );
 
+// Auto PAR Level: the lead time / safety days / order frequency per ingredient
+// category. Anyone who can see the dashboard reads them (the widget needs them
+// to work out Min / Max PAR); a company admin or KSS staff change them.
+router.get(
+  '/:id/par-settings',
+  requireAuth,
+  wrap(async (req, res) => {
+    const dashboard = await getDashboardForUser(req.user, req.params.id);
+    if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
+    res.json({ ...(await require('../lib/parLevel').getSettings(dashboard.company_id)), can_edit: req.user.role === 'company_admin' || isSuperadmin(req.user) });
+  })
+);
+router.put(
+  '/:id/par-settings',
+  requireAuth,
+  wrap(async (req, res) => {
+    const dashboard = await getDashboardForUser(req.user, req.params.id);
+    if (!dashboard) return res.status(404).json({ error: 'ไม่พบ dashboard นี้' });
+    if (req.user.role !== 'company_admin' && !isSuperadmin(req.user)) return res.status(403).json({ error: 'เฉพาะผู้ดูแลบริษัทที่ตั้งค่า PAR ได้' });
+    try {
+      res.json({ ...(await require('../lib/parLevel').setSettings(dashboard.company_id, req.user.id, req.body || {})), can_edit: true });
+    } catch (err) {
+      if (err.status) return res.status(err.status).json({ error: err.message });
+      throw err;
+    }
+  })
+);
+
 // Cached rows of one report for a page: a dashboard, or one widget previewed
 // in the library. Never spends FMH quota: only demo data, uploaded files and
 // computed reports are built on view.
