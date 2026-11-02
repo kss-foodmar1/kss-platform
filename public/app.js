@@ -1669,13 +1669,10 @@ class DashboardView {
     return active.filter(([f]) => !(f in rows[0])).map(([f]) => f);
   }
 
-  // Saved mode: anchor "today" to the newest saved pull and move the date range
-  // with it; live mode: back to the real today.
+  // "Today" is always the real today (Thai time), in saved mode too, so "this month"
+  // means the current calendar month even when the last sync is older.
   applyAnchor() {
-    const times = this.useSaved
-      ? Object.values(this.results).filter((r) => r && r.meta && r.meta.synced_at).map((r) => new Date(r.meta.synced_at).getTime())
-      : [];
-    dataAnchor = times.length ? Math.max(...times) : null;
+    dataAnchor = null;
     if (this.rangePreset) this.range = RangePresets.compute(this.rangePreset, todayIso());
     const s = this.wrap.querySelector('.range-start');
     const e = this.wrap.querySelector('.range-end');
@@ -1823,10 +1820,23 @@ class DashboardView {
     return `${info.label} มีข้อมูลตั้งแต่ ${dayLabel(from)}${FILE_SOURCES.includes(info.source) ? ' — อัปโหลดไฟล์จาก FMH เพื่อดูย้อนหลังกว่านี้' : ' (FMH API ย้อนหลังได้ราว 90 วัน)'}`;
   }
 
+  // A report whose last sync is older than 2 days while the picked range runs past it:
+  // the newest days are missing, which would otherwise look like quiet days.
+  staleLine(key) {
+    const info = this.sources[key];
+    const r = this.results[key];
+    const at = r && !r.error && r.meta && r.meta.synced_at;
+    if (!info || !info.date_field || !at || !this.range.end) return null;
+    const synced = localIso(new Date(at));
+    if (this.range.end <= synced || Date.parse(todayIso()) - Date.parse(synced) <= 2 * 86400000) return null;
+    return L(`${info.label}: ซิงก์ล่าสุด ${dayLabel(synced)} — ข้อมูลหลังวันนั้นยังไม่เข้า ยอดของช่วงที่เลือกอาจต่ำกว่าจริง`,
+      `${info.label}: last synced ${dayLabel(synced)} — newer data has not arrived, so figures for this range may be too low.`);
+  }
+
   // Page level: every report the page reads.
   renderCoverage() {
     if (!this.coverageEl) return;
-    const lines = [...new Set(Object.keys(this.sources).map((k) => this.coverageLine(k)).filter(Boolean))];
+    const lines = [...new Set(Object.keys(this.sources).flatMap((k) => [this.staleLine(k), this.coverageLine(k)]).filter(Boolean))];
     this.coverageEl.innerHTML = lines.length ? `<div class="warn-msg coverage-banner">${lines.map(esc).join('<br>')}</div>` : '';
   }
 
