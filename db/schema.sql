@@ -558,3 +558,15 @@ CREATE TABLE IF NOT EXISTS widget_user_prefs (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (widget_id) REFERENCES dashboard_widgets(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;
+
+-- One user's own settings that follow them across dashboards (not tied to a widget).
+-- pref_key 'date_basis': which date column the page's date range counts by
+-- (public/date-basis.js); absent = Order Date, the same as FMH.
+CREATE TABLE IF NOT EXISTS user_prefs (
+  user_id INT NOT NULL,
+  pref_key VARCHAR(40) NOT NULL,
+  pref_value VARCHAR(200) NOT NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, pref_key),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;

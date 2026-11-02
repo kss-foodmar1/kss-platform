@@ -1300,6 +1300,10 @@ class DashboardView {
       : `/api/dashboards/${dashboard.id}`;
     this.results = {}; // source -> { data, meta } | { error, code }
     this.hasDateSource = Object.values(sources).some((s) => s.date_field);
+    // Which date column the range counts by, for Sales / Purchase Analysis (public/date-basis.js):
+    // Order Date unless this user picked another, which the server remembers for them.
+    this.hasBasis = Object.values(sources).some((s) => s.date_basis);
+    this.dateBasis = DateBasis.normalize(dashboard.my_date_basis);
     // Reports whose older months can come from FMH export files: these pages
     // offer 6-month / 1-year ranges.
     this.fileCapable = Object.values(sources).some((s) => FILE_SOURCES.includes(s.source) && !s.grouping);
@@ -1349,7 +1353,8 @@ class DashboardView {
                  <input type="date" class="range-start" value="${this.range.start}" aria-label="วันที่เริ่ม">
                  <span class="muted">–</span>
                  <input type="date" class="range-end" value="${this.range.end}" aria-label="วันที่สิ้นสุด">
-               </div>`
+               </div>
+               ${this.hasBasis ? '<div class="basis-control" hidden></div>' : ''}`
             : ''
         }
       </div>`;
@@ -1671,17 +1676,67 @@ class DashboardView {
     return widget.grouping ? `${widget.report_source}|${widget.grouping}` : widget.report_source;
   }
 
+  // The row column the range counts by for one pull: the user's chosen date for Sales / Purchase
+  // Analysis (Order Date when the report has no such column), else the report's own.
+  dateFieldOf(key) {
+    const info = this.sources[key];
+    if (!info) return null;
+    if (!info.date_basis) return info.date_field;
+    const r = this.results[key];
+    return DateBasis.fieldFor(this.dateBasis, r && !r.error ? r.data : []).field;
+  }
+
+  // The "นับตามวันที่" picker and the one line under it. Rebuilt only when the choices change, so a
+  // keyboard user keeps their place after picking.
+  renderBasis() {
+    const box = this.wrap.querySelector('.basis-control');
+    if (!box) return;
+    const keys = Object.keys(this.sources).filter((k) => this.sources[k].date_basis);
+    const sets = keys.map((k) => (this.results[k] && !this.results[k].error ? this.results[k].data : []));
+    if (!sets.some((x) => x.length)) { box.hidden = true; return; }
+    const opts = DateBasis.available(sets);
+    if (!opts.includes(this.dateBasis)) opts.push(this.dateBasis);
+    const sig = opts.join(',');
+    if (box.dataset.sig !== sig) {
+      box.dataset.sig = sig;
+      box.innerHTML = `<label class="basis-label"><span>นับยอดตามวันที่</span>
+        <select class="basis-select" aria-label="นับยอดตามวันที่">${opts.map((k) => `<option value="${k}">${esc(DateBasis.label(k))}${k === DateBasis.DEFAULT ? ' — ตรงกับ FMH' : ''}</option>`).join('')}</select></label>
+        <p class="basis-note muted"></p>`;
+      box.querySelector('select').addEventListener('change', (e) => {
+        this.dateBasis = DateBasis.normalize(e.target.value);
+        if (!this.preview) api('/api/dashboards/me/date-basis', { method: 'PUT', body: JSON.stringify({ basis: this.dateBasis }) }).catch(() => {});
+        this.renderWidgets();
+      });
+    }
+    box.hidden = false;
+    box.querySelector('select').value = this.dateBasis;
+    const notes = [];
+    if (this.dateBasis !== DateBasis.DEFAULT) notes.push(`ต่างจาก FMH ที่นับตาม ${DateBasis.label(DateBasis.DEFAULT)} ยอดรวมจึงอาจไม่ตรงกัน`);
+    keys.forEach((k) => {
+      const r = this.results[k];
+      if (!r || r.error) return;
+      const f = DateBasis.fieldFor(this.dateBasis, r.data);
+      if (f.fellBack) notes.push(`${this.sources[k].label} ไม่มี ${DateBasis.label(this.dateBasis)} จึงใช้ ${DateBasis.label(f.field)} แทน`);
+      else if (f.field !== DateBasis.DEFAULT) {
+        const n = DateBasis.missing(r.data, f.field);
+        if (n) notes.push(`${this.sources[k].label}: ${n.toLocaleString('th-TH')} รายการยังไม่มี ${DateBasis.label(f.field)} จึงไม่ถูกนับ`);
+      }
+    });
+    box.querySelector('.basis-note').innerHTML = notes.map(esc).join('<br>');
+  }
+
   // First day a pull has data for: uploaded files first, then the API window,
   // else the oldest row. Null when the pull is undated.
   coverageFrom(key) {
     const r = this.results[key];
     const info = this.sources[key];
     if (!r || r.error || !info || !info.date_field) return null;
+    const df = this.dateFieldOf(key);
     const h = r.meta && r.meta.history;
     if (h && (h.archive_from || h.file_from || h.api_from)) return [h.archive_from, h.file_from, h.api_from].filter(Boolean).sort()[0];
     let min = null;
     (r.data || []).forEach((row) => {
-      const d = row[info.date_field] ? String(row[info.date_field]).slice(0, 10) : null;
+      const d = row[df] ? String(row[df]).slice(0, 10) : null;
       if (d && (!min || d < min)) min = d;
     });
     return min;
@@ -1735,7 +1790,7 @@ class DashboardView {
     // Exception lists (unreceived lines, over-billing…) are about now: archived history keeps the last
     // status a line had in FMH's window, so it would list lines that were settled later.
     const r = widget && RECENT_ONLY.has(widget.category) && r0.data.some((x) => x._arch) ? { ...r0, data: r0.data.filter((x) => !x._arch) } : r0;
-    const dateField = dateOverride || (this.sources[key] && this.sources[key].date_field);
+    const dateField = dateOverride || this.dateFieldOf(key);
     const active = Object.entries(this.filters).filter(([, v]) => v !== null && v !== undefined);
     const byFilter = (rows) => (active.length ? rows.filter((row) => active.every(([f, v]) => !(f in row) || String(row[f]) === v)) : rows);
     if (!dateField || !this.hasDateSource) return byFilter(r.data);
@@ -2163,6 +2218,7 @@ class DashboardView {
 
   renderWidgets() {
     destroyCharts();
+    this.renderBasis();
     this.renderCoverage();
     // What each widget drew, for its "อธิบาย" button (public/explain.js).
     this.explainData = new Map();
@@ -2183,7 +2239,7 @@ class DashboardView {
         }
         return;
       }
-      const cfg = themedCfg(widget.config || {});
+      const cfg = DateBasis.applyToConfig(themedCfg(widget.config || {}), widget.report_source, widget.pulls ? null : this.dateFieldOf(key));
       // A composite widget draws several small charts, each from its own pull.
       if (widget.pulls && cfg.panels) {
         const byAlias = {};
