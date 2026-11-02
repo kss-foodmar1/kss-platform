@@ -1437,7 +1437,7 @@ class DashboardView {
     grid.className = 'widget-grid';
     this.cards = this.widgets.map((w) => {
       const card = document.createElement('section');
-      card.className = `widget-card size-${w.config.size || 'half'} widget-${w.chart_type}${[2, 3].includes(Number(w.config.rows)) ? ` rows-${w.config.rows}` : ''}`;
+      card.className = `widget-card size-${w.config.size || 'half'} widget-${w.chart_type}${[2, 3].includes(Number(w.config.rows)) ? ` rows-${w.config.rows}` : ''}${w.config.lock_layout ? ' layout-locked' : ''}`;
       card.dataset.wid = w.id;
       card.innerHTML = `<div class="widget-head"><h3 class="widget-title">${esc(w.title)}</h3>${this.dashboard.data_source === 'demo' ? '<span class="demo-pill widget-sample">ตัวอย่าง</span>' : ''}${
         this.preview ? '' : '<button type="button" class="widget-explain" aria-expanded="false" title="กราฟนี้บอกอะไร"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>อธิบาย</button>'
@@ -2038,18 +2038,19 @@ class DashboardView {
     const setRows = (c, n) => { c.classList.remove('rows-2', 'rows-3'); if (n > 1) c.classList.add(`rows-${n}`); };
 
     cards().forEach((c) => {
+      const locked = c.classList.contains('layout-locked');
       const t = (c.querySelector('.widget-title') || {}).textContent || 'widget';
       const tools = document.createElement('div');
       tools.className = 'arr-tools';
       tools.innerHTML = `<button type="button" class="arr-grip" aria-label="ย้าย ${esc(t)} (ใช้ลูกศรซ้าย/ขวาก็ได้)" title="ลากเพื่อย้าย"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg><span>ลากเพื่อย้าย</span></button>
-        <span class="arr-size" role="group" aria-label="ความกว้าง">${SIZES.map(([k, , l]) => `<button type="button" data-size="${k}" aria-pressed="${sizeOf(c) === k}">${l}</button>`).join('')}</span>`;
+        ${locked ? '<span class="arr-locked">ขนาดล็อกไว้ (เต็มแถว สูง 3 แถว)</span>' : `<span class="arr-size" role="group" aria-label="ความกว้าง">${SIZES.map(([k, , l]) => `<button type="button" data-size="${k}" aria-pressed="${sizeOf(c) === k}">${l}</button>`).join('')}</span>`}`;
       c.prepend(tools);
       const rz = document.createElement('button');
       rz.type = 'button';
       rz.className = 'arr-resize';
       rz.setAttribute('aria-label', `ปรับขนาด ${t}`);
       rz.title = 'ลากเพื่อปรับขนาด';
-      c.appendChild(rz);
+      if (!locked) c.appendChild(rz);
       tools.querySelectorAll('.arr-size button').forEach((b) => b.addEventListener('click', () => { setSize(c, b.dataset.size); markDirty(); }));
       setSize(c, sizeOf(c));
       const grip = tools.querySelector('.arr-grip');
@@ -4056,7 +4057,387 @@ const RENDERERS = {
   stack: renderStack,
   tabs_bar: renderTabsBar,
   heatmap: renderHeatmap,
+  date_grid: renderDateGrid,
 };
+
+// ---------- date_grid: product rows x branch groups x delivery dates (FMH "Order Items by Branch") ----------
+// One row per product (code, unit, tag, category); above the dates sits a band per
+// branch, each with every day of the range, so a kitchen reads "what did each branch
+// order on which day" across the page. Quantities of the same product / branch / day
+// add up. Paged like FMH, with a product search and a CSV of the underlying lines.
+function renderDateGrid(body, rows, cfg, ctx) {
+  const cols = cfg.row_fields || [{ field: 'product', label: 'Product' }];
+  const GF = cfg.group_field || 'branch';
+  const DF = cfg.date_field || 'requested_delivery_date';
+  const VF = cfg.value_field || 'quantity';
+  const PAGE = cfg.page_size || 12;
+  const dayOf = (r) => { const d = String(pick(r, DF) ?? '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : ''; };
+  const lines = rows.filter((r) => dayOf(r));
+  if (!lines.length) { body.insertAdjacentHTML('beforeend', '<p class="muted ct-empty">ไม่มีข้อมูล</p>'); return; }
+  // Picker filters (customer, product, supplying branch, tag, status). They narrow the rows, then the grid is rebuilt
+  // from what is left, so the dates, branches and CSV all follow the same selection. A filter whose field the data
+  // doesn't carry, or that has fewer than two values, is not shown.
+  const valuesOf = (r, f) => {
+    const v = pick(r, f.field);
+    if (v === null || v === undefined || v === '') return [];
+    if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
+    return f.split ? String(v).split(f.split).map((x) => x.trim()).filter(Boolean) : [String(v).trim()];
+  };
+  const filters = (cfg.filters || []).map((f) => {
+    const counts = new Map();
+    lines.forEach((r) => valuesOf(r, f).forEach((v) => counts.set(v, (counts.get(v) || 0) + 1)));
+    return { ...f, options: [...counts.keys()].sort((a, b) => a.localeCompare(b, 'th', { numeric: true })) };
+  }).filter((f) => f.options.length > 1);
+  const chosen = {}; filters.forEach((f) => { chosen[f.key] = new Set(); });
+  const keyFields = (cfg.key_fields && cfg.key_fields.length ? cfg.key_fields : cols.map((c) => c.field));
+  const rowKey = (r) => keyFields.map((f) => String(pick(r, f) ?? '')).join('\u0001');
+  const dmy = (d) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
+  const fmt = (v) => v.toLocaleString('th-TH', { maximumFractionDigits: 2 });
+  const WIN = cfg.max_days || 14;
+  // Branches follow the order the baskets sit on the trolley (cfg.branch_order); the rest by name, numbers as numbers.
+  const branchOrder = Array.isArray(cfg.branch_order) ? cfg.branch_order : [];
+  const bRank = (n) => { const i = branchOrder.indexOf(n); return i < 0 ? 1e6 : i; };
+  const cmpBranch = (a, b) => bRank(a) - bRank(b) || a.localeCompare(b, 'th', { numeric: true });
+  let query = ''; let page = 1; let view = null; let winStart = 0;
+  body.insertAdjacentHTML('beforeend', `
+    <div class="ct-tools dg-tools">
+      <label class="ct-search"><span class="sr-only">ค้นหาสินค้า</span><input type="search" placeholder="ค้นหาชื่อหรือรหัสสินค้า" autocomplete="off"></label>
+      <div class="dg-filters" role="group" aria-label="ตัวกรอง"></div>
+      <button type="button" class="btn small ghost dg-clear" hidden>ล้างตัวกรอง</button>
+      <button type="button" class="btn small ghost dg-csv">ส่งออก CSV</button>
+      <button type="button" class="btn small dg-print" data-mode="product" title="เดินคลังทีละสินค้า แล้วแบ่งลงตะกร้าของแต่ละสาขา" aria-describedby="dg-hint">พิมพ์ใบจัดตามสินค้า</button>
+      <button type="button" class="btn small dg-print" data-mode="branch" title="จัดทีละสาขา ได้ใบแยกต่อสาขา" aria-describedby="dg-hint">พิมพ์ใบจัดตามสาขา</button>
+    </div>
+    <p class="ct-msg dg-msg" role="status"></p>
+    <p class="muted dg-hint" id="dg-hint">ใบจัดตามสินค้า = เดินคลังทีละสินค้าแล้วแบ่งลงตะกร้าสาขา · ใบจัดตามสาขา = จัดทีละสาขา ใช้ตัวกรองด้านบนกำหนดว่าจะพิมพ์อะไร</p>
+    <div class="dg-win" hidden><button type="button" class="btn small ghost dg-prev">◀ วันก่อนหน้า</button><span class="dg-win-lbl" role="status"></span><button type="button" class="btn small ghost dg-next">วันถัดไป ▶</button></div>
+    <div class="table-scroll dg-scroll" tabindex="0" role="region" aria-label="ตารางรายการสั่งของแต่ละสาขาตามวัน เลื่อนไปทางขวาเพื่อดูวันถัดไป"></div>
+    <nav class="dg-pages" aria-label="หน้าของตาราง"></nav>`);
+  const scroller = body.querySelector('.dg-scroll'); const pager = body.querySelector('.dg-pages'); const msg = body.querySelector('.dg-msg');
+  const filterBox = body.querySelector('.dg-filters'); const clearBtn = body.querySelector('.dg-clear');
+
+  const selected = () => lines.filter((r) => filters.every((f) => {
+    const set = chosen[f.key];
+    return !set.size || valuesOf(r, f).some((v) => set.has(v));
+  }) && (!query || cols.some((c) => String(pick(r, c.field) ?? '').toLowerCase().includes(query))));
+
+  function build() {
+    const sel = selected();
+    const products = new Map(); const branchSet = new Set(); const cell = new Map();
+    let min = '9999-99-99'; let max = '0000-00-00';
+    sel.forEach((r) => {
+      const rk = rowKey(r); const b = String(pick(r, GF) ?? 'ไม่ระบุ'); const d = dayOf(r);
+      if (!products.has(rk)) products.set(rk, r);
+      branchSet.add(b);
+      if (d < min) min = d; if (d > max) max = d;
+      const k = `${rk}\u0002${b}\u0002${d}`;
+      cell.set(k, (cell.get(k) || 0) + (Number(pick(r, VF)) || 0));
+    });
+    // every day between the first and the last (a gap day shows "-"); a very long range falls back to days with data
+    const days = [];
+    if (sel.length) {
+      const span = (Date.parse(max) - Date.parse(min)) / 86400000;
+      if (span <= 120) { for (let t = Date.parse(min); t <= Date.parse(max); t += 86400000) days.push(new Date(t).toISOString().slice(0, 10)); }
+      else { [...new Set(sel.map(dayOf))].sort().forEach((d) => days.push(d)); }
+    }
+    const sf = cfg.sort_field || cols[0].field;
+    const sorted = [...products.entries()].sort((a, b) => String(pick(a[1], sf) ?? '').localeCompare(String(pick(b[1], sf) ?? ''), 'th', { numeric: true }));
+    // several codes sold in more than one unit are separate rows; say so rather than leave it looking like a duplicate
+    const unitsByCode = new Map();
+    products.forEach((r) => { const c = String(pick(r, 'product_code') ?? ''); if (c) unitsByCode.set(c, (unitsByCode.get(c) || 0) + 1); });
+    const multiUnit = [...unitsByCode.values()].filter((n) => n > 1).length;
+    view = { sel, cell, days, sorted, multiUnit, skipped: sel.length && days.length && (Date.parse(max) - Date.parse(min)) / 86400000 > 120, branches: [...branchSet].sort(cmpBranch) };
+  }
+
+  function draw() {
+    build();
+    const { cell, sorted: list, branches } = view;
+    if (winStart >= view.days.length) winStart = Math.max(0, view.days.length - WIN);
+    const days = view.days.slice(winStart, winStart + WIN);
+    const pages = Math.max(1, Math.ceil(list.length / PAGE));
+    if (page > pages) page = pages;
+    const part = list.slice((page - 1) * PAGE, page * PAGE);
+    const head1 = cols.map((c, i) => `<th rowspan="2" scope="col" class="dg-h dg-c${i}">${esc(c.label || c.field)}</th>`).join('')
+      + branches.map((b, bi) => `<th colspan="${days.length}" scope="colgroup" class="dg-branch dg-b${bi % 2}" title="${esc(b)}"><span class="dg-bl">${esc(b)}</span></th>`).join('');
+    const head2 = branches.map((b, bi) => days.map((d, di) => `<th scope="col" class="dg-day dg-b${bi % 2}${di === 0 ? ' dg-first' : ''}">${dmy(d)}</th>`).join('')).join('');
+    const rowsHtml = part.map(([rk, r]) => {
+      const lead = cols.map((c, i) => `<${i === 0 ? 'th scope="row"' : 'td'} class="dg-c${i}">${esc(pick(r, c.field) == null || pick(r, c.field) === '' ? '-' : pick(r, c.field))}</${i === 0 ? 'th' : 'td'}>`).join('');
+      const cells = branches.map((b, bi) => days.map((d, di) => { const v = cell.get(`${rk}\u0002${b}\u0002${d}`); const cls = `dg-n dg-b${bi % 2}${di === 0 ? ' dg-first' : ''}`; return v === undefined ? `<td class="${cls} dg-0"><span class="sr-only">ไม่มีการสั่ง</span><span aria-hidden="true">-</span></td>` : `<td class="${cls}">${fmt(v)}</td>`; }).join('')).join('');
+      return `<tr>${lead}${cells}</tr>`;
+    }).join('');
+    scroller.innerHTML = list.length
+      ? `<table class="dg-table"><thead><tr>${head1}</tr><tr>${head2}</tr></thead><tbody>${rowsHtml}</tbody></table>`
+      : '<p class="muted ct-empty">ไม่พบรายการที่ตรงกับตัวกรอง</p>';
+    const nums = [];
+    for (let i = 1; i <= pages; i++) if (i === 1 || i === pages || Math.abs(i - page) <= 2) nums.push(i);
+    pager.innerHTML = pages < 2 ? '' : nums.map((n, i) => `${i && n - nums[i - 1] > 1 ? '<span class="dg-gap" aria-hidden="true">…</span>' : ''}<button type="button" class="dg-page" data-p="${n}"${n === page ? ' aria-current="page"' : ''} aria-label="หน้า ${n}">${n}</button>`).join('');
+    pager.querySelectorAll('.dg-page').forEach((b) => b.addEventListener('click', () => { page = Number(b.dataset.p); draw(); const again = pager.querySelector(`.dg-page[data-p="${page}"]`); if (again) again.focus(); scroller.scrollTop = 0; }));
+    // sticky offsets are measured, not guessed: the date row sits under the real height of the first header row, and
+    // the branch name stays beside the product column while the days scroll
+    const tbl = scroller.querySelector('table');
+    if (tbl) {
+      const h1 = tbl.querySelector('thead tr').getBoundingClientRect().height;
+      const c0 = tbl.querySelector('th.dg-c0');
+      tbl.style.setProperty('--dg-h1', `${h1}px`);
+      tbl.style.setProperty('--dg-c0w', `${c0 ? c0.getBoundingClientRect().width : 0}px`);
+    }
+    const win = body.querySelector('.dg-win');
+    win.hidden = view.days.length <= WIN;
+    if (!win.hidden) {
+      body.querySelector('.dg-win-lbl').textContent = `วันที่ ${dmy(days[0])} – ${dmy(days[days.length - 1])} (${winStart + 1}–${winStart + days.length} จาก ${view.days.length} วัน)`;
+      body.querySelector('.dg-prev').disabled = winStart <= 0;
+      body.querySelector('.dg-next').disabled = winStart + WIN >= view.days.length;
+    }
+    const active = filters.some((f) => chosen[f.key].size) || !!query;
+    clearBtn.hidden = !active;
+    msg.textContent = `${list.length.toLocaleString('th-TH')} รายการสินค้า · ${branches.length.toLocaleString('th-TH')} สาขา · ${days.length.toLocaleString('th-TH')} วัน${active ? ` · กรองแล้ว ${view.sel.length.toLocaleString('th-TH')} จาก ${lines.length.toLocaleString('th-TH')} บรรทัด` : ''}${view.multiUnit ? ` · มี ${view.multiUnit.toLocaleString('th-TH')} รหัสสินค้าที่สั่งหลายหน่วย (แยกเป็นคนละแถว)` : ''}${view.skipped ? ' · ช่วงยาวเกิน 120 วัน แสดงเฉพาะวันที่มีออเดอร์' : ''}`;
+  }
+
+  // One picker per filter: a button that opens a searchable checklist (several values can be chosen).
+  filters.forEach((f) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'dg-pick';
+    wrap.innerHTML = `<button type="button" class="dg-pick-btn" aria-haspopup="true" aria-expanded="false"></button>
+      <div class="dg-pick-panel" hidden role="group" aria-label="${esc(f.label)}">
+        <input type="search" class="dg-pick-q" placeholder="ค้นหา${esc(f.label)}" aria-label="ค้นหา${esc(f.label)}" autocomplete="off">
+        <div class="dg-pick-list"></div>
+        <div class="dg-pick-foot"><button type="button" class="btn small ghost dg-pick-none">ล้าง</button><button type="button" class="btn small dg-pick-done">เสร็จ</button></div>
+      </div>`;
+    filterBox.appendChild(wrap);
+    const btn = wrap.querySelector('.dg-pick-btn'); const panel = wrap.querySelector('.dg-pick-panel');
+    const list = wrap.querySelector('.dg-pick-list'); const q = wrap.querySelector('.dg-pick-q');
+    const label = () => {
+      const n = chosen[f.key].size;
+      btn.textContent = `${f.label}: ${n === 0 ? (f.all || 'ทั้งหมด') : n === 1 ? [...chosen[f.key]][0] : `${n} ${f.unit || 'รายการ'}`}`;
+      btn.classList.toggle('active', n > 0);
+      btn.title = n ? [...chosen[f.key]].join(', ') : '';
+    };
+    const paint = () => {
+      const needle = q.value.trim().toLowerCase();
+      const shown = f.options.filter((o) => !needle || o.toLowerCase().includes(needle));
+      list.innerHTML = shown.slice(0, 200).map((o, i) => `<label class="dg-opt"><input type="checkbox" value="${esc(o)}"${chosen[f.key].has(o) ? ' checked' : ''}><span>${esc(o)}</span></label>`).join('')
+        + (shown.length > 200 ? `<p class="muted dg-more">แสดง 200 จาก ${shown.length.toLocaleString('th-TH')} — พิมพ์ค้นหาเพื่อกรองต่อ</p>` : '')
+        + (!shown.length ? '<p class="muted dg-more">ไม่พบ</p>' : '');
+      list.querySelectorAll('input').forEach((c) => c.addEventListener('change', () => { if (c.checked) chosen[f.key].add(c.value); else chosen[f.key].delete(c.value); label(); page = 1; draw(); }));
+    };
+    const close = (focus) => { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); if (focus) btn.focus(); };
+    const open = () => { filterBox.querySelectorAll('.dg-pick-panel').forEach((p) => { p.hidden = true; }); filterBox.querySelectorAll('.dg-pick-btn').forEach((b) => b.setAttribute('aria-expanded', 'false')); panel.hidden = false; btn.setAttribute('aria-expanded', 'true'); q.value = ''; paint(); q.focus(); };
+    btn.addEventListener('click', () => (panel.hidden ? open() : close(true)));
+    q.addEventListener('input', paint);
+    wrap.querySelector('.dg-pick-none').addEventListener('click', () => { chosen[f.key].clear(); label(); paint(); page = 1; draw(); });
+    wrap.querySelector('.dg-pick-done').addEventListener('click', () => close(true));
+    wrap.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) { e.stopPropagation(); close(true); } });
+    document.addEventListener('click', (e) => { if (!panel.hidden && !wrap.contains(e.target)) close(false); });
+    f.reset = () => { chosen[f.key].clear(); label(); };
+    label();
+  });
+  body.querySelector('.dg-prev').addEventListener('click', () => { winStart = Math.max(0, winStart - WIN); draw(); });
+  body.querySelector('.dg-next').addEventListener('click', () => { winStart += WIN; draw(); });
+  clearBtn.addEventListener('click', () => { filters.forEach((f) => f.reset()); query = ''; body.querySelector('.ct-search input').value = ''; page = 1; draw(); });
+  body.querySelector('.ct-search input').addEventListener('input', (e) => { query = e.target.value.trim().toLowerCase(); page = 1; draw(); });
+  // The CSV is the underlying lines of exactly what the filters leave, not the whole pull.
+  // Pick list: one A4 sheet per delivery day and ordering customer, from exactly the rows the filters leave.
+  // It is built into a hidden #print-sheet that only the print stylesheet shows, then the browser's own print
+  // dialog does the rest (a printer, or "Save as PDF") — nothing is generated on the server.
+  let printAsk = 0;
+  const printSheets = (mode) => {
+    const sel = view.sel;
+    if (!sel.length) { msg.textContent = 'ไม่มีรายการให้พิมพ์ — ลองล้างตัวกรองหรือเลือกช่วงวันที่อื่น'; return; }
+    // by product: one sheet per delivery day (and supplying kitchen); the list runs product by product, the picker
+    // stands at one product and sets out every branch's share in turn.
+    // by branch: one sheet per delivery day, customer and kitchen, the traditional "walk this branch's order" list.
+    const byBranch = mode === 'branch';
+    const sheetKey = (r) => `${dayOf(r)}\u0002${pick(r, 'ck_branch') ?? ''}${byBranch ? `\u0002${pick(r, GF) ?? 'ไม่ระบุ'}` : ''}`;
+    const bySheet = new Map();
+    sel.forEach((r) => { const k = sheetKey(r); if (!bySheet.has(k)) bySheet.set(k, []); bySheet.get(k).push(r); });
+    const sheets = bySheet.size;
+    if (sheets > 60 && Date.now() - printAsk > 15000) { printAsk = Date.now(); msg.textContent = `จะพิมพ์ ${sheets.toLocaleString('th-TH')} ใบ — กดปุ่มพิมพ์เดิมอีกครั้งภายใน 15 วินาทีเพื่อยืนยัน หรือกรองให้แคบลงก่อน`; return; }
+    const thDate = (d) => new Date(`${d}T00:00:00`).toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    const fmtT = (t) => new Date(t).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' });
+    const printedAt = fmtT(Date.now());
+    // "ข้อมูล ณ" is when the report was last pulled, not when the button was pressed
+    const stamp = ctx && ctx.syncedAt ? fmtT(ctx.syncedAt) : `${printedAt} (ไม่ทราบเวลาที่โหลดข้อมูล)`;
+    const used = filters.filter((f) => chosen[f.key].size).map((f) => `${f.label}: ${[...chosen[f.key]].join(', ')}`);
+    if (query) used.push(`ค้นหา: ${query}`);
+    const str = (r, f) => String(pick(r, f) ?? '');
+    // Zones follow the walking route of the warehouse (cfg.zones, in route order: [{ name, match: [words] }], a word
+    // matches the product's category or tags). Without zones the list falls back to category order.
+    const zones = Array.isArray(cfg.zones) ? cfg.zones : [];
+    const unzoned = new Set();
+    const UNZ = 'อื่นๆ (ยังไม่จัดโซน)';
+    const unzNote = (its) => { const c = its.filter((i) => i.zone === UNZ).length; return zones.length && c ? `<p class="ps-alert"><b>มี ${c.toLocaleString('th-TH')} รายการยังไม่จัดโซน</b> (อยู่ท้ายใบ) — ตั้งค่าโซนคลังเพื่อให้เรียงตามเส้นทางเดิน</p>` : ''; };
+    // order numbers, when the report carries them; this report is a per-line pull, so say so when it does not
+    const poField = ['order_number', 'so_number', 'po_number', 'order_no'].find((f) => lines.some((r) => pick(r, f)));
+    const poNote = poField ? '' : '<p class="ps-note">รายงานนี้ไม่มีเลขออเดอร์ ใบนี้รวมทุกออเดอร์ของสาขาในวันเดียวกัน</p>';
+    const orderNos = (rs2) => (poField ? [...new Set(rs2.map((r) => str(r, poField)).filter(Boolean))] : []);
+    const zoneOf = (r) => {
+      if (!zones.length) return str(r, 'category') || 'ไม่ระบุหมวด';
+      const hay = `${str(r, 'category')} ${valuesOf(r, { field: 'tags', split: ',' }).join(' ')}`.toLowerCase();
+      // the longest matching word wins ("ผักแห้ง" beats "ผัก"); a tie goes to the zone listed first
+      // a whole category/tag equal to the word beats a word found inside text ("นม" the category, not "ขนมปัง")
+      const toks = [str(r, 'category'), ...valuesOf(r, { field: 'tags', split: ',' })].map((x) => x.trim().toLowerCase());
+      let best = -1; let bestLen = 0;
+      zones.forEach((z, i) => (z.match || []).forEach((w) => {
+        const ww = String(w).trim().toLowerCase(); if (!ww) return;
+        const score = toks.includes(ww) ? 1000 + ww.length : hay.includes(ww) ? ww.length : 0;
+        if (score > bestLen) { best = i; bestLen = score; }
+      }));
+      if (best < 0) { unzoned.add(str(r, 'product')); return UNZ; }
+      return zones[best].name;
+    };
+    const zoneRank = (name) => { const i = zones.findIndex((z) => z.name === name); return i < 0 ? 1e6 : i; };
+    // The list is grouped by category, and inside a category by the product's (first) tag. When zones are set they
+    // only decide which category comes first along the route; the headings stay category / tag.
+    const NOTAG = 'ไม่มีแท็ก';
+    const catOf = (r) => str(r, 'category') || 'ไม่ระบุหมวด';
+    // the tag shown is the one that put the product in its zone; without zones (or no match) the first tag A-Z, so the
+    // result does not depend on the order the API sends the tags in
+    const tagOf = (r) => {
+      const tags = valuesOf(r, { field: 'tags', split: ',' }).map((x) => x.trim()).filter(Boolean);
+      if (!tags.length) return NOTAG;
+      const z = zones.length ? zones.find((x) => x.name === zoneOf(r)) : null;
+      if (z) {
+        let best = null; let bestScore = 0;
+        tags.forEach((t) => (z.match || []).forEach((w) => {
+          const ww = String(w).trim().toLowerCase(); if (!ww) return;
+          const tl = t.toLowerCase(); const sc = tl === ww ? 1000 + ww.length : tl.includes(ww) ? ww.length : 0;
+          if (sc > bestScore) { best = t; bestScore = sc; }
+        }));
+        if (best) return best;
+      }
+      return [...tags].sort((a, b) => a.localeCompare(b, 'th', { numeric: true }))[0];
+    };
+    const tagCmp = (a, b) => (a === NOTAG) - (b === NOTAG) || a.localeCompare(b, 'th', { numeric: true });
+    const groupCmp = (x, y) => (zones.length ? zoneRank(x.zone) - zoneRank(y.zone) : 0) || x.cat.localeCompare(y.cat, 'th') || tagCmp(x.tag, y.tag);
+    // a tag heading only appears in a category that really has more than one tag on this sheet; the category (and tag)
+    // is also printed small under each product, so a page that starts mid-category still says where it is
+    const ckey = (it) => `${it.zone}\u0001${it.cat}`;
+    const catTagMap = (its) => { const m = new Map(); its.forEach((i) => { const k = ckey(i); if (!m.has(k)) m.set(k, new Set()); m.get(k).add(i.tag); }); return m; };
+    const showTag = (it, ct) => (ct.get(ckey(it))?.size || 0) > 1;
+    const tagName = (t) => (t === NOTAG ? 'ไม่มีแท็ก' : t);
+    const grp = (it, ct) => `${esc(it.cat)}${showTag(it, ct) ? ` › ${esc(tagName(it.tag))}` : ''}`;
+    const heads = (it, st, cols, wrapTbody, ct) => {
+      let out = '';
+      if (ckey(it) !== st.cat) { out += `<tr class="ps-cat"><td colspan="${cols}">${it.cat === 'ไม่ระบุหมวด' ? esc(it.cat) : `หมวด ${esc(it.cat)}`}${zones.length ? ` · โซน ${esc(it.zone)}` : ''}</td></tr>`; st.cat = ckey(it); st.tag = null; }
+      if (showTag(it, ct) && it.tag !== st.tag) { out += `<tr class="ps-tag"><td colspan="${cols}">${esc(tagName(it.tag))}</td></tr>`; st.tag = it.tag; }
+      return wrapTbody && out ? `<tbody class="ps-catb">${out}</tbody>` : out;
+    };
+    const CHUNK = 12; // a product shared by more branches than this continues in a second block, name and total repeated
+    // A sheet's number is fixed by what it is (day, kitchen, customer), in the Buddhist year the sheet shows, so a reprint
+    // keeps its number; how many times it was printed, and whether the orders changed since, is kept in this browser.
+    const be = (dd) => `${Number(dd.slice(0, 4)) + 543}${dd.slice(5, 7)}${dd.slice(8, 10)}`;
+    const short = (t) => { let h = 5381; for (const ch of String(t)) h = ((h * 33) ^ ch.codePointAt(0)) >>> 0; return h.toString(36).toUpperCase().padStart(4, '0').slice(-4); };
+    const docNoOf = (pre, dd, ck, cust) => `${pre}-${be(dd)}-${String(ck || 'ALL').replace(/\s+/g, '').slice(0, 10)}${cust === undefined ? '' : `-${short(cust)}`}`;
+    const memo = {
+      get: (k) => { try { return JSON.parse(localStorage.getItem(`kss.pl.${k}`) || 'null'); } catch (e) { return null; } },
+      set: (k, v) => { try { localStorage.setItem(`kss.pl.${k}`, JSON.stringify(v)); } catch (e) { /* storage unavailable: numbers still print, counts just restart */ } },
+    };
+    // The reference for "changed since last print" is kept per sheet AND per filter set (a filtered sheet never
+    // becomes the baseline for the full one), compared product by product and branch by branch, and only
+    // written when the print dialog closes. The count is "in this browser": it is a local aid, not a ledger.
+    const commits = [];
+    const meta = (docNo, rs) => {
+      const sig = short(used.join('|'));
+      const key = `${docNo}.${sig}`;
+      const cur = new Map();
+      rs.forEach((r) => { const k = `${str(r, 'product_code')}|${str(r, 'uom')}|${str(r, GF)}`; cur.set(k, Math.round(((cur.get(k) || 0) + (Number(pick(r, VF)) || 0)) * 100) / 100); });
+      const prev = memo.get(key);
+      const n = (prev ? prev.n : 0) + 1;
+      let note = '';
+      if (prev && prev.items) {
+        const diffs = [];
+        new Set([...Object.keys(prev.items), ...cur.keys()]).forEach((k) => { const x = prev.items[k] || 0; const y = cur.get(k) || 0; if (Math.abs(x - y) > 1e-9) diffs.push(`${k.split('|').join(' · ')}: ${fmt(x)} → ${fmt(y)}`); });
+        note = diffs.length
+          ? `<p class="ps-alert"><b>ยอดเปลี่ยนจากครั้งก่อน ${diffs.length.toLocaleString('th-TH')} จุด</b> (พิมพ์ ${esc(prev.at)}) เช่น ${esc(diffs.slice(0, 3).join(' ; '))}${diffs.length > 3 ? ' …' : ''} — ตรวจส่วนต่างก่อนจัด</p>`
+          : `<p class="ps-note">ยอดเท่ากับที่พิมพ์ครั้งก่อน (${esc(prev.at)})</p>`;
+      } else if (prev) {
+        const tot = Math.round([...cur.values()].reduce((t, v) => t + v, 0) * 100) / 100;
+        if (prev.qty !== tot) note = `<p class="ps-alert"><b>ยอดรวมเปลี่ยนจากครั้งก่อน</b> (${esc(fmt(prev.qty))} → ${esc(fmt(tot))}) ตรวจส่วนต่างก่อนจัด</p>`;
+      }
+      commits.push(() => memo.set(key, { n, at: printedAt, qty: Math.round([...cur.values()].reduce((t, v) => t + v, 0) * 100) / 100, items: cur.size <= 800 ? Object.fromEntries(cur) : null }));
+      return { n, note };
+    };
+    const html = [...bySheet.entries()].sort((x, y) => x[0].localeCompare(y[0], 'th')).map(([k, rs], si) => {
+      const [d, kitchen, customer] = k.split('\u0002');
+      if (byBranch) {
+        const agg = new Map();
+        rs.forEach((r) => {
+          const pk = `${str(r, 'product_code')}\u0001${str(r, 'uom')}\u0001${str(r, 'product')}`;
+          const e = agg.get(pk) || { r, qty: 0, zone: zoneOf(r), cat: catOf(r), tag: tagOf(r), po: new Set() };
+          e.qty += Number(pick(r, VF)) || 0; agg.set(pk, e);
+          if (poField && str(r, poField)) e.po.add(str(r, poField));
+        });
+        const unitsOfB = new Map();
+        agg.forEach((e) => { const c = str(e.r, 'product_code'); if (c) unitsOfB.set(c, (unitsOfB.get(c) || 0) + 1); });
+        const list = [...agg.values()].sort((x, y) => groupCmp(x, y)
+          || str(x.r, 'product').localeCompare(str(y.r, 'product'), 'th', { numeric: true }) || str(x.r, 'product_code').localeCompare(str(y.r, 'product_code')) || str(x.r, 'uom').localeCompare(str(y.r, 'uom'), 'th'));
+        const docB = docNoOf('PB', d, kitchen, customer); const mB = meta(docB, rs);
+        const stB = { cat: null, tag: null }; const ctB = catTagMap(list); let nb = 0;
+        const rowsB = list.map((it) => {
+          const head = heads(it, stB, 5, false, ctB); nb += 1;
+          const multi = unitsOfB.get(str(it.r, 'product_code')) > 1;
+          return `${head}<tr><td class="ps-n">${nb}</td><td><b>${esc(str(it.r, 'product'))}</b><br><small>${esc(str(it.r, 'product_code'))} · ${grp(it, ctB)}${multi ? ' · <b class="ps-warn">มีหลายหน่วย ดูแถวอื่นด้วย</b>' : ''}${it.po.size ? `<br>ออเดอร์ ${esc([...it.po].join(', '))}` : ''}</small></td><td class="ps-q ps-tot">${esc(fmt(it.qty))} <small>${esc(str(it.r, 'uom'))}</small></td><td class="ps-real"></td><td class="ps-box"><i></i></td></tr>`;
+        }).join('');
+        const filteredB = used.length ? `<p class="ps-alert"><b>ใบนี้ถูกกรอง ไม่ใช่ใบเต็ม</b> — ${esc(used.join(' | '))}</p>` : '';
+        return `<section class="ps-sheet ps-compact">
+          <div class="ps-banner"><p class="ps-alert"><b>นับเฉพาะออเดอร์ที่อนุมัติแล้ว</b> ออเดอร์ที่รออนุมัติ ยกเลิก หรือเข้ามาหลัง ${esc(stamp)} ไม่อยู่ในใบนี้</p>${filteredB}${poNote}${unzNote(list)}${mB.note}</div>
+          <table><thead><tr class="ps-run"><th colspan="5"><span>ใบจัดของ (ตามสาขา)</span> ${esc(thDate(d))}${kitchen ? ` · ครัว ${esc(kitchen)}` : ''}<br><b class="ps-cust">${esc(customer)}</b><em>เลขที่ ${esc(docB)}</em></th></tr>
+          <tr class="ps-runwarn"><th colspan="5">ใบที่ ${si + 1} จาก ${sheets} · ${esc(docB)} · พิมพ์ครั้งที่ ${mB.n} (ในเครื่องนี้) · เฉพาะออเดอร์ที่อนุมัติแล้ว${used.length ? ' · ใบกรอง ไม่ใช่ใบเต็ม' : ''}</th></tr>
+          <tr><th>#</th><th>สินค้า</th><th class="ps-q">สั่ง</th><th>จัดจริง</th><th>จัดแล้ว</th></tr></thead><tbody>${rowsB}</tbody></table>
+          <footer><p class="ps-note">${list.length.toLocaleString('th-TH')} รายการสินค้า · ข้อมูล ณ ${esc(stamp)} · พิมพ์เมื่อ ${esc(printedAt)} · ใบเลขที่ ${esc(docB)}</p>
+          <p class="ps-end">— จบใบ ${esc(customer)} · ${esc(docB)} —</p>
+          <div class="ps-sign"><span>ผู้จัด</span><span>ผู้ตรวจ</span><span>ผู้รับ</span></div></footer></section>`;
+      }
+      const prods = new Map();
+      rs.forEach((r) => {
+        const pk = `${str(r, 'product_code')}\u0001${str(r, 'uom')}\u0001${str(r, 'product')}`;
+        const e = prods.get(pk) || { r, total: 0, by: new Map(), po: new Map(), zone: zoneOf(r), cat: catOf(r), tag: tagOf(r) };
+        const c = String(pick(r, GF) ?? 'ไม่ระบุ'); const q = Number(pick(r, VF)) || 0;
+        e.total += q; e.by.set(c, (e.by.get(c) || 0) + q); prods.set(pk, e);
+        if (poField && str(r, poField)) { if (!e.po.has(c)) e.po.set(c, new Set()); e.po.get(c).add(str(r, poField)); }
+      });
+      // a code sold in more than one unit stays together and is flagged, so the second line is not missed
+      const unitsOf = new Map();
+      prods.forEach((e) => { const c = str(e.r, 'product_code'); if (c) unitsOf.set(c, (unitsOf.get(c) || 0) + 1); });
+      const items = [...prods.values()].sort((x, y) => groupCmp(x, y)
+        || str(x.r, 'product').localeCompare(str(y.r, 'product'), 'th', { numeric: true }) || str(x.r, 'product_code').localeCompare(str(y.r, 'product_code')) || str(x.r, 'uom').localeCompare(str(y.r, 'uom'), 'th'));
+      const branches = new Set(rs.map((r) => String(pick(r, GF) ?? 'ไม่ระบุ')));
+      const docNo = docNoOf('PL', d, kitchen); const mP = meta(docNo, rs);
+      const stP = { cat: null, tag: null }; const ctP = catTagMap(items); let n = 0;
+      const blocks = items.map((it) => {
+        const catRow = heads(it, stP, 7, true, ctP); n += 1;
+        const parts = [...it.by.entries()].sort((x, y) => cmpBranch(x[0], y[0]));
+        const multi = unitsOf.get(str(it.r, 'product_code')) > 1;
+        const sub = `${esc(str(it.r, 'product_code'))} · ${grp(it, ctP)}${multi ? ' · <b class="ps-warn">มีหลายหน่วย ดูแถวถัดไปด้วย</b>' : ''}`;
+        const chunks = []; for (let i = 0; i < parts.length; i += CHUNK) chunks.push(parts.slice(i, i + CHUNK));
+        return catRow + chunks.map((ch, ci) => `<tbody class="ps-prod">${ch.map(([cust, q], i) => `<tr>${i === 0 ? `<td class="ps-n" rowspan="${ch.length}">${n}</td><td rowspan="${ch.length}"><b>${esc(str(it.r, 'product'))}</b>${ci ? ' <small>(ต่อ)</small>' : ''}<br><small>${sub}</small></td><td class="ps-q ps-tot" rowspan="${ch.length}">${esc(fmt(it.total))}<br><small>${esc(str(it.r, 'uom'))}</small></td>` : ''}<td>${esc(cust)}${it.po.get(cust) ? `<br><small>ออเดอร์ ${esc([...it.po.get(cust)].join(', '))}</small>` : ''}</td><td class="ps-q">${esc(fmt(q))}</td><td class="ps-real"></td><td class="ps-box"><i></i></td></tr>`).join('')}</tbody>`).join('');
+      }).join('');
+      const label = `${thDate(d)}${kitchen ? ` · ครัว ${kitchen}` : ''}`;
+      const filtered = used.length ? `<p class="ps-alert"><b>ใบนี้ถูกกรอง ไม่ใช่ใบเต็ม</b> — ${esc(used.join(' | '))}</p>` : '';
+      return `<section class="ps-sheet">
+        <div class="ps-banner"><p class="ps-alert"><b>นับเฉพาะออเดอร์ที่อนุมัติแล้ว</b> ออเดอร์ที่รออนุมัติ ยกเลิก หรือเข้ามาหลัง ${esc(stamp)} ไม่อยู่ในใบนี้</p>${filtered}${poNote}${unzNote(items)}${mP.note}</div>
+        <table><thead><tr class="ps-run"><th colspan="7"><span>ใบจัดของ</span> ${esc(label)}<em>เลขที่ ${esc(docNo)}</em></th></tr>
+        <tr class="ps-runwarn"><th colspan="7">ใบที่ ${si + 1} จาก ${sheets} · ${esc(docNo)} · พิมพ์ครั้งที่ ${mP.n} (ในเครื่องนี้) · เฉพาะออเดอร์ที่อนุมัติแล้ว${used.length ? ' · ใบกรอง ไม่ใช่ใบเต็ม' : ''}</th></tr>
+        <tr><th>#</th><th>สินค้า</th><th class="ps-q">รวม</th><th>สาขา</th><th class="ps-q">สั่ง</th><th>จัดจริง</th><th>จัดแล้ว</th></tr></thead>${blocks}</table>
+        <footer><p class="ps-note">${items.length.toLocaleString('th-TH')} รายการสินค้า · ${branches.size.toLocaleString('th-TH')} สาขา · ข้อมูล ณ ${esc(stamp)} · พิมพ์เมื่อ ${esc(printedAt)} · ใบเลขที่ ${esc(docNo)}</p>
+        <p class="ps-end">— จบใบ ${esc(docNo)} —</p>
+        <div class="ps-sign"><span>ผู้จัด</span><span>ผู้ตรวจ</span><span>ผู้รับ</span></div></footer></section>`;
+    }).join('');
+    document.getElementById('print-sheet')?.remove();
+    const host = document.createElement('div');
+    host.id = 'print-sheet';
+    host.innerHTML = html;
+    document.body.appendChild(host);
+    const done = () => { host.remove(); commits.forEach((f) => f()); window.removeEventListener('afterprint', done); };
+    window.addEventListener('afterprint', done);
+    const un = [...unzoned];
+    msg.textContent = `เปิดหน้าต่างพิมพ์ ${sheets.toLocaleString('th-TH')} ใบ (เลือก "Save as PDF" ในหน้าต่างพิมพ์ถ้าต้องการไฟล์)${un.length ? ` · มี ${un.length.toLocaleString('th-TH')} รายการที่ยังไม่จัดโซน (อยู่ท้ายใบ): ${un.slice(0, 5).join(', ')}${un.length > 5 ? ' …' : ''} — ตั้งค่าโซนคลังเพื่อให้เรียงตามเส้นทางเดิน` : ''}`;
+    window.print();
+  };
+  body.querySelectorAll('.dg-print').forEach((btn) => btn.addEventListener('click', () => printSheets(btn.dataset.mode)));
+  body.querySelector('.dg-csv').addEventListener('click', () => exportCsv(view.sel, [...cols, { field: GF }, { field: DF }, { field: VF }]));
+  draw();
+}
 
 // ---------- change password ----------
 el('open-password-btn').addEventListener('click', () => el('password-modal').classList.remove('hidden'));
