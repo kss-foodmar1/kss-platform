@@ -2301,7 +2301,7 @@ class DashboardView {
       const base = widget.pulls ? this.results[widget.pulls[0].key] : res;
       const skipped = this.unfilteredBy(base && base.data);
       try {
-        renderer(body, rows, useCfg, { widget, dashboardId: this.dashboard.id, persist: !this.preview, syncedAt: res && res.meta ? res.meta.synced_at : null });
+        renderer(body, rows, useCfg, { widget, dashboardId: this.dashboard.id, persist: !this.preview, syncedAt: res && res.meta ? res.meta.synced_at : null, range: this.range });
         this.explainData.set(widget.id, { rows, cfg: useCfg, range: this.range });
         if (skipped.length) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">widget นี้ไม่มีข้อมูล${esc(skipped.map((f) => ({ customer: 'ลูกค้า', branch: 'สาขา', supplier: 'ซัพพลายเออร์' })[f] || f).join(', '))} จึงแสดงทั้งหมด ไม่ได้กรองตามตัวเลือกด้านบน</p>`);
         // A note on how to read the widget. Renderers that place it themselves
@@ -4435,7 +4435,44 @@ function renderDateGrid(body, rows, cfg, ctx) {
     window.print();
   };
   body.querySelectorAll('.dg-print').forEach((btn) => btn.addEventListener('click', () => printSheets(btn.dataset.mode)));
-  body.querySelector('.dg-csv').addEventListener('click', () => exportCsv(view.sel, [...cols, { field: GF }, { field: DF }, { field: VF }]));
+  // CSV in the layout FMH's own export uses: two heading rows (the branch repeated over its dates, then the dates),
+  // product / code / unit / category on the left, "-" where nothing was ordered, a Grand total column on the right.
+  // It carries every day of the picked range and follows the filters; products come out by the first day they are
+  // needed, then in the order the report sent them.
+  const exportGridCsv = () => {
+    const { sel, cell, branches } = view;
+    if (!sel.length || !view.days.length) return;
+    // the columns are the days of the range picked on the page (a day with no orders stays as "-", as in FMH's file);
+    // a range over 120 days, or one the data runs outside, falls back to the days with data
+    const iso = (t) => new Date(t).toISOString().slice(0, 10);
+    let days = view.days;
+    const rg = ctx && ctx.range;
+    if (rg && /^\d{4}-\d{2}-\d{2}$/.test(rg.start || '') && /^\d{4}-\d{2}-\d{2}$/.test(rg.end || '') && (Date.parse(rg.end) - Date.parse(rg.start)) / 86400000 <= 120) {
+      const set = new Set(view.days);
+      for (let t = Date.parse(rg.start); t <= Date.parse(rg.end); t += 86400000) set.add(iso(t));
+      days = [...set].sort();
+    }
+    const q = (v) => { const t = String(v ?? ''); return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+    const n2 = (v) => String(Math.round(v * 100) / 100);
+    const first = new Map(); const seen = new Map();
+    sel.forEach((r) => { const k = rowKey(r); const d = dayOf(r); if (!seen.has(k)) seen.set(k, { r, at: seen.size }); if (!first.has(k) || d < first.get(k)) first.set(k, d); });
+    const prods = [...seen.entries()].sort((a, b) => (first.get(a[0]) < first.get(b[0]) ? -1 : first.get(a[0]) > first.get(b[0]) ? 1 : 0) || a[1].at - b[1].at);
+    const out = [];
+    out.push(['', '', '', '', ...branches.flatMap((b) => days.map(() => b)), ''].map(q).join(','));
+    out.push(['Product', 'Product code', 'UOM', 'Category', ...branches.flatMap(() => days.map(dmy)), 'Grand total'].map(q).join(','));
+    prods.forEach(([k, { r }]) => {
+      let tot = 0;
+      const vals = branches.flatMap((b) => days.map((d) => { const v = cell.get(`${k}\u0002${b}\u0002${d}`) || 0; tot += v; return v ? n2(v) : '-'; }));
+      out.push([pick(r, 'product'), pick(r, 'product_code'), pick(r, 'uom'), pick(r, 'category'), ...vals, n2(tot)].map(q).join(','));
+    });
+    const mdy = (d) => `${Number(d.slice(5, 7))}-${Number(d.slice(8, 10))}-${d.slice(0, 4)}`;
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob(['﻿' + out.join('\r\n')], { type: 'text/csv;charset=utf-8;' }));
+    link.download = `Order_Items_By_Branch_Report_${mdy(days[0])}_-_${mdy(days[days.length - 1])}.csv`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 4000);
+  };
+  body.querySelector('.dg-csv').addEventListener('click', exportGridCsv);
   draw();
 }
 
