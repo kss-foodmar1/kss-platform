@@ -4074,63 +4074,162 @@ function renderDateGrid(body, rows, cfg) {
   const dayOf = (r) => { const d = String(pick(r, DF) ?? '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : ''; };
   const lines = rows.filter((r) => dayOf(r));
   if (!lines.length) { body.insertAdjacentHTML('beforeend', '<p class="muted ct-empty">ไม่มีข้อมูล</p>'); return; }
-  const rowKey = (r) => cols.map((c) => String(pick(r, c.field) ?? '')).join('\u0001');
-  const products = new Map();
-  const branchSet = new Set();
-  const cell = new Map();
-  let min = '9999-99-99'; let max = '0000-00-00';
-  lines.forEach((r) => {
-    const rk = rowKey(r); const b = String(pick(r, GF) ?? 'ไม่ระบุ'); const d = dayOf(r);
-    if (!products.has(rk)) products.set(rk, r);
-    branchSet.add(b);
-    if (d < min) min = d; if (d > max) max = d;
-    const k = `${rk}\u0002${b}\u0002${d}`;
-    cell.set(k, (cell.get(k) || 0) + (Number(pick(r, VF)) || 0));
-  });
-  // every day between the first and the last (a gap day shows "-"); a very long range falls back to days with data
-  const days = [];
-  const span = (Date.parse(max) - Date.parse(min)) / 86400000;
-  if (span <= 120) { for (let t = Date.parse(min); t <= Date.parse(max); t += 86400000) days.push(new Date(t).toISOString().slice(0, 10)); }
-  else { [...new Set(lines.map(dayOf))].sort().forEach((d) => days.push(d)); }
-  const branches = [...branchSet].sort((a, b) => a.localeCompare(b, 'th'));
+  // Picker filters (customer, product, supplying branch, tag, status). They narrow the rows, then the grid is rebuilt
+  // from what is left, so the dates, branches and CSV all follow the same selection. A filter whose field the data
+  // doesn't carry, or that has fewer than two values, is not shown.
+  const valuesOf = (r, f) => {
+    const v = pick(r, f.field);
+    if (v === null || v === undefined || v === '') return [];
+    if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
+    return f.split ? String(v).split(f.split).map((x) => x.trim()).filter(Boolean) : [String(v).trim()];
+  };
+  const filters = (cfg.filters || []).map((f) => {
+    const counts = new Map();
+    lines.forEach((r) => valuesOf(r, f).forEach((v) => counts.set(v, (counts.get(v) || 0) + 1)));
+    return { ...f, options: [...counts.keys()].sort((a, b) => a.localeCompare(b, 'th', { numeric: true })) };
+  }).filter((f) => f.options.length > 1);
+  const chosen = {}; filters.forEach((f) => { chosen[f.key] = new Set(); });
+  const keyFields = (cfg.key_fields && cfg.key_fields.length ? cfg.key_fields : cols.map((c) => c.field));
+  const rowKey = (r) => keyFields.map((f) => String(pick(r, f) ?? '')).join('\u0001');
   const dmy = (d) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
   const fmt = (v) => v.toLocaleString('th-TH', { maximumFractionDigits: 2 });
-  const sorted = [...products.entries()].sort((a, b) => String(pick(a[1], cfg.sort_field || cols[0].field) ?? '').localeCompare(String(pick(b[1], cfg.sort_field || cols[0].field) ?? ''), 'th', { numeric: true }));
-  let query = ''; let page = 1;
+  const WIN = cfg.max_days || 14;
+  let query = ''; let page = 1; let view = null; let winStart = 0;
   body.insertAdjacentHTML('beforeend', `
     <div class="ct-tools dg-tools">
       <label class="ct-search"><span class="sr-only">ค้นหาสินค้า</span><input type="search" placeholder="ค้นหาชื่อหรือรหัสสินค้า" autocomplete="off"></label>
-      <button type="button" class="btn small ghost dg-csv">Export CSV</button>
+      <div class="dg-filters" role="group" aria-label="ตัวกรอง"></div>
+      <button type="button" class="btn small ghost dg-clear" hidden>ล้างตัวกรอง</button>
+      <button type="button" class="btn small ghost dg-csv">ส่งออก CSV</button>
     </div>
     <p class="ct-msg dg-msg" role="status"></p>
+    <div class="dg-win" hidden><button type="button" class="btn small ghost dg-prev">◀ วันก่อนหน้า</button><span class="dg-win-lbl" role="status"></span><button type="button" class="btn small ghost dg-next">วันถัดไป ▶</button></div>
     <div class="table-scroll dg-scroll" tabindex="0" role="region" aria-label="ตารางรายการสั่งของแต่ละสาขาตามวัน เลื่อนไปทางขวาเพื่อดูวันถัดไป"></div>
     <nav class="dg-pages" aria-label="หน้าของตาราง"></nav>`);
   const scroller = body.querySelector('.dg-scroll'); const pager = body.querySelector('.dg-pages'); const msg = body.querySelector('.dg-msg');
-  const filtered = () => (query ? sorted.filter(([, r]) => cols.some((c) => String(pick(r, c.field) ?? '').toLowerCase().includes(query))) : sorted);
+  const filterBox = body.querySelector('.dg-filters'); const clearBtn = body.querySelector('.dg-clear');
+
+  const selected = () => lines.filter((r) => filters.every((f) => {
+    const set = chosen[f.key];
+    return !set.size || valuesOf(r, f).some((v) => set.has(v));
+  }) && (!query || cols.some((c) => String(pick(r, c.field) ?? '').toLowerCase().includes(query))));
+
+  function build() {
+    const sel = selected();
+    const products = new Map(); const branchSet = new Set(); const cell = new Map();
+    let min = '9999-99-99'; let max = '0000-00-00';
+    sel.forEach((r) => {
+      const rk = rowKey(r); const b = String(pick(r, GF) ?? 'ไม่ระบุ'); const d = dayOf(r);
+      if (!products.has(rk)) products.set(rk, r);
+      branchSet.add(b);
+      if (d < min) min = d; if (d > max) max = d;
+      const k = `${rk}\u0002${b}\u0002${d}`;
+      cell.set(k, (cell.get(k) || 0) + (Number(pick(r, VF)) || 0));
+    });
+    // every day between the first and the last (a gap day shows "-"); a very long range falls back to days with data
+    const days = [];
+    if (sel.length) {
+      const span = (Date.parse(max) - Date.parse(min)) / 86400000;
+      if (span <= 120) { for (let t = Date.parse(min); t <= Date.parse(max); t += 86400000) days.push(new Date(t).toISOString().slice(0, 10)); }
+      else { [...new Set(sel.map(dayOf))].sort().forEach((d) => days.push(d)); }
+    }
+    const sf = cfg.sort_field || cols[0].field;
+    const sorted = [...products.entries()].sort((a, b) => String(pick(a[1], sf) ?? '').localeCompare(String(pick(b[1], sf) ?? ''), 'th', { numeric: true }));
+    // several codes sold in more than one unit are separate rows; say so rather than leave it looking like a duplicate
+    const unitsByCode = new Map();
+    products.forEach((r) => { const c = String(pick(r, 'product_code') ?? ''); if (c) unitsByCode.set(c, (unitsByCode.get(c) || 0) + 1); });
+    const multiUnit = [...unitsByCode.values()].filter((n) => n > 1).length;
+    view = { sel, cell, days, sorted, multiUnit, skipped: sel.length && days.length && (Date.parse(max) - Date.parse(min)) / 86400000 > 120, branches: [...branchSet].sort((a, b) => a.localeCompare(b, 'th')) };
+  }
+
   function draw() {
-    const list = filtered();
+    build();
+    const { cell, sorted: list, branches } = view;
+    if (winStart >= view.days.length) winStart = Math.max(0, view.days.length - WIN);
+    const days = view.days.slice(winStart, winStart + WIN);
     const pages = Math.max(1, Math.ceil(list.length / PAGE));
     if (page > pages) page = pages;
     const part = list.slice((page - 1) * PAGE, page * PAGE);
     const head1 = cols.map((c, i) => `<th rowspan="2" scope="col" class="dg-h dg-c${i}">${esc(c.label || c.field)}</th>`).join('')
-      + branches.map((b) => `<th colspan="${days.length}" scope="colgroup" class="dg-branch" title="${esc(b)}">${esc(b)}</th>`).join('');
-    const head2 = branches.map(() => days.map((d) => `<th scope="col" class="dg-day">${dmy(d)}</th>`).join('')).join('');
+      + branches.map((b, bi) => `<th colspan="${days.length}" scope="colgroup" class="dg-branch dg-b${bi % 2}" title="${esc(b)}"><span class="dg-bl">${esc(b)}</span></th>`).join('');
+    const head2 = branches.map((b, bi) => days.map((d, di) => `<th scope="col" class="dg-day dg-b${bi % 2}${di === 0 ? ' dg-first' : ''}">${dmy(d)}</th>`).join('')).join('');
     const rowsHtml = part.map(([rk, r]) => {
       const lead = cols.map((c, i) => `<${i === 0 ? 'th scope="row"' : 'td'} class="dg-c${i}">${esc(pick(r, c.field) == null || pick(r, c.field) === '' ? '-' : pick(r, c.field))}</${i === 0 ? 'th' : 'td'}>`).join('');
-      const cells = branches.map((b) => days.map((d) => { const v = cell.get(`${rk}\u0002${b}\u0002${d}`); return v === undefined ? '<td class="dg-n dg-0">-</td>' : `<td class="dg-n">${fmt(v)}</td>`; }).join('')).join('');
+      const cells = branches.map((b, bi) => days.map((d, di) => { const v = cell.get(`${rk}\u0002${b}\u0002${d}`); const cls = `dg-n dg-b${bi % 2}${di === 0 ? ' dg-first' : ''}`; return v === undefined ? `<td class="${cls} dg-0"><span class="sr-only">ไม่มีการสั่ง</span><span aria-hidden="true">-</span></td>` : `<td class="${cls}">${fmt(v)}</td>`; }).join('')).join('');
       return `<tr>${lead}${cells}</tr>`;
     }).join('');
     scroller.innerHTML = list.length
       ? `<table class="dg-table"><thead><tr>${head1}</tr><tr>${head2}</tr></thead><tbody>${rowsHtml}</tbody></table>`
-      : '<p class="muted ct-empty">ไม่พบสินค้าที่ค้นหา</p>';
+      : '<p class="muted ct-empty">ไม่พบรายการที่ตรงกับตัวกรอง</p>';
     const nums = [];
     for (let i = 1; i <= pages; i++) if (i === 1 || i === pages || Math.abs(i - page) <= 2) nums.push(i);
     pager.innerHTML = pages < 2 ? '' : nums.map((n, i) => `${i && n - nums[i - 1] > 1 ? '<span class="dg-gap" aria-hidden="true">…</span>' : ''}<button type="button" class="dg-page" data-p="${n}"${n === page ? ' aria-current="page"' : ''} aria-label="หน้า ${n}">${n}</button>`).join('');
     pager.querySelectorAll('.dg-page').forEach((b) => b.addEventListener('click', () => { page = Number(b.dataset.p); draw(); const again = pager.querySelector(`.dg-page[data-p="${page}"]`); if (again) again.focus(); scroller.scrollTop = 0; }));
-    msg.textContent = `${list.length.toLocaleString('th-TH')} รายการสินค้า · ${branches.length.toLocaleString('th-TH')} สาขา · ${days.length.toLocaleString('th-TH')} วัน`;
+    // sticky offsets are measured, not guessed: the date row sits under the real height of the first header row, and
+    // the branch name stays beside the product column while the days scroll
+    const tbl = scroller.querySelector('table');
+    if (tbl) {
+      const h1 = tbl.querySelector('thead tr').getBoundingClientRect().height;
+      const c0 = tbl.querySelector('th.dg-c0');
+      tbl.style.setProperty('--dg-h1', `${h1}px`);
+      tbl.style.setProperty('--dg-c0w', `${c0 ? c0.getBoundingClientRect().width : 0}px`);
+    }
+    const win = body.querySelector('.dg-win');
+    win.hidden = view.days.length <= WIN;
+    if (!win.hidden) {
+      body.querySelector('.dg-win-lbl').textContent = `วันที่ ${dmy(days[0])} – ${dmy(days[days.length - 1])} (${winStart + 1}–${winStart + days.length} จาก ${view.days.length} วัน)`;
+      body.querySelector('.dg-prev').disabled = winStart <= 0;
+      body.querySelector('.dg-next').disabled = winStart + WIN >= view.days.length;
+    }
+    const active = filters.some((f) => chosen[f.key].size) || !!query;
+    clearBtn.hidden = !active;
+    msg.textContent = `${list.length.toLocaleString('th-TH')} รายการสินค้า · ${branches.length.toLocaleString('th-TH')} สาขา · ${days.length.toLocaleString('th-TH')} วัน${active ? ` · กรองแล้ว ${view.sel.length.toLocaleString('th-TH')} จาก ${lines.length.toLocaleString('th-TH')} บรรทัด` : ''}${view.multiUnit ? ` · มี ${view.multiUnit.toLocaleString('th-TH')} รหัสสินค้าที่สั่งหลายหน่วย (แยกเป็นคนละแถว)` : ''}${view.skipped ? ' · ช่วงยาวเกิน 120 วัน แสดงเฉพาะวันที่มีออเดอร์' : ''}`;
   }
+
+  // One picker per filter: a button that opens a searchable checklist (several values can be chosen).
+  filters.forEach((f) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'dg-pick';
+    wrap.innerHTML = `<button type="button" class="dg-pick-btn" aria-haspopup="true" aria-expanded="false"></button>
+      <div class="dg-pick-panel" hidden role="group" aria-label="${esc(f.label)}">
+        <input type="search" class="dg-pick-q" placeholder="ค้นหา${esc(f.label)}" aria-label="ค้นหา${esc(f.label)}" autocomplete="off">
+        <div class="dg-pick-list"></div>
+        <div class="dg-pick-foot"><button type="button" class="btn small ghost dg-pick-none">ล้าง</button><button type="button" class="btn small dg-pick-done">เสร็จ</button></div>
+      </div>`;
+    filterBox.appendChild(wrap);
+    const btn = wrap.querySelector('.dg-pick-btn'); const panel = wrap.querySelector('.dg-pick-panel');
+    const list = wrap.querySelector('.dg-pick-list'); const q = wrap.querySelector('.dg-pick-q');
+    const label = () => {
+      const n = chosen[f.key].size;
+      btn.textContent = `${f.label}: ${n === 0 ? (f.all || 'ทั้งหมด') : n === 1 ? [...chosen[f.key]][0] : `${n} ${f.unit || 'รายการ'}`}`;
+      btn.classList.toggle('active', n > 0);
+      btn.title = n ? [...chosen[f.key]].join(', ') : '';
+    };
+    const paint = () => {
+      const needle = q.value.trim().toLowerCase();
+      const shown = f.options.filter((o) => !needle || o.toLowerCase().includes(needle));
+      list.innerHTML = shown.slice(0, 200).map((o, i) => `<label class="dg-opt"><input type="checkbox" value="${esc(o)}"${chosen[f.key].has(o) ? ' checked' : ''}><span>${esc(o)}</span></label>`).join('')
+        + (shown.length > 200 ? `<p class="muted dg-more">แสดง 200 จาก ${shown.length.toLocaleString('th-TH')} — พิมพ์ค้นหาเพื่อกรองต่อ</p>` : '')
+        + (!shown.length ? '<p class="muted dg-more">ไม่พบ</p>' : '');
+      list.querySelectorAll('input').forEach((c) => c.addEventListener('change', () => { if (c.checked) chosen[f.key].add(c.value); else chosen[f.key].delete(c.value); label(); page = 1; draw(); }));
+    };
+    const close = (focus) => { panel.hidden = true; btn.setAttribute('aria-expanded', 'false'); if (focus) btn.focus(); };
+    const open = () => { filterBox.querySelectorAll('.dg-pick-panel').forEach((p) => { p.hidden = true; }); filterBox.querySelectorAll('.dg-pick-btn').forEach((b) => b.setAttribute('aria-expanded', 'false')); panel.hidden = false; btn.setAttribute('aria-expanded', 'true'); q.value = ''; paint(); q.focus(); };
+    btn.addEventListener('click', () => (panel.hidden ? open() : close(true)));
+    q.addEventListener('input', paint);
+    wrap.querySelector('.dg-pick-none').addEventListener('click', () => { chosen[f.key].clear(); label(); paint(); page = 1; draw(); });
+    wrap.querySelector('.dg-pick-done').addEventListener('click', () => close(true));
+    wrap.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) { e.stopPropagation(); close(true); } });
+    document.addEventListener('click', (e) => { if (!panel.hidden && !wrap.contains(e.target)) close(false); });
+    f.reset = () => { chosen[f.key].clear(); label(); };
+    label();
+  });
+  body.querySelector('.dg-prev').addEventListener('click', () => { winStart = Math.max(0, winStart - WIN); draw(); });
+  body.querySelector('.dg-next').addEventListener('click', () => { winStart += WIN; draw(); });
+  clearBtn.addEventListener('click', () => { filters.forEach((f) => f.reset()); query = ''; body.querySelector('.ct-search input').value = ''; page = 1; draw(); });
   body.querySelector('.ct-search input').addEventListener('input', (e) => { query = e.target.value.trim().toLowerCase(); page = 1; draw(); });
-  body.querySelector('.dg-csv').addEventListener('click', () => exportCsv(lines, [...cols, { field: GF }, { field: DF }, { field: VF }]));
+  // The CSV is the underlying lines of exactly what the filters leave, not the whole pull.
+  body.querySelector('.dg-csv').addEventListener('click', () => exportCsv(view.sel, [...cols, { field: GF }, { field: DF }, { field: VF }]));
   draw();
 }
 

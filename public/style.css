@@ -1615,17 +1615,43 @@ table.report-table.ct-table td { vertical-align: middle; }
 .dg-table th, .dg-table td { padding: 7px 10px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); white-space: nowrap; background: var(--white); }
 .dg-table thead th { position: sticky; background: var(--surface-2, var(--white)); font-weight: 700; z-index: 2; }
 .dg-table thead tr:first-child th { top: 0; }
-.dg-table thead tr:nth-child(2) th { top: 35px; font-weight: 600; color: var(--ink-2); }
-.dg-table .dg-branch { text-align: center; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.dg-table thead tr:nth-child(2) th { top: var(--dg-h1, 35px); font-weight: 600; color: var(--ink-2); }
+.dg-table .dg-branch { text-align: left; }
 .dg-table .dg-h { text-align: left; vertical-align: bottom; }
 .dg-table th.dg-c0, .dg-table td.dg-c0 { position: sticky; left: 0; z-index: 1; text-align: left; font-weight: 600; min-width: 180px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
 .dg-table thead th.dg-c0 { z-index: 3; }
 .dg-n { text-align: right; font-variant-numeric: tabular-nums; }
-.dg-0 { color: var(--ink-3, #8a8f98); }
+.dg-0 { color: var(--ink-2, #6b7280); }
+.dg-table .dg-b1, .dg-table td.dg-b1 { background: var(--surface-2, #f7f8fb); }
+.dg-table .dg-first { border-left: 2px solid var(--line-strong, #aab0bb); }
+.dg-branch .dg-bl { position: sticky; left: calc(var(--dg-c0w, 180px) + 10px); display: inline-block; }
+.dg-win { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 8px; }
+.dg-win[hidden] { display: none; }
+.dg-win .btn { min-height: 44px; }
+.dg-win-lbl { font-size: 13px; color: var(--ink-2); }
+.dg-pick { position: relative; }
+.dg-pick-btn { min-height: 44px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--white); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dg-pick-btn.active { border-color: var(--primary); color: var(--primary); font-weight: 600; }
+.dg-pick-btn:focus-visible, .dg-pick-q:focus-visible, .dg-opt input:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.dg-pick-panel { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; width: min(300px, 86vw); background: var(--white); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(20,30,50,.16); padding: 8px; }
+.dg-pick-panel[hidden] { display: none; }
+.dg-pick-q { width: 100%; min-height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; font: inherit; box-sizing: border-box; }
+.dg-pick-list { max-height: 240px; overflow: auto; margin: 6px 0; }
+.dg-opt { display: flex; gap: 8px; align-items: center; min-height: 40px; padding: 0 6px; cursor: pointer; font-size: 13px; }
+.dg-opt input { width: 18px; height: 18px; }
+.dg-more { font-size: 12.5px; padding: 6px; }
+.dg-pick-foot { display: flex; justify-content: space-between; gap: 8px; }
+.dg-filters { display: flex; flex-wrap: wrap; gap: 6px; }
 .dg-pages { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; justify-content: center; margin-top: 10px; }
 .dg-page { min-width: 44px; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; background: var(--white); color: var(--ink); font: inherit; font-weight: 600; cursor: pointer; }
 .dg-page[aria-current="page"] { background: var(--primary); border-color: var(--primary); color: #fff; }
 .dg-page:focus-visible, .dg-scroll:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-.dg-gap { color: var(--ink-3, #8a8f98); }
+.dg-gap { color: var(--ink-2, #6b7280); }
+@media (max-width: 640px) {
+  .dg-table th.dg-c0, .dg-table td.dg-c0 { min-width: 110px; max-width: 130px; white-space: normal; }
+  .dg-table .dg-c3, .dg-table .dg-c4 { display: none; }
+}
 .dg-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
 .arr-locked { font-size: 12.5px; font-weight: 600; color: var(--ink-2); padding: 4px 8px; }
+.dg-table td.dg-n { position: relative; }
+.dg-clear[hidden] { display: none; }
