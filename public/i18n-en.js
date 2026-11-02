@@ -5,6 +5,9 @@
 // (product names, suppliers, branches) is never touched.
 window.I18N_EN = {
   exact: {
+    'นับตามวันที่ลูกค้าขอรับของ (ไม่ตามตัวเลือก "นับยอดตามวันที่" ด้านบน) เพราะใช้วางแผนผลิตและรถส่งของ': 'Counted by the date the customer wants the goods (not by the "Count by date" choice above), because it is used for production and delivery planning',
+    'รายงานนี้นับตามวันที่ลูกค้าขอรับของ เหมือนหน้า Order Items by Branch ใน FMH ไม่ตามตัวเลือก "นับยอดตามวันที่"': 'Counted by the date the customer wants the goods, like Order Items by Branch in FMH; not affected by "Count by date"',
+    'เดือนล่าสุดที่มีข้อมูลครบทั้งสองฝั่ง · ยอดซื้อนับตามวันที่ลูกค้าขอรับของ ไม่ตามตัวเลือก "นับยอดตามวันที่"': 'Latest month with data on both sides · purchases counted by the date the customer wants the goods, not by "Count by date"',
     'มูลค่า PO รวม': 'Total PO value',
     'สรุปยอดสั่งซื้อ รับของ และวางบิล': 'Ordered, received and billed',
     'ยอดสั่งซื้อ รับของ และใบแจ้งหนี้ พร้อมเงินที่ยังรอบิลและที่ถูกวางบิลเกิน เป็นบาท': 'Orders, receipts and invoices, with what still waits for a bill and what was over-billed, in baht',
