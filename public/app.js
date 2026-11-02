@@ -4290,13 +4290,36 @@ function renderDateGrid(body, rows, cfg, ctx) {
     // only decide which category comes first along the route; the headings stay category / tag.
     const NOTAG = 'ไม่มีแท็ก';
     const catOf = (r) => str(r, 'category') || 'ไม่ระบุหมวด';
-    const tagOf = (r) => valuesOf(r, { field: 'tags', split: ',' })[0] || NOTAG;
+    // the tag shown is the one that put the product in its zone; without zones (or no match) the first tag A-Z, so the
+    // result does not depend on the order the API sends the tags in
+    const tagOf = (r) => {
+      const tags = valuesOf(r, { field: 'tags', split: ',' }).map((x) => x.trim()).filter(Boolean);
+      if (!tags.length) return NOTAG;
+      const z = zones.length ? zones.find((x) => x.name === zoneOf(r)) : null;
+      if (z) {
+        let best = null; let bestScore = 0;
+        tags.forEach((t) => (z.match || []).forEach((w) => {
+          const ww = String(w).trim().toLowerCase(); if (!ww) return;
+          const tl = t.toLowerCase(); const sc = tl === ww ? 1000 + ww.length : tl.includes(ww) ? ww.length : 0;
+          if (sc > bestScore) { best = t; bestScore = sc; }
+        }));
+        if (best) return best;
+      }
+      return [...tags].sort((a, b) => a.localeCompare(b, 'th', { numeric: true }))[0];
+    };
     const tagCmp = (a, b) => (a === NOTAG) - (b === NOTAG) || a.localeCompare(b, 'th', { numeric: true });
     const groupCmp = (x, y) => (zones.length ? zoneRank(x.zone) - zoneRank(y.zone) : 0) || x.cat.localeCompare(y.cat, 'th') || tagCmp(x.tag, y.tag);
-    const heads = (it, st, cols, wrapTbody) => {
+    // a tag heading only appears in a category that really has more than one tag on this sheet; the category (and tag)
+    // is also printed small under each product, so a page that starts mid-category still says where it is
+    const ckey = (it) => `${it.zone}\u0001${it.cat}`;
+    const catTagMap = (its) => { const m = new Map(); its.forEach((i) => { const k = ckey(i); if (!m.has(k)) m.set(k, new Set()); m.get(k).add(i.tag); }); return m; };
+    const showTag = (it, ct) => (ct.get(ckey(it))?.size || 0) > 1;
+    const tagName = (t) => (t === NOTAG ? 'ไม่มีแท็ก' : t);
+    const grp = (it, ct) => `${esc(it.cat)}${showTag(it, ct) ? ` › ${esc(tagName(it.tag))}` : ''}`;
+    const heads = (it, st, cols, wrapTbody, ct) => {
       let out = '';
-      if (it.cat !== st.cat) { out += `<tr class="ps-cat"><td colspan="${cols}">หมวด ${esc(it.cat)}${zones.length ? ` · โซน ${esc(it.zone)}` : ''}</td></tr>`; st.cat = it.cat; st.tag = null; }
-      if (it.tag !== st.tag) { out += `<tr class="ps-tag"><td colspan="${cols}">แท็ก ${esc(it.tag)}</td></tr>`; st.tag = it.tag; }
+      if (ckey(it) !== st.cat) { out += `<tr class="ps-cat"><td colspan="${cols}">${it.cat === 'ไม่ระบุหมวด' ? esc(it.cat) : `หมวด ${esc(it.cat)}`}${zones.length ? ` · โซน ${esc(it.zone)}` : ''}</td></tr>`; st.cat = ckey(it); st.tag = null; }
+      if (showTag(it, ct) && it.tag !== st.tag) { out += `<tr class="ps-tag"><td colspan="${cols}">${esc(tagName(it.tag))}</td></tr>`; st.tag = it.tag; }
       return wrapTbody && out ? `<tbody class="ps-catb">${out}</tbody>` : out;
     };
     const CHUNK = 12; // a product shared by more branches than this continues in a second block, name and total repeated
@@ -4349,11 +4372,11 @@ function renderDateGrid(body, rows, cfg, ctx) {
         const list = [...agg.values()].sort((x, y) => groupCmp(x, y)
           || str(x.r, 'product').localeCompare(str(y.r, 'product'), 'th', { numeric: true }) || str(x.r, 'product_code').localeCompare(str(y.r, 'product_code')) || str(x.r, 'uom').localeCompare(str(y.r, 'uom'), 'th'));
         const docB = docNoOf('PB', d, kitchen, customer); const mB = meta(docB, rs);
-        const stB = { cat: null, tag: null }; let nb = 0;
+        const stB = { cat: null, tag: null }; const ctB = catTagMap(list); let nb = 0;
         const rowsB = list.map((it) => {
-          const head = heads(it, stB, 5, false); nb += 1;
+          const head = heads(it, stB, 5, false, ctB); nb += 1;
           const multi = unitsOfB.get(str(it.r, 'product_code')) > 1;
-          return `${head}<tr><td class="ps-n">${nb}</td><td><b>${esc(str(it.r, 'product'))}</b><br><small>${esc(str(it.r, 'product_code'))}${multi ? ' · <b class="ps-warn">มีหลายหน่วย ดูแถวอื่นด้วย</b>' : ''}${it.po.size ? `<br>ออเดอร์ ${esc([...it.po].join(', '))}` : ''}</small></td><td class="ps-q ps-tot">${esc(fmt(it.qty))} <small>${esc(str(it.r, 'uom'))}</small></td><td class="ps-real"></td><td class="ps-box"><i></i></td></tr>`;
+          return `${head}<tr><td class="ps-n">${nb}</td><td><b>${esc(str(it.r, 'product'))}</b><br><small>${esc(str(it.r, 'product_code'))} · ${grp(it, ctB)}${multi ? ' · <b class="ps-warn">มีหลายหน่วย ดูแถวอื่นด้วย</b>' : ''}${it.po.size ? `<br>ออเดอร์ ${esc([...it.po].join(', '))}` : ''}</small></td><td class="ps-q ps-tot">${esc(fmt(it.qty))} <small>${esc(str(it.r, 'uom'))}</small></td><td class="ps-real"></td><td class="ps-box"><i></i></td></tr>`;
         }).join('');
         const filteredB = used.length ? `<p class="ps-alert"><b>ใบนี้ถูกกรอง ไม่ใช่ใบเต็ม</b> — ${esc(used.join(' | '))}</p>` : '';
         return `<section class="ps-sheet ps-compact">
@@ -4380,12 +4403,12 @@ function renderDateGrid(body, rows, cfg, ctx) {
         || str(x.r, 'product').localeCompare(str(y.r, 'product'), 'th', { numeric: true }) || str(x.r, 'product_code').localeCompare(str(y.r, 'product_code')) || str(x.r, 'uom').localeCompare(str(y.r, 'uom'), 'th'));
       const branches = new Set(rs.map((r) => String(pick(r, GF) ?? 'ไม่ระบุ')));
       const docNo = docNoOf('PL', d, kitchen); const mP = meta(docNo, rs);
-      const stP = { cat: null, tag: null }; let n = 0;
+      const stP = { cat: null, tag: null }; const ctP = catTagMap(items); let n = 0;
       const blocks = items.map((it) => {
-        const catRow = heads(it, stP, 7, true); n += 1;
+        const catRow = heads(it, stP, 7, true, ctP); n += 1;
         const parts = [...it.by.entries()].sort((x, y) => cmpBranch(x[0], y[0]));
         const multi = unitsOf.get(str(it.r, 'product_code')) > 1;
-        const sub = `${esc(str(it.r, 'product_code'))}${multi ? ' · <b class="ps-warn">มีหลายหน่วย ดูแถวถัดไปด้วย</b>' : ''}`;
+        const sub = `${esc(str(it.r, 'product_code'))} · ${grp(it, ctP)}${multi ? ' · <b class="ps-warn">มีหลายหน่วย ดูแถวถัดไปด้วย</b>' : ''}`;
         const chunks = []; for (let i = 0; i < parts.length; i += CHUNK) chunks.push(parts.slice(i, i + CHUNK));
         return catRow + chunks.map((ch, ci) => `<tbody class="ps-prod">${ch.map(([cust, q], i) => `<tr>${i === 0 ? `<td class="ps-n" rowspan="${ch.length}">${n}</td><td rowspan="${ch.length}"><b>${esc(str(it.r, 'product'))}</b>${ci ? ' <small>(ต่อ)</small>' : ''}<br><small>${sub}</small></td><td class="ps-q ps-tot" rowspan="${ch.length}">${esc(fmt(it.total))}<br><small>${esc(str(it.r, 'uom'))}</small></td>` : ''}<td>${esc(cust)}${it.po.get(cust) ? `<br><small>ออเดอร์ ${esc([...it.po.get(cust)].join(', '))}</small>` : ''}</td><td class="ps-q">${esc(fmt(q))}</td><td class="ps-real"></td><td class="ps-box"><i></i></td></tr>`).join('')}</tbody>`).join('');
       }).join('');

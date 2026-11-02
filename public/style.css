@@ -1683,7 +1683,7 @@ table.report-table.ct-table td { vertical-align: middle; }
   .ps-sheet .ps-q { text-align: right; font-weight: 700; white-space: nowrap; }
   .ps-sheet .ps-box { width: 18mm; text-align: center; }
   .ps-sheet .ps-box i { display: inline-block; width: 5.5mm; height: 5.5mm; border: 0.5mm solid #000; }
-  .ps-sheet .ps-cat td { background: #f2f2f2 !important; font-weight: 700; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .ps-sheet .ps-cat td { background: #e2e2e2 !important; font-weight: 700; font-size: 14pt; border-top: 0.9mm solid #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .ps-note { font-size: 9.5pt; margin: 4mm 0 8mm; }
   .ps-sheet footer { break-inside: avoid; page-break-inside: avoid; }
   .ps-banner { margin-bottom: 3mm; }
@@ -1702,4 +1702,4 @@ table.report-table.ct-table td { vertical-align: middle; }
 @media print { .ps-run .ps-cust { font-size: 16pt; } }
 
 .dg-hint { font-size: 12.5px; margin: 0 0 6px; }
-@media print { .ps-sheet .ps-tag td { padding-left: 6mm; font-weight: 600; background: #fafafa !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; } .ps-sheet tbody.ps-catb { break-after: avoid; page-break-after: avoid; } }
+@media print { .ps-sheet .ps-tag td { padding-left: 6mm; font-weight: 400; font-style: italic; font-size: 11.5pt; background: #fff !important; border-top: 0.3mm dashed #000; } .ps-sheet tbody.ps-catb { break-after: avoid; page-break-after: avoid; } }
