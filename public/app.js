@@ -4249,32 +4249,51 @@ function renderDateGrid(body, rows, cfg) {
     const used = filters.filter((f) => chosen[f.key].size).map((f) => `${f.label}: ${[...chosen[f.key]].join(', ')}`);
     if (query) used.push(`ค้นหา: ${query}`);
     const str = (r, f) => String(pick(r, f) ?? '');
-    const html = [...bySheet.entries()].sort((x, y) => x[0].localeCompare(y[0])).map(([k, rs]) => {
+    // Zones follow the walking route of the warehouse (cfg.zones, in route order: [{ name, match: [words] }], a word
+    // matches the product's category or tags). Without zones the list falls back to category order.
+    const zones = Array.isArray(cfg.zones) ? cfg.zones : [];
+    const zoneOf = (r) => {
+      if (!zones.length) return str(r, 'category') || 'ไม่ระบุหมวด';
+      const hay = `${str(r, 'category')} ${valuesOf(r, { field: 'tags', split: ',' }).join(' ')}`.toLowerCase();
+      const i = zones.findIndex((z) => (z.match || []).some((w) => hay.includes(String(w).toLowerCase())));
+      return i < 0 ? 'อื่นๆ (ยังไม่จัดโซน)' : zones[i].name;
+    };
+    const zoneRank = (name) => { const i = zones.findIndex((z) => z.name === name); return i < 0 ? 1e6 : i; };
+    const CHUNK = 12; // a product shared by more branches than this continues in a second block, name and total repeated
+    const hhmm = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }).replace(':', '');
+    const html = [...bySheet.entries()].sort((x, y) => x[0].localeCompare(y[0])).map(([k, rs], si) => {
       const [d, kitchen] = k.split('\u0002');
       const prods = new Map();
       rs.forEach((r) => {
         const pk = `${str(r, 'product_code')}\u0001${str(r, 'uom')}\u0001${str(r, 'product')}`;
-        const e = prods.get(pk) || { r, total: 0, by: new Map() };
+        const e = prods.get(pk) || { r, total: 0, by: new Map(), zone: zoneOf(r) };
         const c = String(pick(r, GF) ?? 'ไม่ระบุ'); const q = Number(pick(r, VF)) || 0;
         e.total += q; e.by.set(c, (e.by.get(c) || 0) + q); prods.set(pk, e);
       });
-      const items = [...prods.values()].sort((x, y) => str(x.r, 'category').localeCompare(str(y.r, 'category'), 'th') || str(x.r, 'product').localeCompare(str(y.r, 'product'), 'th', { numeric: true }));
+      // a code sold in more than one unit stays together and is flagged, so the second line is not missed
+      const unitsOf = new Map();
+      prods.forEach((e) => { const c = str(e.r, 'product_code'); if (c) unitsOf.set(c, (unitsOf.get(c) || 0) + 1); });
+      const items = [...prods.values()].sort((x, y) => zoneRank(x.zone) - zoneRank(y.zone) || x.zone.localeCompare(y.zone, 'th')
+        || str(x.r, 'product').localeCompare(str(y.r, 'product'), 'th', { numeric: true }) || str(x.r, 'product_code').localeCompare(str(y.r, 'product_code')) || str(x.r, 'uom').localeCompare(str(y.r, 'uom'), 'th'));
       const branches = new Set(rs.map((r) => String(pick(r, GF) ?? 'ไม่ระบุ')));
-      let lastCat = null; let n = 0;
+      const docNo = `PL-${d.replace(/-/g, '')}-${String(si + 1).padStart(2, '0')}-${hhmm}`;
+      let lastZone = null; let n = 0;
       const blocks = items.map((it) => {
-        const cat = str(it.r, 'category');
-        const catRow = cat !== lastCat ? `<tbody class="ps-catb"><tr class="ps-cat"><td colspan="6">${esc(cat || 'ไม่ระบุหมวด')}</td></tr></tbody>` : '';
-        lastCat = cat; n += 1;
+        const catRow = it.zone !== lastZone ? `<tbody class="ps-catb"><tr class="ps-cat"><td colspan="7">${zones.length ? 'โซน ' : ''}${esc(it.zone)}</td></tr></tbody>` : '';
+        lastZone = it.zone; n += 1;
         const parts = [...it.by.entries()].sort((x, y) => x[0].localeCompare(y[0], 'th'));
-        const span = parts.length;
-        const rowsHtml = parts.map(([cust, q], i) => `<tr>${i === 0 ? `<td class="ps-n" rowspan="${span}">${n}</td><td rowspan="${span}"><b>${esc(str(it.r, 'product'))}</b><br><small>${esc(str(it.r, 'product_code'))}</small></td><td class="ps-q ps-tot" rowspan="${span}">${esc(fmt(it.total))}<br><small>${esc(str(it.r, 'uom'))}</small></td>` : ''}<td>${esc(cust)}</td><td class="ps-q">${esc(fmt(q))}</td><td class="ps-box"><i></i></td></tr>`).join('');
-        return `${catRow}<tbody class="ps-prod">${rowsHtml}</tbody>`;
+        const multi = unitsOf.get(str(it.r, 'product_code')) > 1;
+        const sub = `${esc(str(it.r, 'product_code'))} · ${esc(it.zone)}${multi ? ' · <b class="ps-warn">มีหลายหน่วย ดูแถวถัดไปด้วย</b>' : ''}`;
+        const chunks = []; for (let i = 0; i < parts.length; i += CHUNK) chunks.push(parts.slice(i, i + CHUNK));
+        return catRow + chunks.map((ch, ci) => `<tbody class="ps-prod">${ch.map(([cust, q], i) => `<tr>${i === 0 ? `<td class="ps-n" rowspan="${ch.length}">${n}</td><td rowspan="${ch.length}"><b>${esc(str(it.r, 'product'))}</b>${ci ? ' <small>(ต่อ)</small>' : ''}<br><small>${sub}</small></td><td class="ps-q ps-tot" rowspan="${ch.length}">${esc(fmt(it.total))}<br><small>${esc(str(it.r, 'uom'))}</small></td>` : ''}<td>${esc(cust)}</td><td class="ps-q">${esc(fmt(q))}</td><td class="ps-real"></td><td class="ps-box"><i></i></td></tr>`).join('')}</tbody>`).join('');
       }).join('');
       const label = `${thDate(d)}${kitchen ? ` · ครัว ${kitchen}` : ''}`;
+      const filtered = used.length ? `<p class="ps-alert"><b>ใบนี้ถูกกรอง ไม่ใช่ใบเต็ม</b> — ${esc(used.join(' | '))}</p>` : '';
       return `<section class="ps-sheet">
-        <table><thead><tr class="ps-run"><th colspan="6"><span>ใบจัดของ (จัดตามสินค้า)</span> ${esc(label)}</th></tr>
-        <tr><th>#</th><th>สินค้า</th><th class="ps-q">รวม</th><th>สาขา</th><th class="ps-q">จำนวน</th><th>จัดแล้ว</th></tr></thead>${blocks}</table>
-        <footer><p class="ps-note">${items.length.toLocaleString('th-TH')} รายการสินค้า · ${branches.size.toLocaleString('th-TH')} สาขา · ข้อมูล ณ ${esc(stamp)} · นับเฉพาะออเดอร์ที่อนุมัติแล้ว ออเดอร์ที่เข้ามาหลังเวลานี้ไม่อยู่ในใบนี้${used.length ? `<br>ตัวกรอง: ${esc(used.join(' | '))}` : ''}</p>
+        <div class="ps-banner"><p class="ps-alert"><b>นับเฉพาะออเดอร์ที่อนุมัติแล้ว</b> ออเดอร์ที่รออนุมัติ ยกเลิก หรือเข้ามาหลัง ${esc(stamp)} ไม่อยู่ในใบนี้</p>${filtered}</div>
+        <table><thead><tr class="ps-run"><th colspan="7"><span>ใบจัดของ</span> ${esc(label)}<em>เลขที่ ${esc(docNo)}</em></th></tr>
+        <tr><th>#</th><th>สินค้า</th><th class="ps-q">รวม</th><th>สาขา</th><th class="ps-q">สั่ง</th><th>จัดจริง</th><th>จัดแล้ว</th></tr></thead>${blocks}</table>
+        <footer><p class="ps-note">${items.length.toLocaleString('th-TH')} รายการสินค้า · ${branches.size.toLocaleString('th-TH')} สาขา · ข้อมูล ณ ${esc(stamp)} · ใบเลขที่ ${esc(docNo)}</p>
         <div class="ps-sign"><span>ผู้จัด</span><span>ผู้ตรวจ</span><span>ผู้รับ</span></div></footer></section>`;
     }).join('');
     document.getElementById('print-sheet')?.remove();

@@ -1659,7 +1659,7 @@ table.report-table.ct-table td { vertical-align: middle; }
 /* ---------- pick list (print) ---------- */
 #print-sheet { display: none; }
 @media print {
-  @page { size: A4 portrait; margin: 12mm; }
+  @page { size: A4 portrait; margin: 12mm 12mm 16mm; @bottom-right { content: "หน้า " counter(page) " / " counter(pages); font-size: 9pt; } }
   body > *:not(#print-sheet) { display: none !important; }
   html, body { background: #fff !important; color: #000 !important; }
   #print-sheet { display: block; font-family: 'Sarabun', 'Noto Sans Thai', system-ui, sans-serif; font-size: 12pt; color: #000; background: #fff; }
@@ -1685,6 +1685,12 @@ table.report-table.ct-table td { vertical-align: middle; }
   .ps-sheet .ps-box i { display: inline-block; width: 5.5mm; height: 5.5mm; border: 0.5mm solid #000; }
   .ps-sheet .ps-cat td { background: #f2f2f2 !important; font-weight: 700; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .ps-note { font-size: 9.5pt; margin: 4mm 0 8mm; }
+  .ps-sheet footer { break-inside: avoid; page-break-inside: avoid; }
+  .ps-banner { margin-bottom: 3mm; }
+  .ps-alert { margin: 0 0 1.5mm; padding: 1.5mm 2.5mm; border: 0.5mm solid #000; font-size: 11pt; }
+  .ps-run th em { float: right; font-style: normal; font-size: 11pt; font-weight: 400; }
+  .ps-warn { text-decoration: underline; }
+  .ps-sheet .ps-real { width: 24mm; }
   .ps-sign { display: flex; gap: 8mm; margin-top: 14mm; }
   .ps-sign span { flex: 1; border-top: 0.4mm solid #000; padding-top: 1.5mm; font-size: 11pt; text-align: center; }
 }
