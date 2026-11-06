@@ -128,6 +128,7 @@ app.use('/api/pay', billingRoutes.publicRouter);
 app.use('/api/signup', require('./routes/selfServe').publicRouter);
 app.use('/api/subscription', require('./routes/selfServe').subscriptionRouter);
 app.use('/api/webhooks/line', require('./routes/line').webhookRouter);
+app.use('/api/webhooks/eats365', require('./routes/eats365Webhook').router);
 app.use('/api/line', require('./routes/line').router);
 app.use('/api/webhooks', billingRoutes.webhookRouter);
 // Back from the bank's 3-D Secure page after a card charge (lib/cardRenew.js).
