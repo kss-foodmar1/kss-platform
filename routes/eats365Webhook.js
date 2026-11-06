@@ -50,6 +50,10 @@ router.all(/.*/, (req, res) => {
       method: req.method,
       path: String(req.originalUrl).split('?')[0].slice(0, 80),
       ua: String(req.get('user-agent') || '').slice(0, 60),
+      // query: names and short values (a verification challenge would show up here); header names only
+      query: Object.fromEntries(Object.entries(req.query || {}).slice(0, 10).map(([k, v]) => [k.slice(0, 40), String(v).slice(0, 80)])),
+      header_names: Object.keys(req.headers).filter((h) => !/^(cookie|authorization)$/i.test(h)).slice(0, 30),
+      sig_len: (req.get('eats365-signature') || '').length,
       verified,
       content_type: req.get('content-type') || null,
       bytes: req.rawBody ? req.rawBody.length : Number(req.get('content-length')) || 0,
