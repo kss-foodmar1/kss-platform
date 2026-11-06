@@ -26,30 +26,28 @@ function check(req) {
   return same(v.toLowerCase(), mac('hex')) || same(v, mac('base64')) ? 'valid' : 'invalid';
 }
 
-router.get(/.*/, (req, res) => res.json({ ok: true, service: 'eats365-webhook' }));
-
-// Eats365 appends /webhook/<event> (e.g. /webhook/menu-updated) to the URL it was given, so any
-// path under this router is accepted. Mounted at /api/webhooks/eats365 and at /webhook.
-router.post(/.*/, (req, res) => {
-  const verified = check(req);
+// Every request is logged by shape (method, path, user agent, content type, size, event names,
+// signature verdict), never header values or the body, so Eats365's own URL test can be seen in
+// the server log. Every request is answered 200 for now: nothing here acts on the data, and a
+// refused test would only block registration. When data handling is added it must run only for
+// verified === 'valid' and refuse the rest.
+router.all(/.*/, (req, res) => {
+  const verified = req.method === 'POST' ? check(req) : null;
   try {
     const body = req.body;
     console.log('Eats365 webhook received:', JSON.stringify({
-      verified,
+      method: req.method,
       path: String(req.originalUrl).split('?')[0].slice(0, 80),
-      actions: Array.isArray(body) ? [...new Set(body.map((e) => e && typeof e.action === 'string' ? e.action.slice(0, 40) : null).filter(Boolean))] : null,
+      ua: String(req.get('user-agent') || '').slice(0, 60),
+      verified,
       content_type: req.get('content-type') || null,
       bytes: req.rawBody ? req.rawBody.length : Number(req.get('content-length')) || 0,
       events: Array.isArray(body) ? body.length : null,
-      fields: Array.isArray(body) ? [...new Set(body.flatMap((e) => (e && typeof e === 'object' ? Object.keys(e) : [])))].slice(0, 30)
-        : body && typeof body === 'object' ? Object.keys(body).slice(0, 30) : null,
+      actions: Array.isArray(body) ? [...new Set(body.map((e) => e && typeof e.action === 'string' ? e.action.slice(0, 40) : null).filter(Boolean))] : null,
+      fields: body && typeof body === 'object' && !Array.isArray(body) ? Object.keys(body).slice(0, 30) : null,
     }));
   } catch (e) { console.error('Eats365 webhook log failed:', e.message); }
-  // Only a signature that is present and wrong is refused. An unsigned request (a URL test from
-  // Eats365's form, say) gets 200 but is never acted on: when data handling is added it must run
-  // only for verified === 'valid'. Eats365 retries once on non-200.
-  if (verified === 'invalid') return res.status(401).json({ ok: false });
-  res.status(200).json({ ok: true });
+  res.status(200).json({ ok: true, service: 'eats365-webhook' });
 });
 
 module.exports = { router };
