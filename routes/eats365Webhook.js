@@ -13,12 +13,9 @@ const express = require('express');
 const router = express.Router();
 
 const PROBES = [
-  { name: 'empty-200', send: (res) => res.status(200).end() },
-  { name: 'text-OK', send: (res) => res.status(200).type('text/plain').send('OK') },
-  { name: 'json-msg_code-0', send: (res) => res.status(200).json({ msg_code: 0 }) },
-  { name: 'text-200-OK', send: (res) => res.status(200).type('text/plain').send('200 OK') },
-  { name: 'json-success-true', send: (res) => res.status(200).json({ success: true }) },
-];
+  { name: 'status-401', send: (res) => res.status(401).json({ ok: false, error: 'signature required' }) },
+  { name: 'status-405', send: (res) => res.set('Allow', 'POST').status(405).json({ ok: false, error: 'POST only' }) },
+]
 
 // The app-wide express.json only reads application/json. If Eats365 sends another content type
 // (the document does not say), keep the raw bytes here too, so the signature can still be checked
