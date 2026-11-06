@@ -12,11 +12,6 @@ const express = require('express');
 
 const router = express.Router();
 
-const PROBES = [
-  { name: 'status-401', send: (res) => res.status(401).json({ ok: false, error: 'signature required' }) },
-  { name: 'status-405', send: (res) => res.set('Allow', 'POST').status(405).json({ ok: false, error: 'POST only' }) },
-]
-
 // The app-wide express.json only reads application/json. If Eats365 sends another content type
 // (the document does not say), keep the raw bytes here too, so the signature can still be checked
 // and the JSON array still read. Skipped when express.json already read the body.
@@ -67,15 +62,6 @@ router.all(/.*/, (req, res) => {
       fields: body && typeof body === 'object' && !Array.isArray(body) ? Object.keys(body).slice(0, 30) : null,
     }));
   } catch (e) { console.error('Eats365 webhook log failed:', e.message); }
-  // Discovery (temporary): Eats365's portal tests BOTH the staging and the production URL with a
-  // bare GET on each Save, and says "response is invalid" without saying what it wants. The
-  // candidate answer changes every minute by the clock, so staging and production give the same
-  // one at the same moment; the log says which. Replace with the winning answer once known.
-  if (req.method === 'GET' && !Object.keys(req.query || {}).length && process.env.EATS365_PROBE !== 'off') {
-    const v = PROBES[Math.floor(Date.now() / 60000) % PROBES.length];
-    console.log('Eats365 webhook GET answered with probe:', v.name);
-    return v.send(res);
-  }
   res.status(200).json({ ok: true, service: 'eats365-webhook' });
 });
 
