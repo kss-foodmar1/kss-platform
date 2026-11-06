@@ -12,6 +12,17 @@ const express = require('express');
 
 const router = express.Router();
 
+// The app-wide express.json only reads application/json. If Eats365 sends another content type
+// (the document does not say), keep the raw bytes here too, so the signature can still be checked
+// and the JSON array still read. Skipped when express.json already read the body.
+router.use(express.raw({ type: () => true, limit: '5mb' }), (req, res, next) => {
+  if (Buffer.isBuffer(req.body)) {
+    req.rawBody = req.body;
+    try { req.body = req.body.length ? JSON.parse(req.body.toString('utf8')) : {}; } catch (e) { req.body = {}; }
+  }
+  next();
+});
+
 // 'valid' | 'invalid' | 'missing' (no signature header) | 'no-key' (variable not set).
 // The document does not say hex or base64, so both are accepted.
 function check(req) {
