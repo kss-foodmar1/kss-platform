@@ -93,7 +93,7 @@ if (CANON) {
 
 // Keep the raw bytes of webhook bodies: Omise's signature is over them.
 // 20mb: a POS upload is daily totals, but a few months of a large chain adds up.
-app.use(express.json({ limit: '20mb', verify: (req, res, buf) => { if (req.originalUrl.startsWith('/api/webhooks/')) req.rawBody = buf; } }));
+app.use(express.json({ limit: '20mb', verify: (req, res, buf) => { if (req.originalUrl.startsWith('/api/webhooks/') || req.originalUrl.startsWith('/webhook/')) req.rawBody = buf; } }));
 app.use(cookieParser());
 
 // The shell is served from memory with versioned asset URLs, so it never comes
@@ -129,6 +129,7 @@ app.use('/api/signup', require('./routes/selfServe').publicRouter);
 app.use('/api/subscription', require('./routes/selfServe').subscriptionRouter);
 app.use('/api/webhooks/line', require('./routes/line').webhookRouter);
 app.use('/api/webhooks/eats365', require('./routes/eats365Webhook').router);
+app.use('/webhook', require('./routes/eats365Webhook').router); // Eats365 calls <host>/webhook/<event>
 app.use('/api/line', require('./routes/line').router);
 app.use('/api/webhooks', billingRoutes.webhookRouter);
 // Back from the bank's 3-D Secure page after a card charge (lib/cardRenew.js).

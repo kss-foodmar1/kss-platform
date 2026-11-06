@@ -28,12 +28,16 @@ function check(req) {
 
 router.get('/', (req, res) => res.json({ ok: true, service: 'eats365-webhook' }));
 
-router.post('/', (req, res) => {
+// Eats365 appends /webhook/<event> (e.g. /webhook/menu-updated) to the URL it was given, so any
+// path under this router is accepted. Mounted at /api/webhooks/eats365 and at /webhook.
+router.post(/.*/, (req, res) => {
   const verified = check(req);
   try {
     const body = req.body;
     console.log('Eats365 webhook received:', JSON.stringify({
       verified,
+      path: String(req.originalUrl).split('?')[0].slice(0, 80),
+      actions: Array.isArray(body) ? [...new Set(body.map((e) => e && typeof e.action === 'string' ? e.action.slice(0, 40) : null).filter(Boolean))] : null,
       content_type: req.get('content-type') || null,
       bytes: req.rawBody ? req.rawBody.length : Number(req.get('content-length')) || 0,
       events: Array.isArray(body) ? body.length : null,
