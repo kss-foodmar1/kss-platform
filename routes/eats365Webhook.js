@@ -19,7 +19,6 @@ const PROBES = [
   { name: 'text-200-OK', send: (res) => res.status(200).type('text/plain').send('200 OK') },
   { name: 'json-success-true', send: (res) => res.status(200).json({ success: true }) },
 ];
-let probeAt = 0;
 
 // The app-wide express.json only reads application/json. If Eats365 sends another content type
 // (the document does not say), keep the raw bytes here too, so the signature can still be checked
@@ -71,12 +70,12 @@ router.all(/.*/, (req, res) => {
       fields: body && typeof body === 'object' && !Array.isArray(body) ? Object.keys(body).slice(0, 30) : null,
     }));
   } catch (e) { console.error('Eats365 webhook log failed:', e.message); }
-  // Discovery (staging only, temporary): Eats365's portal tests the URL with a bare GET and
-  // rejects a JSON body as "response is invalid"; the document does not say what it wants. Each
-  // GET without a query gets the next candidate answer and the log says which one, so the first
-  // Save that passes shows the right shape. Replace with that one answer once it is known.
+  // Discovery (temporary): Eats365's portal tests BOTH the staging and the production URL with a
+  // bare GET on each Save, and says "response is invalid" without saying what it wants. The
+  // candidate answer changes every minute by the clock, so staging and production give the same
+  // one at the same moment; the log says which. Replace with the winning answer once known.
   if (req.method === 'GET' && !Object.keys(req.query || {}).length && process.env.EATS365_PROBE !== 'off') {
-    const v = PROBES[probeAt++ % PROBES.length];
+    const v = PROBES[Math.floor(Date.now() / 60000) % PROBES.length];
     console.log('Eats365 webhook GET answered with probe:', v.name);
     return v.send(res);
   }
