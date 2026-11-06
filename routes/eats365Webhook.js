@@ -26,7 +26,7 @@ function check(req) {
   return same(v.toLowerCase(), mac('hex')) || same(v, mac('base64')) ? 'valid' : 'invalid';
 }
 
-router.get('/', (req, res) => res.json({ ok: true, service: 'eats365-webhook' }));
+router.get(/.*/, (req, res) => res.json({ ok: true, service: 'eats365-webhook' }));
 
 // Eats365 appends /webhook/<event> (e.g. /webhook/menu-updated) to the URL it was given, so any
 // path under this router is accepted. Mounted at /api/webhooks/eats365 and at /webhook.
@@ -45,9 +45,10 @@ router.post(/.*/, (req, res) => {
         : body && typeof body === 'object' ? Object.keys(body).slice(0, 30) : null,
     }));
   } catch (e) { console.error('Eats365 webhook log failed:', e.message); }
-  // A wrong or missing signature is refused once a key is set; with no key set yet, stay open
-  // so the URL can be tested. Eats365 retries once on non-200.
-  if (verified === 'invalid' || verified === 'missing') return res.status(401).json({ ok: false });
+  // Only a signature that is present and wrong is refused. An unsigned request (a URL test from
+  // Eats365's form, say) gets 200 but is never acted on: when data handling is added it must run
+  // only for verified === 'valid'. Eats365 retries once on non-200.
+  if (verified === 'invalid') return res.status(401).json({ ok: false });
   res.status(200).json({ ok: true });
 });
 
