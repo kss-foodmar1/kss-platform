@@ -1,5 +1,5 @@
 // Card auto-renew end to end against a server loaded with scripts/fake-omise.js:
-//   PORT=4500 FAKE_CTL_PORT=4599 OMISE_SECRET_KEY=skey_test_x OMISE_PUBLIC_KEY=pkey_test_x node -r ./scripts/fake-omise.js server.js
+//   PORT=4500 FAKE_CTL_PORT=4599 OMISE_PAYMENTS=on OMISE_SECRET_KEY=skey_test_x OMISE_PUBLIC_KEY=pkey_test_x node -r ./scripts/fake-omise.js server.js
 //   node scripts/test-card-renew.js
 const assert = require('assert');
 const mysql = require('mysql2/promise');
