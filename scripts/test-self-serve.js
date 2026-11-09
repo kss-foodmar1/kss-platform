@@ -1,7 +1,7 @@
 // Self-serve end to end: signup → pending login → KSS approves → trial on demo
 // data → own FMH key switches to real data → trial ends → locked (plan page
 // only) → pay (fake Omise) → unlocked; paid grace; retention + purge; reject.
-//   PORT=4500 FAKE_CTL_PORT=4599 OMISE_SECRET_KEY=skey_test_x node -r ./scripts/fake-omise.js server.js
+//   PORT=4500 FAKE_CTL_PORT=4599 OMISE_PAYMENTS=on OMISE_SECRET_KEY=skey_test_x node -r ./scripts/fake-omise.js server.js
 //   node scripts/test-self-serve.js
 const assert = require('assert');
 const mysql = require('mysql2/promise');
