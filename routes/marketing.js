@@ -2,7 +2,8 @@
 // any company; a company admin for their own company only. The computed report
 // is served like any other source by routes/dashboards.js ('marketing').
 //
-//   GET    /api/marketing/template/:kind               budget | actual  (CSV, opens in Excel)
+//   GET    /api/marketing/template/:kind               budget | actual  (CSV, opens in Excel; horizontal by default,
+//                                                        ?layout=list for one row per entry, ?from=YYYY-MM / ?month=YYYY-MM)
 //   GET    /api/marketing/companies/:id                uploads + what is loaded
 //   POST   /api/marketing/companies/:id/uploads        { kind, filename, table: [[cell,...],...] }
 //   DELETE /api/marketing/companies/:id/uploads/:uid
@@ -37,7 +38,7 @@ const send = (fn) =>
   });
 
 router.get('/template/:kind', requireAuth, (req, res) => {
-  const t = marketing.templateCsv(req.params.kind);
+  const t = marketing.templateCsv(req.params.kind, { layout: req.query.layout, from: req.query.from, month: req.query.month });
   if (!t) return res.status(404).json({ error: 'ไม่พบแม่แบบนี้' });
   res.set('Content-Type', 'text/csv; charset=utf-8');
   res.set('Content-Disposition', `attachment; filename="${t.filename}"`);

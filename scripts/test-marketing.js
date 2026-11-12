@@ -73,9 +73,9 @@ t('missing columns are named; empty file refused', () => {
   assert.throws(() => m.parseFile('actual', []), /ไฟล์ว่าง/);
   assert.throws(() => m.parseFile('other', [['a']]), /budget หรือ actual/);
 });
-t('templates read back as valid files', () => {
+t('list templates read back as valid files', () => {
   ['budget', 'actual'].forEach((k) => {
-    const csv = m.templateCsv(k).body.replace(/^﻿/, '');
+    const csv = m.templateCsv(k, { layout: 'list' }).body.replace(/^﻿/, '');
     const table = csv.trim().split(/\r\n/).map((l) => l.split(','));
     const r = m.parseFile(k, table);
     assert.deepStrictEqual(r.errors, [], k);
@@ -100,6 +100,38 @@ t('report rows: actual lands on its day; channel with no budget has budget 0; le
   assert.strictEqual(inf.actual, 12000.1);
   assert.strictEqual(inf.budget_to_date, 0);
   assert.strictEqual(rows.find((r) => r.spend_date === '2028-02-29').actual, 7);
+});
+t('horizontal budget: channel rows × month columns, totals and blanks ignored, label prefix and alias', () => {
+  const r = m.parseFile('budget', [['หัวเรื่อง'], ['ช่องทาง', '2026-11', '2026-12', 'รวม'], ['- Facebook /IG ads', 25000, '', 25000], ['TikTok', '30,000', 20000, ''], ['รวม', 55000, 20000, 75000], ['4. หัวข้อ']]);
+  assert.deepStrictEqual(r.errors, []);
+  assert.strictEqual(r.rows.length, 3);
+  assert.strictEqual(r.rows.find((x) => x.channel === 'Meta' && x.when === '2026-11-01').cents, 2500000);
+  assert.ok(!r.rows.some((x) => x.channel === 'Meta' && x.when === '2026-12-01')); // blank = not entered
+});
+t('horizontal actual: day columns; a bad cell rejects with row and column', () => {
+  const ok = m.parseFile('actual', [['ช่องทาง', '2026-11-01', '2026-11-02'], ['Meta', 1500, 1600], ['meta', 100, '']]);
+  assert.deepStrictEqual(ok.errors, []);
+  assert.strictEqual(ok.rows.find((x) => x.when === '2026-11-01').cents, 160000); // two rows of one channel add up
+  const bad = m.parseFile('actual', [['ช่องทาง', '2026-11-01', '2026-11-02'], ['Meta', 1500, 'abc']]);
+  assert.strictEqual(bad.errors.length, 1);
+  assert.strictEqual(bad.errors[0].row, 2);
+  assert.ok(bad.errors[0].message.includes('2026-11-02'));
+});
+t('horizontal: empty grid is rejected; duplicate month column and duplicate budget row are errors', () => {
+  assert.ok(m.parseFile('budget', [['ช่องทาง', '2026-11'], ['Meta']]).errors.length);
+  assert.ok(m.parseFile('budget', [['ช่องทาง', '2026-11', '11/2026'], ['Meta', 1, 2]]).errors.length);
+  assert.ok(m.parseFile('budget', [['ช่องทาง', '2026-11'], ['Meta', 1], ['facebook', 2]]).errors.length);
+});
+t('horizontal templates: 12 month columns / every day of the month; list layout kept; the sheet reads back', () => {
+  const b = m.templateCsv('budget', { from: '2026-11' }).body.split('\r\n')[0].split(',');
+  assert.strictEqual(b.length, 13);
+  assert.strictEqual(b[12], '2027-10');
+  const a = m.templateCsv('actual', { month: '2028-02' }).body.split('\r\n')[0].split(',');
+  assert.strictEqual(a.length, 30); // channel + 29 days
+  assert.ok(m.templateCsv('budget', { layout: 'list' }).body.includes('จำนวนเงิน'));
+  const rows = m.templateCsv('budget', { from: '2026-11' }).body.replace('\ufeff', '').split('\r\n').filter(Boolean).map((l) => l.split(','));
+  rows[1][1] = '5000';
+  assert.strictEqual(m.parseFile('budget', rows).rows.length, 1);
 });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -2494,8 +2494,8 @@ async function renderAiQuestions(main, view = {}) {
 // The file is read in this browser; only its table goes to the server, which
 // checks the whole file and saves nothing if one row is bad.
 const MARKETING_KINDS = {
-  budget: { title: 'งบรายเดือน', cols: 'เดือน · ช่องทาง · จำนวนเงิน (บาท)', range: (o) => (o.budget.month_from ? `${o.budget.month_from.slice(0, 7)} – ${o.budget.month_to.slice(0, 7)}` : '–'), total: (o) => o.budget.total, rows: (o) => o.budget.rows },
-  actual: { title: 'ยอดใช้จริงรายวัน', cols: 'วันที่ · ช่องทาง · จำนวนเงิน (บาท) · หมายเหตุ', range: (o) => (o.actual.date_from ? `${thDate(o.actual.date_from)} – ${thDate(o.actual.date_to)}` : '–'), total: (o) => o.actual.total, rows: (o) => o.actual.rows },
+  budget: { title: 'งบรายเดือน', cols: 'แถว = ช่องทาง · คอลัมน์ = เดือน (12 เดือน) · ช่องว่าง = ยังไม่กรอก', range: (o) => (o.budget.month_from ? `${o.budget.month_from.slice(0, 7)} – ${o.budget.month_to.slice(0, 7)}` : '–'), total: (o) => o.budget.total, rows: (o) => o.budget.rows },
+  actual: { title: 'ยอดใช้จริงรายวัน', cols: 'แถว = ช่องทาง · คอลัมน์ = วันที่ของเดือนที่เลือก · ช่องว่าง = ยังไม่กรอก', range: (o) => (o.actual.date_from ? `${thDate(o.actual.date_from)} – ${thDate(o.actual.date_to)}` : '–'), total: (o) => o.actual.total, rows: (o) => o.actual.rows },
 };
 
 async function renderMarketingPanel(container, companyId, flash = '') {
@@ -2511,7 +2511,12 @@ async function renderMarketingPanel(container, companyId, flash = '') {
     const d = MARKETING_KINDS[k];
     return `<div class="marketing-kind" data-kind="${k}">
       <h3 class="pos-h3">${d.title}</h3>
-      <p class="helper-text" style="margin-top:0;">คอลัมน์: ${esc(d.cols)} · <a href="/api/marketing/template/${k}" download>ดาวน์โหลดแม่แบบ (CSV เปิดใน Excel ได้)</a></p>
+      <p class="helper-text" style="margin-top:0;">${esc(d.cols)}</p>
+      <p class="helper-text marketing-tpl" style="margin-top:0;">
+        <label>${k === 'budget' ? 'เริ่มจากเดือน' : 'เดือน'} <input type="month" class="tpl-month" value="${new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 7)}" aria-label="${k === 'budget' ? 'เดือนแรกของแม่แบบงบ' : 'เดือนของแม่แบบยอดใช้จริง'}"></label>
+        <a class="tpl-link" data-k="${k}" href="/api/marketing/template/${k}" download>ดาวน์โหลดแม่แบบตารางแนวนอน (CSV เปิดใน Excel ได้)</a>
+        · <a href="/api/marketing/template/${k}?layout=list" download>แบบรายการ (1 แถวต่อ 1 รายการ)</a>
+      </p>
       <form class="inline-form marketing-form">
         <input type="file" name="file" accept=".xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required aria-label="ไฟล์${esc(d.title)}">
         <button type="submit" class="btn small primary">อัปโหลด${esc(d.title)}</button>
@@ -2520,7 +2525,7 @@ async function renderMarketingPanel(container, companyId, flash = '') {
     </div>`;
   };
   container.innerHTML = `
-    <p class="helper-text" style="margin-top:0;">ใช้ไฟล์แม่แบบ 2 ไฟล์ (Excel .xlsx หรือ CSV) — ไฟล์ถูกอ่านในเครื่องของคุณ ระบบตรวจทั้งไฟล์ก่อนบันทึก ถ้ามีแถวที่อ่านไม่ได้จะบอกเลขแถวและไม่บันทึกอะไรเลย · อัปโหลดซ้ำได้ ไม่นับซ้ำ: งบจะแทนที่งบเดือนและช่องทางเดิม ยอดใช้จริงจะแทนที่วันและช่องทางเดิม · ช่องทางที่เขียนต่างกัน เช่น facebook และ Meta ระบบรวมให้เป็นช่องทางเดียว</p>
+    <p class="helper-text" style="margin-top:0;">ใช้ไฟล์แม่แบบ 2 ไฟล์ (Excel .xlsx หรือ CSV) กรอกเป็นตารางแนวนอน แถวละช่องทาง ไม่ต้องพิมพ์ชื่อเดือนหรือวันที่ซ้ำ — ไฟล์ถูกอ่านในเครื่องของคุณ ระบบตรวจทั้งไฟล์ก่อนบันทึก ถ้ามีแถวที่อ่านไม่ได้จะบอกเลขแถวและไม่บันทึกอะไรเลย · อัปโหลดซ้ำได้ ไม่นับซ้ำ: งบจะแทนที่งบเดือนและช่องทางเดิม ยอดใช้จริงจะแทนที่วันและช่องทางเดิม · ช่องทางที่เขียนต่างกัน เช่น facebook และ Meta ระบบรวมให้เป็นช่องทางเดียว</p>
     <div class="marketing-msg" role="status">${flash}</div>
     <div class="marketing-kinds">${kindCard('budget')}${kindCard('actual')}</div>
     ${
@@ -2540,6 +2545,13 @@ async function renderMarketingPanel(container, companyId, flash = '') {
     }`;
   const msg = (html) => { container.querySelector('.marketing-msg').innerHTML = html; };
 
+  container.querySelectorAll('.marketing-tpl').forEach((box) => {
+    const link = box.querySelector('.tpl-link');
+    const input = box.querySelector('.tpl-month');
+    const sync = () => { link.href = `/api/marketing/template/${link.dataset.k}?${link.dataset.k === 'budget' ? 'from' : 'month'}=${encodeURIComponent(input.value || '')}`; };
+    input.addEventListener('change', sync);
+    sync();
+  });
   container.querySelectorAll('.marketing-form').forEach((form) => {
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
