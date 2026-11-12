@@ -6,6 +6,16 @@
 window.I18N_EN = {
   exact: {
     // ---- marketing widgets (catalog) ----
+    'รายการยอดใช้จริงตามไฟล์ที่อัปโหลด': 'Actual spend lines as uploaded',
+    'ทุกบรรทัดยอดใช้จริงที่อัปโหลด (วัน ช่องทาง จำนวนเงิน หมายเหตุ) ไว้เทียบกับไฟล์ต้นทาง ค้นหา เรียง และ Export ได้': 'Every actual-spend line uploaded (day, channel, amount, note), to check against the source file; sortable and exportable',
+    'ยอดใช้จริง (บาท)': 'Actual spend (baht)',
+    'ไฟล์ให้มาเป็น': 'File gave it as',
+    'หมายเหตุ': 'Note',
+    'ตามช่วงวันที่ที่เลือก • "เดือน" คือยอดรายเดือนที่ไฟล์ให้มา แสดงที่วันที่ 1 ของเดือน (ในกราฟและตัวเลขอื่นถัวเฉลี่ยตามวัน) • ยอดตามที่กรอกในไฟล์ ถ้าติ๊กรวม VAT ไว้ ยอดที่แสดงคือยอดก่อน VAT': 'For the selected dates • "เดือน" (month) is a monthly amount the file gave, shown on the 1st of the month (charts and other figures spread it over the days) • If "VAT included" was ticked on upload, the amount shown is before VAT',
+    'รายการงบรายเดือนตามไฟล์ที่อัปโหลด': 'Monthly budget lines as uploaded',
+    'งบที่อัปโหลดทุกบรรทัด (เดือน ช่องทาง จำนวนเงิน) ไว้เทียบกับไฟล์งบต้นทาง': 'Every budget line uploaded (month, channel, amount), to check against the source budget file',
+    'งบเดือนนี้ (บาท)': 'Budget for the month (baht)',
+    'ตามช่วงวันที่ที่เลือก • งบเดือนไหนจะแสดงเมื่อช่วงที่เลือกครอบคลุมวันที่ 1 ของเดือนนั้น • ยอดตามไฟล์ (ก่อน VAT ถ้าติ๊กรวม VAT ตอนอัปโหลด)': 'For the selected dates • A month\'s budget shows when the range covers the 1st of that month • Amounts as in the file (before VAT if "VAT included" was ticked on upload)',
     'งบรวม เทียบยอดใช้จริง รายเดือน': 'Total budget vs actual spend by month',
     'กราฟแท่งต่อเดือน: งบรวมทุกช่องทางข้างยอดใช้จริง เลือกช่วง "ปีนี้ (ทั้งปี)" หรือ 6/12 เดือน เพื่อดูหลายเดือนพร้อมกัน': 'Monthly bars: total budget across all channels beside actual spend. Pick "This year (whole)" or 6/12 months to see several months at once',
     'งบรวม': 'Total budget',
