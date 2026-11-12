@@ -91,6 +91,18 @@ const files = [dir + '6ca4b015-1-31_Oct.xlsx', dir + 'c21ab5dd-1-30_Sep.xlsx'];
     check('real exports, Order Date 1-31 Oct = FMH: 111 SO / 596,571', o.so === 111 && o.total === 596571, JSON.stringify(o));
     check('real exports, requested delivery 1-31 Oct = old dashboard: 113 SO / 615,874.5', d.so === 113 && d.total === 615874.5, JSON.stringify(d));
   } else console.log('SKIP  real exports not on disk');
-  console.log(`\n${pass} passed, ${fail} failed`);
+  // marketing plans ahead: whole months / quarters / year, forward as well as back
+{
+  const eq = (a, b, m) => { if (JSON.stringify(a) !== JSON.stringify(b)) { console.log('FAIL', m, JSON.stringify(a)); process.exitCode = 1; } else { console.log('PASS', m); } };
+  eq(RP.compute('plan_this_month', '2026-11-12'), { start: '2026-11-01', end: '2026-11-30' }, 'plan: this month is the whole month');
+  eq(RP.compute('plan_next_month', '2026-12-15'), { start: '2027-01-01', end: '2027-01-31' }, 'plan: next month crosses the year');
+  eq(RP.compute('plan_this_quarter', '2026-11-12'), { start: '2026-10-01', end: '2026-12-31' }, 'plan: this quarter');
+  eq(RP.compute('plan_next_quarter', '2026-11-12'), { start: '2027-01-01', end: '2027-03-31' }, 'plan: next quarter crosses the year');
+  eq(RP.compute('plan_12m', '2026-11-12'), { start: '2026-11-01', end: '2027-10-31' }, 'plan: next 12 months');
+  eq(RP.compute('plan_this_year', '2028-02-29'), { start: '2028-01-01', end: '2028-12-31' }, 'plan: the whole year');
+  eq(RP.available(false, true).map((p) => p.key).includes('d7'), false, 'plan page offers no "last 7 days"');
+  eq(RP.available(false, false).map((p) => p.key).includes('plan_next_month'), false, 'other pages keep the usual presets');
+}
+console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

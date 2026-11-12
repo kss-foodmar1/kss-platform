@@ -416,6 +416,8 @@ function rowMatches(rule, row) {
     case 'lte': return evalRow(rule.a, row) <= evalRow(rule.b, row);
     // flags: 'i' for a name in any case ("Central Kitchen")
     case 'matches': return new RegExp(rule.pattern, rule.flags || '').test(String(pick(row, rule.field) ?? ''));
+    // Rows dated today or earlier (real today): the part of a plan that has already run.
+    case 'upto_today': { const d = dateOnly(pick(row, rule.field)); return !!d && d <= realTodayIso(); }
     // The last N days counting today (1 = today only), in the viewer's calendar.
     case 'within_days': {
       const d = dateOnly(pick(row, rule.field));
@@ -1318,7 +1320,10 @@ class DashboardView {
     // offer 6-month / 1-year ranges.
     this.fileCapable = Object.values(sources).some((s) => FILE_SOURCES.includes(s.source) && !s.grouping);
     this.useSaved = savedMode.get();
-    this.rangePreset = RangePresets.DEFAULT; // the picked ready-made range; null after a custom date pick
+    // A page of marketing widgets plans ahead: month / quarter / year ranges, forward as well as back.
+    const srcList = Object.values(sources);
+    this.planMode = srcList.some((x) => x.source === 'marketing') && srcList.every((x) => x.source === 'marketing' || x.source === 'pos-sales');
+    this.rangePreset = this.planMode ? RangePresets.PLAN_DEFAULT : RangePresets.DEFAULT; // the picked ready-made range; null after a custom date pick
     this.range = RangePresets.compute(this.rangePreset, realTodayIso());
     this.build();
   }
@@ -1357,7 +1362,7 @@ class DashboardView {
           this.hasDateSource
             ? `<div class="range-control" role="group" aria-label="ช่วงวันที่">
                  <select class="range-preset" aria-label="${esc(L('ช่วงเวลา', 'Period'))}">
-                   ${RangePresets.available(this.fileCapable).map((p) => `<option value="${p.key}"${p.key === this.rangePreset ? ' selected' : ''}>${esc(RangePresets.label(p.key, I18N.lang))}</option>`).join('')}
+                   ${RangePresets.available(this.fileCapable, this.planMode).map((p) => `<option value="${p.key}"${p.key === this.rangePreset ? ' selected' : ''}>${esc(RangePresets.label(p.key, I18N.lang))}</option>`).join('')}
                    <option value="custom" hidden>${esc(L('กำหนดเอง', 'Custom'))}</option>
                  </select>
                  <input type="date" class="range-start" value="${this.range.start}" aria-label="วันที่เริ่ม">
@@ -3058,7 +3063,10 @@ function renderLine(body, rows, cfg) {
     data: {
       labels: keys.map((k) => bucketLabel(k, cfg.bucket)),
       datasets: series.map((s, si) => {
-        const data = keys.map((k) => (buckets.has(k) ? evalMetric(s.value, buckets.get(k)) : null));
+        let data = keys.map((k) => (buckets.has(k) ? evalMetric(s.value, buckets.get(k)) : null));
+        // running total across the period (plan vs spend so far); a series may stop at today
+        if (cfg.cumulative) { let run = 0; data = data.map((v) => (v === null ? null : (run += v))); }
+        if (s.until_today) { const t = realTodayIso(); data = data.map((v, i) => (String(keys[i]).slice(0, 10) > t ? null : v)); }
         if ((s.mark || cfg.mark) === 'bar') {
           return { type: 'bar', label: s.label, data, backgroundColor: s.color, borderRadius: 4, maxBarThickness: 36, categoryPercentage: 0.7, barPercentage: 0.9 };
         }
