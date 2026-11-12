@@ -86,7 +86,7 @@ const sum = (rows, f) => Math.round(rows.reduce((s, r) => s + Number(r[f] || 0),
   const badFile = [['วันที่', 'ช่องทาง', 'จำนวนเงิน (บาท)'], ['2026-11-10', 'Meta', 100], ['2026-13-40', 'Meta', 100], ['2026-11-11', 'Meta', 'abc']];
   const bad = await ca('POST', `/api/marketing/companies/${co}/uploads`, { kind: 'actual', filename: 'bad.csv', table: badFile });
   const after = await pool.query(`SELECT COUNT(*) AS n FROM marketing_actual WHERE company_id = ?`, [co]);
-  check('bad file: 422 naming rows 3 and 4', bad.status === 422 && /3, 4/.test(bad.json.error) && (bad.json.details || []).length === 2, JSON.stringify(bad.json).slice(0, 250));
+  check('bad file: 422 naming rows 3 and 4', bad.status === 422 && (bad.json.details || []).map((d) => d.row).join() === '3,4', JSON.stringify(bad.json).slice(0, 250));
   check('bad file: nothing saved, not even the good row', before[0][0].n === after[0][0].n);
   const noCols = await ca('POST', `/api/marketing/companies/${co}/uploads`, { kind: 'budget', filename: 'x.csv', table: [['a', 'b'], [1, 2]] });
   check('wrong file: names the missing columns', noCols.status === 422 && /เดือน/.test(noCols.json.error));
@@ -105,6 +105,49 @@ const sum = (rows, f) => Math.round(rows.reduce((s, r) => s + Number(r[f] || 0),
   rows = await reportRows();
   check('delete: removes the rows that file wrote last (TikTok day gone)', del.status === 200 && sum(rows, 'actual') === 2500, String(sum(rows, 'actual')));
   check('delete: another company\'s upload id is 404', (await ca('DELETE', `/api/marketing/companies/${co}/uploads/999999`)).status === 404);
+
+  // ---------- preview (dry run), monthly actual, VAT, clear, copy ----------
+  const cnt = async (t) => (await pool.query(`SELECT COUNT(*) AS n FROM ${t} WHERE company_id = ?`, [co]))[0][0].n;
+  const wideB = [['ช่องทาง', '2026-12', '2027-01', 'รวม'], ['Facebook', 1000, 2000, 3000], ['IG', 500, '', 500], ['TikTok', 700, '-', 700], ['รวม', 2200, 2000, 4200]];
+  const nb = await cnt('marketing_budget');
+  const dupe = await ca('POST', `/api/marketing/companies/${co}/uploads`, { kind: 'budget', filename: 'w.csv', table: wideB, dry_run: true });
+  check('dry run: alias clash (Facebook + IG) is an error naming both raw names', dupe.status === 422 && /Facebook/.test(JSON.stringify(dupe.json.details)) && /IG/.test(JSON.stringify(dupe.json.details)), JSON.stringify(dupe.json).slice(0, 300));
+  const wideOk = [['ช่องทาง', '2026-12', '2027-01', 'รวม'], ['Facebook', 1000, 2000, 3000], ['TikTok', 700, '-', 900], ['รวม', 1700, 2000, 3700]];
+  const pv = await ca('POST', `/api/marketing/companies/${co}/uploads`, { kind: 'budget', filename: 'w.csv', table: wideOk, dry_run: true });
+  check('dry run: preview lists months, channels, warnings; writes nothing', pv.status === 200 && pv.json.dry_run && pv.json.months.length === 2 && pv.json.channels.length === 2 && pv.json.warnings.some((w) => /คอลัมน์รวม/.test(w)) && (await cnt('marketing_budget')) === nb, JSON.stringify(pv.json).slice(0, 400));
+  const pv2 = await ca('POST', `/api/marketing/companies/${co}/uploads`, { kind: 'budget', filename: 'w.csv', table: [['ช่องทาง', '2026-11'], ['Meta', 1]], dry_run: true });
+  check('dry run: counts rows that would be replaced', pv2.json.replaces === 1 && pv2.json.warnings.some((w) => /แทนที่/.test(w)), JSON.stringify(pv2.json).slice(0, 300));
+  const vatUp = await ca('POST', `/api/marketing/companies/${co}/uploads`, { kind: 'budget', filename: 'vat.csv', table: [['ช่องทาง', '2026-12'], ['Meta', 10700]], vat_included: true });
+  const [[vrow]] = await pool.query(`SELECT amount FROM marketing_budget WHERE company_id = ? AND budget_month = '2026-12-01' AND channel = 'Meta'`, [co]);
+  check('VAT included: stored ex-VAT (10,700 -> 10,000) and remembered on the upload', vatUp.status === 200 && Number(vrow.amount) === 10000 && vatUp.json.vat_included === true);
+  const mon = await ca('POST', `/api/marketing/companies/${co}/uploads`, { kind: 'actual', filename: 'monthly.csv', table: [['ช่องทาง', '2026-11', '2026-12'], ['Meta', 9999, 4000], ['Influencer', 5000, ''] ] });
+  check('monthly actual: saved as month columns', mon.status === 200 && mon.json.monthly === true && mon.json.rows === 3, JSON.stringify(mon.json).slice(0, 250));
+  rows = await reportRows();
+  const metaNov30 = rows.find((r) => r.spend_date === '2026-11-30' && r.channel === 'Meta');
+  const infNov30 = rows.find((r) => r.spend_date === '2026-11-30' && r.channel === 'Influencer');
+  const metaDec31 = rows.find((r) => r.spend_date === '2026-12-31' && r.channel === 'Meta');
+  check('monthly actual: month with daily rows keeps daily (Meta Nov 30 has no monthly 9,999); month without daily lands on the last day', !(metaNov30 && metaNov30.actual === 9999) && infNov30 && infNov30.actual === 5000 && metaDec31 && metaDec31.actual === 4000, JSON.stringify({ metaNov30, infNov30, metaDec31 }));
+  const tm = await ca('GET', '/api/marketing/template/actual?granularity=month&from=2026-11');
+  check('template: monthly actual has 12 month columns', tm.status === 200 && tm.text.split('\r\n')[0].split(',').length === 13);
+  const nbc = await cnt('marketing_budget');
+  const cp0 = await ca('POST', `/api/marketing/companies/${co}/copy-budget`, { from: '2026-11', to: '2027-02', dry_run: true });
+  check('copy budget: dry run reports channels and writes nothing', cp0.status === 200 && cp0.json.copied === 3 && (await cnt('marketing_budget')) === nbc, JSON.stringify(cp0.json));
+  const cp = await ca('POST', `/api/marketing/companies/${co}/copy-budget`, { from: '2026-11', to: '2027-02' });
+  const cp2 = await ca('POST', `/api/marketing/companies/${co}/copy-budget`, { from: '2026-11', to: '2027-02' });
+  check('copy budget: copies once, a second copy adds nothing (fills only channels without budget)', cp.json.copied === 3 && cp2.json.copied === 0 && cp2.json.skipped === 3, JSON.stringify([cp.json, cp2.json]).slice(0, 300));
+  check('copy budget: empty source month is refused', (await ca('POST', `/api/marketing/companies/${co}/copy-budget`, { from: '2030-01', to: '2030-02' })).status === 422);
+  const cl0 = await ca('POST', `/api/marketing/companies/${co}/clear`, { kind: 'budget', month: '2027-02', dry_run: true });
+  const nbBefore = await cnt('marketing_budget');
+  check('clear: dry run counts without deleting', cl0.json.count === 3 && (await cnt('marketing_budget')) === nbBefore);
+  const cl1 = await ca('POST', `/api/marketing/companies/${co}/clear`, { kind: 'budget', month: '2027-02', channel: 'facebook' });
+  check('clear: one channel of one month (alias respected)', cl1.json.count === 1 && (await cnt('marketing_budget')) === nbBefore - 1, JSON.stringify(cl1.json));
+  const cl2 = await ca('POST', `/api/marketing/companies/${co}/clear`, { kind: 'budget', month: '2027-02' });
+  const [[ups]] = await pool.query(`SELECT COUNT(*) AS n FROM marketing_uploads WHERE company_id = ? AND filename = 'คัดลอกจาก 2026-11'`, [co]);
+  check('clear: whole month; the copy record disappears with its last row', cl2.json.count === 2 && ups.n === 0, JSON.stringify([cl2.json, ups]));
+  const cl3 = await ca('POST', `/api/marketing/companies/${co}/clear`, { kind: 'actual', month: '2026-12' });
+  check('clear: actual month removes monthly rows too', cl3.json.count === 1 && (await cnt('marketing_actual_month')) === 2, JSON.stringify(cl3.json));
+  check('clear: bad month refused', (await ca('POST', `/api/marketing/companies/${co}/clear`, { kind: 'budget', month: '2026-13' })).status === 400);
+  check('clear: another company admin refused', (await oth('POST', `/api/marketing/companies/${co}/clear`, { kind: 'budget', month: '2026-11' })).status === 403);
 
   // ---------- everything removed -> an empty report, not an error ----------
   for (const u of (await ca('GET', `/api/marketing/companies/${co}`)).json.uploads) await ca('DELETE', `/api/marketing/companies/${co}/uploads/${u.id}`);

@@ -339,6 +339,14 @@ async function upgradeSupportKinds() {
   }
 }
 
+async function upgradeMarketing() {
+  // each upload remembers whether its amounts included VAT (stored ex-VAT: divided by 1.07)
+  if (!(await columnInfo('marketing_uploads', 'vat_included'))) {
+    await pool.query(`ALTER TABLE marketing_uploads ADD COLUMN vat_included BOOLEAN NOT NULL DEFAULT FALSE, ADD COLUMN note VARCHAR(255) NOT NULL DEFAULT ''`);
+    console.log('  marketing_uploads: added vat_included, note');
+  }
+}
+
 async function upgradeLineQuota() {
   // LINE counts a group push once per member, against the OA's monthly quota: track what we used.
   if (!(await columnInfo('company_line', 'quota_used'))) {
@@ -424,6 +432,7 @@ async function main() {
   await upgradeLineQuota();
   await upgradeLineSummary();
   await upgradeSupportKinds();
+  await upgradeMarketing();
   // First run with the saved-data fallback: every cache that has rows today
   // becomes the "last good" copy, so the fallback works before the next sync.
   const [bf] = await pool.query(

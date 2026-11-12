@@ -133,5 +133,23 @@ t('horizontal templates: 12 month columns / every day of the month; list layout 
   rows[1][1] = '5000';
   assert.strictEqual(m.parseFile('budget', rows).rows.length, 1);
 });
+t('wide fixes: unreadable header with data errors; year hint; 2-digit year window; "-" blank; total/stop rows; first-header words', () => {
+  const r1 = m.parseFile('budget', [['ช่องทาง', '2026-11', 'พ.ย', 'รวม'], ['Meta', 100, 200, 300]]);
+  assert.ok(r1.errors.some((e) => e.message.includes('พ.ย')));
+  const r2 = m.parseFile('budget', [['ช่องทาง', 'ม.ค.', 'ก.พ.'], ['Meta', 1, 2]], { year: 2027 });
+  assert.deepStrictEqual(r2.errors, []);
+  assert.deepStrictEqual(r2.rows.map((x) => x.when).sort(), ['2027-01-01', '2027-02-01']);
+  assert.strictEqual(m.parseMonth('พ.ย. 69'), '2026-11-01');
+  assert.strictEqual(m.parseMonth('พ.ย. 99'), null);
+  const r3 = m.parseFile('budget', [['รายการ', '2026-11', '2026-12'], ['Meta', '-', 50], ['Total', 1, 50], [], ['อื่น ๆ', 9, 9]]);
+  assert.deepStrictEqual(r3.errors, []);
+  assert.strictEqual(r3.rows.length, 1); // "-" blank, Total skipped, stops at the blank row
+  const r4 = m.parseFile('budget', [['', '2026-11', '2026-12'], ['Meta', 5, 6]]);
+  assert.deepStrictEqual(r4.errors, []);
+  assert.strictEqual(r4.rows.length, 2);
+  const r5 = m.parseFile('budget', [['ช่องทาง', '2026-11'], ['Facebook', 1], ['IG', 2]]);
+  assert.ok(r5.errors[0].message.includes('Facebook') && r5.errors[0].message.includes('IG'));
+  assert.ok(!r5.errors[0].message.includes('แถวที่'.repeat(2)));
+});
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

@@ -616,3 +616,18 @@ CREATE TABLE IF NOT EXISTS marketing_actual (
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
   FOREIGN KEY (upload_id) REFERENCES marketing_uploads(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;
+
+-- Monthly actual spend (a file with month columns instead of days). Counts only for a
+-- month x channel that has no daily rows; the report puts it on the last day of the month.
+CREATE TABLE IF NOT EXISTS marketing_actual_month (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  company_id INT NOT NULL,
+  upload_id INT NOT NULL,
+  spend_month DATE NOT NULL,
+  channel VARCHAR(100) NOT NULL,
+  amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+  UNIQUE KEY uq_marketing_actual_month (company_id, spend_month, channel),
+  INDEX (upload_id),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (upload_id) REFERENCES marketing_uploads(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;

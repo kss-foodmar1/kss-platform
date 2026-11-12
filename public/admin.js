@@ -2490,13 +2490,14 @@ async function renderAiQuestions(main, view = {}) {
 }
 
 // ---------- marketing budget vs actual (lib/marketing.js) ----------
-// Two standard files: monthly budget per channel, daily spend per channel.
-// The file is read in this browser; only its table goes to the server, which
-// checks the whole file and saves nothing if one row is bad.
+// Two standard files: monthly budget per channel, spend per channel (by day or by month).
+// The file is read in this browser; only its table goes to the server, which checks the
+// whole file first (preview), and saves nothing if one cell is bad.
 const MARKETING_KINDS = {
-  budget: { title: 'งบรายเดือน', cols: 'แถว = ช่องทาง · คอลัมน์ = เดือน (12 เดือน) · ช่องว่าง = ยังไม่กรอก', range: (o) => (o.budget.month_from ? `${o.budget.month_from.slice(0, 7)} – ${o.budget.month_to.slice(0, 7)}` : '–'), total: (o) => o.budget.total, rows: (o) => o.budget.rows },
-  actual: { title: 'ยอดใช้จริงรายวัน', cols: 'แถว = ช่องทาง · คอลัมน์ = วันที่ของเดือนที่เลือก · ช่องว่าง = ยังไม่กรอก', range: (o) => (o.actual.date_from ? `${thDate(o.actual.date_from)} – ${thDate(o.actual.date_to)}` : '–'), total: (o) => o.actual.total, rows: (o) => o.actual.rows },
+  budget: { title: 'งบรายเดือน', cols: 'แถว = ช่องทาง · คอลัมน์ = เดือน (12 เดือน) · ช่องว่างหรือ "-" = ยังไม่กรอก', range: (o) => (o.budget.month_from ? `${o.budget.month_from.slice(0, 7)} – ${o.budget.month_to.slice(0, 7)}` : '–'), total: (o) => o.budget.total, rows: (o) => o.budget.rows },
+  actual: { title: 'ยอดใช้จริง', cols: 'แถว = ช่องทาง · คอลัมน์ = วันที่ของเดือนที่เลือก (หรือเดือน ถ้าเลือกแบบรายเดือน) · ช่องว่างหรือ "-" = ยังไม่กรอก', range: (o) => (o.actual.date_from ? `${thDate(o.actual.date_from)} – ${thDate(o.actual.date_to)}` : '–'), total: (o) => o.actual.total, rows: (o) => o.actual.rows },
 };
+const mktMonthNow = () => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 7);
 
 async function renderMarketingPanel(container, companyId, flash = '') {
   if (!container.innerHTML) container.innerHTML = '<p class="muted">กำลังโหลด...</p>';
@@ -2504,39 +2505,79 @@ async function renderMarketingPanel(container, companyId, flash = '') {
   try {
     o = await api(`/api/marketing/companies/${companyId}`);
   } catch (err) {
-    container.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    container.innerHTML = `<div class="error-msg" role="alert">${esc(err.message)}</div>`;
     return;
   }
   const kindCard = (k) => {
     const d = MARKETING_KINDS[k];
+    const isBudget = k === 'budget';
     return `<div class="marketing-kind" data-kind="${k}">
       <h3 class="pos-h3">${d.title}</h3>
       <p class="helper-text" style="margin-top:0;">${esc(d.cols)}</p>
-      <p class="helper-text marketing-tpl" style="margin-top:0;">
-        <label>${k === 'budget' ? 'เริ่มจากเดือน' : 'เดือน'} <input type="month" class="tpl-month" value="${new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 7)}" aria-label="${k === 'budget' ? 'เดือนแรกของแม่แบบงบ' : 'เดือนของแม่แบบยอดใช้จริง'}"></label>
-        <a class="tpl-link" data-k="${k}" href="/api/marketing/template/${k}" download>ดาวน์โหลดแม่แบบตารางแนวนอน (CSV เปิดใน Excel ได้)</a>
-        · <a href="/api/marketing/template/${k}?layout=list" download>แบบรายการ (1 แถวต่อ 1 รายการ)</a>
-      </p>
-      <form class="inline-form marketing-form">
-        <input type="file" name="file" accept=".xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required aria-label="ไฟล์${esc(d.title)}">
-        <button type="submit" class="btn small primary">อัปโหลด${esc(d.title)}</button>
-      </form>
-      <p class="muted marketing-state">${d.rows(o) ? `ในระบบ: ${d.rows(o).toLocaleString('th-TH')} แถว · ${esc(d.range(o))} · รวม ${baht(d.total(o))}` : 'ยังไม่มีข้อมูล'}</p>
+      <div class="mkt-step"><span class="mkt-n">1</span><div>
+        <div class="mkt-row">
+          <label>${isBudget ? 'เดือนแรกของแม่แบบ' : 'เดือนของแม่แบบ'} <input type="month" class="tpl-month" value="${mktMonthNow()}" placeholder="${mktMonthNow()}" aria-label="${isBudget ? 'เดือนแรกของแม่แบบงบ' : 'เดือนของแม่แบบยอดใช้จริง'}"></label>
+          ${isBudget ? '' : `<label>ยอดที่มี <select class="tpl-gran" aria-label="ความละเอียดของยอดใช้จริง"><option value="day">รายวัน (ทีละวัน)</option><option value="month">รายเดือน (ยอดรวมต่อเดือน)</option></select></label>`}
+          <a class="btn small primary tpl-link" data-k="${k}" href="/api/marketing/template/${k}" download><span aria-hidden="true">⬇</span> ดาวน์โหลดแม่แบบ</a>
+        </div>
+        <p class="muted tpl-note" style="margin:6px 0 0;"></p>
+        <p class="muted" style="margin:4px 0 0;"><a class="tpl-list" data-k="${k}" href="/api/marketing/template/${k}?layout=list" download>ดาวน์โหลดแบบรายการ (1 แถวต่อ 1 รายการ) แทน</a></p>
+      </div></div>
+      <div class="mkt-step"><span class="mkt-n">2</span><div>กรอกตัวเลขเป็นบาทใต้เดือน/วันที่ ปล่อยว่างถ้ายังไม่มี (ไม่ต้องใส่ 0) · แถวหรือคอลัมน์ "รวม" ใส่ไว้ได้ ระบบไม่อ่านเป็นข้อมูล</div></div>
+      <div class="mkt-step"><span class="mkt-n">3</span><div>
+        <form class="inline-form marketing-form">
+          <input type="file" name="file" accept=".xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required aria-label="ไฟล์${esc(d.title)}">
+          <button type="submit" class="btn small">ตรวจไฟล์ก่อนบันทึก</button>
+        </form>
+        <details class="mkt-opts"><summary>ตัวเลือกเพิ่มเติม</summary>
+          <label class="mkt-check"><input type="checkbox" name="vat"> ตัวเลขในไฟล์นี้รวม VAT แล้ว (ระบบหาร 1.07 เก็บเป็นยอดก่อน VAT)</label>
+          <label>ปี (ใช้เมื่อหัวคอลัมน์เป็น "ม.ค." "ก.พ." ที่ไม่มีปี) <input type="number" name="year" min="2000" max="2700" placeholder="เช่น 2026 หรือ 2569" style="width:130px"></label>
+        </details>
+      </div></div>
+      <div class="mkt-preview"></div>
+      <p class="muted marketing-state">${d.rows(o) ? `ในระบบ: ${d.rows(o).toLocaleString('th-TH')} แถว · ${esc(d.range(o))} · รวม ${baht(d.total(o))} (ก่อน VAT)` : 'ยังไม่มีข้อมูล'}</p>
     </div>`;
   };
+  const chOpts = o.channels.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  const bMonths = o.budget.months || [];
+  const kindName = (u) => (u.kind === 'budget' ? 'งบรายเดือน' : u.note === 'รายเดือน' ? 'ยอดใช้จริงรายเดือน' : 'ยอดใช้จริงรายวัน');
   container.innerHTML = `
-    <p class="helper-text" style="margin-top:0;">ใช้ไฟล์แม่แบบ 2 ไฟล์ (Excel .xlsx หรือ CSV) กรอกเป็นตารางแนวนอน แถวละช่องทาง ไม่ต้องพิมพ์ชื่อเดือนหรือวันที่ซ้ำ — ไฟล์ถูกอ่านในเครื่องของคุณ ระบบตรวจทั้งไฟล์ก่อนบันทึก ถ้ามีแถวที่อ่านไม่ได้จะบอกเลขแถวและไม่บันทึกอะไรเลย · อัปโหลดซ้ำได้ ไม่นับซ้ำ: งบจะแทนที่งบเดือนและช่องทางเดิม ยอดใช้จริงจะแทนที่วันและช่องทางเดิม · ช่องทางที่เขียนต่างกัน เช่น facebook และ Meta ระบบรวมให้เป็นช่องทางเดียว</p>
+    <p class="helper-text" style="margin-top:0;">ข้อมูลการตลาดมี 2 ไฟล์: งบรายเดือน และยอดใช้จริง ทั้งคู่เป็นตารางแนวนอน (แถวละช่องทาง) เปิดแก้ใน Excel ได้ · ไฟล์ถูกอ่านในเครื่องของคุณ ระบบตรวจทั้งไฟล์และแสดงตัวอย่างก่อนบันทึก ถ้ามีช่องที่อ่านไม่ได้จะบอกว่าแถวและคอลัมน์ไหน และไม่บันทึกอะไรเลย · อัปโหลดซ้ำได้ ไม่นับซ้ำ: ข้อมูลเดือน/วันและช่องทางเดิมจะถูกแทนที่ · ช่องทางที่เขียนต่างกัน เช่น facebook และ Meta ระบบรวมให้เป็นช่องทางเดียว</p>
     <div class="marketing-msg" role="status">${flash}</div>
     <div class="marketing-kinds">${kindCard('budget')}${kindCard('actual')}</div>
+    <h3 class="pos-h3">จัดการข้อมูลรายเดือน</h3>
+    <div class="marketing-kinds">
+      <div class="marketing-kind mkt-manage" data-act="copy">
+        <h4 class="mkt-h4">คัดลอกงบจากเดือนก่อน</h4>
+        <p class="helper-text" style="margin-top:0;">เติมงบเดือนใหม่จากเดือนที่มีอยู่ เฉพาะช่องทางที่เดือนนั้นยังไม่มีงบ แก้ตัวเลขทีหลังได้โดยอัปโหลดทับ</p>
+        <div class="mkt-row">
+          <label>จากเดือน <select name="from" ${bMonths.length ? '' : 'disabled'}>${bMonths.map((m) => `<option>${m}</option>`).join('') || '<option>ยังไม่มีงบ</option>'}</select></label>
+          <label>ไปเดือน <input type="month" name="to" value="${mktMonthNow()}"></label>
+          <button type="button" class="btn small mkt-copy-check" ${bMonths.length ? '' : 'disabled'}>ดูก่อนคัดลอก</button>
+        </div>
+        <div class="mkt-manage-out"></div>
+      </div>
+      <div class="marketing-kind mkt-manage" data-act="clear">
+        <h4 class="mkt-h4">ล้างข้อมูลของเดือนหนึ่ง</h4>
+        <p class="helper-text" style="margin-top:0;">ใช้เมื่ออัปโหลดผิดเดือนหรือช่องทาง ลบได้ทั้งเดือนหรือเฉพาะช่องทางเดียว</p>
+        <div class="mkt-row">
+          <label>ชนิด <select name="kind"><option value="budget">งบรายเดือน</option><option value="actual">ยอดใช้จริง</option></select></label>
+          <label>เดือน <input type="month" name="month" value="${mktMonthNow()}"></label>
+          <label>ช่องทาง <select name="channel"><option value="">ทุกช่องทาง</option>${chOpts}</select></label>
+          <button type="button" class="btn small mkt-clear-check">ดูก่อนลบ</button>
+        </div>
+        <div class="mkt-manage-out"></div>
+      </div>
+    </div>
     ${
       o.uploads.length
         ? `<h3 class="pos-h3">ไฟล์ที่อัปโหลด</h3>
-           <div class="table-scroll"><table class="mini-table"><thead><tr><th>ชนิด</th><th>ไฟล์</th><th>ช่วง</th><th class="num">แถว</th><th class="num">รวม</th><th>อัปโหลดเมื่อ</th><th></th></tr></thead><tbody>${o.uploads
+           <div class="table-scroll"><table class="mini-table mkt-uploads"><thead><tr><th>ชนิด</th><th>ไฟล์</th><th>ช่วง</th><th class="num">แถว</th><th class="num">รวม</th><th>อัปโหลดเมื่อ</th><th></th></tr></thead><tbody>${o.uploads
              .map(
-               (u) => `<tr data-id="${u.id}"><td>${esc(MARKETING_KINDS[u.kind] ? MARKETING_KINDS[u.kind].title : u.kind)}</td><td>${esc(u.filename)}</td>
-                 <td>${esc(u.kind === 'budget' ? `${(u.date_from || '').slice(0, 7)} – ${(u.date_to || '').slice(0, 7)}` : `${thDate(u.date_from)} – ${thDate(u.date_to)}`)}</td>
-                 <td class="num">${Number(u.row_count).toLocaleString('th-TH')}</td><td class="num">${baht(u.total_amount)}</td>
-                 <td>${esc(fmtDateTime(u.created_at))}${u.uploaded_by_email ? `<br><span class="muted">${esc(u.uploaded_by_email)}</span>` : ''}</td>
+               (u) => `<tr data-id="${u.id}"><td data-label="ชนิด">${esc(kindName(u))}</td><td data-label="ไฟล์">${esc(u.filename)}${u.vat_included ? ' <span class="muted">(ตัดVAT 7% แล้ว)</span>' : ''}</td>
+                 <td data-label="ช่วง">${esc(u.kind === 'budget' || u.note === 'รายเดือน' ? `${(u.date_from || '').slice(0, 7)} – ${(u.date_to || '').slice(0, 7)}` : `${thDate(u.date_from)} – ${thDate(u.date_to)}`)}</td>
+                 <td class="num" data-label="แถว">${Number(u.row_count).toLocaleString('th-TH')}</td><td class="num" data-label="รวม">${baht(u.total_amount)}</td>
+                 <td data-label="อัปโหลดเมื่อ">${esc(fmtDateTime(u.created_at))}${u.uploaded_by_email ? `<br><span class="muted">${esc(u.uploaded_by_email)}</span>` : ''}</td>
                  <td><button type="button" class="btn small danger marketing-del" aria-label="ลบไฟล์ ${esc(u.filename)}">ลบ</button></td></tr>`
              )
              .join('')}</tbody></table></div>
@@ -2544,20 +2585,55 @@ async function renderMarketingPanel(container, companyId, flash = '') {
         : ''
     }`;
   const msg = (html) => { container.querySelector('.marketing-msg').innerHTML = html; };
+  const errBox = (err) => {
+    const all = (err.data && err.data.details) || [];
+    const det = all.slice(0, 20).map((d) => `<li>${d.row ? `แถว ${d.row}: ` : ''}${esc(d.message)}</li>`).join('');
+    const more = all.length - 20 + ((err.data && err.data.overflow) || 0);
+    return `<div class="error-msg" role="alert">${esc(err.message)}${det ? `<ul class="marketing-errors">${det}${more > 0 ? `<li>และอีก ${more} รายการ</li>` : ''}</ul>` : ''}</div>`;
+  };
 
-  container.querySelectorAll('.marketing-tpl').forEach((box) => {
+  // template download: month + (for actual) day/month spend
+  container.querySelectorAll('.marketing-kind[data-kind]').forEach((box) => {
+    const k = box.dataset.kind;
     const link = box.querySelector('.tpl-link');
     const input = box.querySelector('.tpl-month');
-    const sync = () => { link.href = `/api/marketing/template/${link.dataset.k}?${link.dataset.k === 'budget' ? 'from' : 'month'}=${encodeURIComponent(input.value || '')}`; };
+    const gran = box.querySelector('.tpl-gran');
+    const note = box.querySelector('.tpl-note');
+    const sync = () => {
+      const v = input.value || '';
+      const monthly = gran && gran.value === 'month';
+      const q = k === 'budget' || monthly ? `from=${encodeURIComponent(v)}` : `month=${encodeURIComponent(v)}`;
+      link.href = `/api/marketing/template/${k}?${q}${monthly ? '&granularity=month' : ''}`;
+      note.textContent = !v ? 'เลือกเดือนก่อน' : k === 'budget' || monthly ? `ได้ไฟล์ที่มี 12 คอลัมน์ ตั้งแต่ ${v} ไปอีก 11 เดือน` : `ได้ไฟล์ที่มีทุกวันของเดือน ${v} (วันที่ 1 ถึงวันสุดท้ายของเดือน)`;
+    };
     input.addEventListener('change', sync);
+    if (gran) gran.addEventListener('change', sync);
     sync();
   });
+
+  // check (dry run) -> preview -> save
+  const previewHtml = (p) => {
+    const unit = p.kind === 'budget' || p.monthly ? 'เดือน' : 'วัน';
+    const chans = p.channels.map((c) => `<li>${c.renamed ? `${esc(c.raw.join(', '))} → <b>${esc(c.channel)}</b>` : `<b>${esc(c.channel)}</b>`}${c.is_new ? ' <span class="mkt-tag">ช่องทางใหม่</span>' : ''}</li>`).join('');
+    const months = p.months.slice(0, 36).map((m) => `<tr><td>${esc(m.month)}</td><td class="num">${m.rows}</td><td class="num">${baht(m.total)}</td></tr>`).join('');
+    return `<div class="mkt-pv"><p><b>ตรวจแล้ว ยังไม่ได้บันทึก</b> — อ่านได้ ${p.months.length} เดือน · ${p.channels.length} ช่องทาง · ${p.rows.toLocaleString('th-TH')} รายการ · รวม ${baht(p.total)}${p.vat_included ? ' (หลังตัด VAT 7%)' : ' (ถือเป็นยอดก่อน VAT)'}</p>
+      ${p.warnings.length ? `<div class="warn-msg" role="status"><ul class="marketing-errors">${p.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}
+      <div class="mkt-pv-grid">
+        <div><div class="muted">ช่องทางที่อ่านได้ (ชื่อในไฟล์ → ชื่อในระบบ)</div><ul class="mkt-list">${chans}</ul></div>
+        <div class="table-scroll"><table class="mini-table"><thead><tr><th>${unit === 'เดือน' ? 'เดือน' : 'เดือน (ยอดรายวัน)'}</th><th class="num">รายการ</th><th class="num">รวม</th></tr></thead><tbody>${months}</tbody></table></div>
+      </div>
+      ${p.skipped.length ? `<p class="muted">คอลัมน์ที่ข้าม (ไม่มีตัวเลข): ${p.skipped.map(esc).join(', ')}</p>` : ''}
+      <div class="mkt-row"><button type="button" class="btn small primary mkt-save">บันทึก</button><button type="button" class="btn small mkt-cancel">ยกเลิก</button></div></div>`;
+  };
   container.querySelectorAll('.marketing-form').forEach((form) => {
+    const box = form.closest('.marketing-kind');
+    const kind = box.dataset.kind;
+    const pv = box.querySelector('.mkt-preview');
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const kind = form.closest('.marketing-kind').dataset.kind;
       const file = form.file.files[0];
       if (!file) return;
+      pv.innerHTML = '';
       msg('<p class="muted">กำลังอ่านไฟล์...</p>');
       let table;
       try {
@@ -2570,21 +2646,74 @@ async function renderMarketingPanel(container, companyId, flash = '') {
           table = PosParse.parseCsv(text, PosParse.detectDelimiter(text));
         }
       } catch (err) {
-        msg(`<div class="error-msg">${esc(err.message)}</div>`);
+        msg(`<div class="error-msg" role="alert">${esc(err.message)}</div>`);
         return;
       }
+      const opts = box.querySelector('.mkt-opts');
+      const body = { kind, filename: file.name, table, vat_included: opts.querySelector('[name=vat]').checked, year: Number(opts.querySelector('[name=year]').value) || undefined };
       const btn = form.querySelector('button');
       btn.disabled = true;
       try {
-        const r = await api(`/api/marketing/companies/${companyId}/uploads`, { method: 'POST', body: JSON.stringify({ kind, filename: file.name, table }) });
-        renderMarketingPanel(container, companyId, `<div class="ok-msg">บันทึกแล้ว ${r.rows.toLocaleString('th-TH')} แถว (${esc(MARKETING_KINDS[kind].title)}) · รวม ${baht(r.total)} — Widget "การตลาด" ในคลัง Widget ใช้ข้อมูลนี้</div>`);
+        const p = await api(`/api/marketing/companies/${companyId}/uploads`, { method: 'POST', body: JSON.stringify({ ...body, dry_run: true }) });
+        msg('');
+        pv.innerHTML = previewHtml(p);
+        pv.querySelector('.mkt-cancel').addEventListener('click', () => { pv.innerHTML = ''; btn.disabled = false; });
+        const save = pv.querySelector('.mkt-save');
+        save.addEventListener('click', async () => {
+          save.disabled = true;
+          try {
+            const r = await api(`/api/marketing/companies/${companyId}/uploads`, { method: 'POST', body: JSON.stringify(body) });
+            renderMarketingPanel(container, companyId, `<div class="ok-msg">บันทึกแล้ว — อ่านได้ ${r.month_count} เดือน · ${r.channel_count} ช่องทาง · ${r.rows.toLocaleString('th-TH')} รายการ · รวม ${baht(r.total)}${r.replaced ? ` · แทนที่ข้อมูลเดิม ${r.replaced} รายการ` : ''} — Widget "การตลาด" ในคลัง Widget ใช้ข้อมูลนี้</div>`);
+          } catch (err) {
+            msg(errBox(err));
+            save.disabled = false;
+          }
+        });
       } catch (err) {
-        const det = ((err.data && err.data.details) || []).slice(0, 20).map((d) => `<li>${d.row ? `แถว ${d.row}: ` : ''}${esc(d.message)}</li>`).join('');
-        msg(`<div class="error-msg">${esc(err.message)}${det ? `<ul class="marketing-errors">${det}</ul>` : ''}</div>`);
-        btn.disabled = false;
+        msg(errBox(err));
       }
+      btn.disabled = false;
     });
   });
+
+  // copy budget / clear month: look first, then confirm
+  const man = (act) => container.querySelector(`.mkt-manage[data-act="${act}"]`);
+  const confirmBox = (out, text, label, run) => {
+    out.innerHTML = `<div class="warn-msg" role="status">${text}</div><div class="mkt-row"><button type="button" class="btn small ${label.danger ? 'danger' : 'primary'} mkt-go">${label.go}</button><button type="button" class="btn small mkt-no">ยกเลิก</button></div>`;
+    out.querySelector('.mkt-no').addEventListener('click', () => { out.innerHTML = ''; });
+    out.querySelector('.mkt-go').addEventListener('click', async (e) => { e.target.disabled = true; await run(); });
+  };
+  const copyBox = man('copy');
+  copyBox.querySelector('.mkt-copy-check').addEventListener('click', async () => {
+    const out = copyBox.querySelector('.mkt-manage-out');
+    const body = { from: copyBox.querySelector('[name=from]').value, to: copyBox.querySelector('[name=to]').value };
+    try {
+      const p = await api(`/api/marketing/companies/${companyId}/copy-budget`, { method: 'POST', body: JSON.stringify({ ...body, dry_run: true }) });
+      if (!p.copied) { out.innerHTML = `<div class="warn-msg" role="status">เดือน ${esc(p.to)} มีงบครบทุกช่องทางของเดือน ${esc(p.from)} แล้ว ไม่มีอะไรให้คัดลอก</div>`; return; }
+      confirmBox(out, `จะคัดลอกงบ ${p.copied} ช่องทาง (${p.channels.map(esc).join(', ')}) รวม ${baht(p.total)} จาก ${esc(p.from)} ไป ${esc(p.to)}${p.skipped ? ` · ข้าม ${p.skipped} ช่องทางที่เดือนนั้นมีงบอยู่แล้ว` : ''}`, { go: 'ยืนยันคัดลอก' }, async () => {
+        try {
+          await api(`/api/marketing/companies/${companyId}/copy-budget`, { method: 'POST', body: JSON.stringify(body) });
+          renderMarketingPanel(container, companyId, `<div class="ok-msg">คัดลอกงบ ${p.copied} ช่องทางไปเดือน ${esc(p.to)} แล้ว</div>`);
+        } catch (err) { msg(errBox(err)); }
+      });
+    } catch (err) { out.innerHTML = errBox(err); }
+  });
+  const clearBox = man('clear');
+  clearBox.querySelector('.mkt-clear-check').addEventListener('click', async () => {
+    const out = clearBox.querySelector('.mkt-manage-out');
+    const body = { kind: clearBox.querySelector('[name=kind]').value, month: clearBox.querySelector('[name=month]').value, channel: clearBox.querySelector('[name=channel]').value || undefined };
+    try {
+      const p = await api(`/api/marketing/companies/${companyId}/clear`, { method: 'POST', body: JSON.stringify({ ...body, dry_run: true }) });
+      if (!p.count) { out.innerHTML = `<div class="warn-msg" role="status">ไม่พบข้อมูล${body.kind === 'budget' ? 'งบ' : 'ยอดใช้จริง'}ของเดือน ${esc(p.month)}${p.channel ? ` ช่องทาง ${esc(p.channel)}` : ''}</div>`; return; }
+      confirmBox(out, `จะลบ${body.kind === 'budget' ? 'งบ' : 'ยอดใช้จริง'} ${p.count} รายการ ของเดือน ${esc(p.month)}${p.channel ? ` ช่องทาง ${esc(p.channel)}` : ' ทุกช่องทาง'} — ลบแล้วกู้คืนไม่ได้ (ต้องอัปโหลดไฟล์ใหม่)`, { go: 'ยืนยันลบ', danger: true }, async () => {
+        try {
+          await api(`/api/marketing/companies/${companyId}/clear`, { method: 'POST', body: JSON.stringify(body) });
+          renderMarketingPanel(container, companyId, `<div class="ok-msg">ลบข้อมูลเดือน ${esc(p.month)} แล้ว ${p.count} รายการ</div>`);
+        } catch (err) { msg(errBox(err)); }
+      });
+    } catch (err) { out.innerHTML = errBox(err); }
+  });
+
   container.querySelectorAll('.marketing-del').forEach((b) =>
     b.addEventListener('click', async () => {
       const id = b.closest('tr').dataset.id;
@@ -2598,7 +2727,7 @@ async function renderMarketingPanel(container, companyId, flash = '') {
         await api(`/api/marketing/companies/${companyId}/uploads/${id}`, { method: 'DELETE' });
         renderMarketingPanel(container, companyId, '<div class="ok-msg">ลบไฟล์แล้ว</div>');
       } catch (err) {
-        msg(`<div class="error-msg">${esc(err.message)}</div>`);
+        msg(errBox(err));
       }
     })
   );
