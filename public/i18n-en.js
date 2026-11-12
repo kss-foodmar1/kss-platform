@@ -6,6 +6,10 @@
 window.I18N_EN = {
   exact: {
     // ---- marketing widgets (catalog) ----
+    'งบรวม เทียบยอดใช้จริง รายเดือน': 'Total budget vs actual spend by month',
+    'กราฟแท่งต่อเดือน: งบรวมทุกช่องทางข้างยอดใช้จริง เลือกช่วง "ปีนี้ (ทั้งปี)" หรือ 6/12 เดือน เพื่อดูหลายเดือนพร้อมกัน': 'Monthly bars: total budget across all channels beside actual spend. Pick "This year (whole)" or 6/12 months to see several months at once',
+    'งบรวม': 'Total budget',
+    'ทุกช่องทางรวมกัน • เดือนที่ยังไม่จบแสดงยอดใช้จริงถึงวันที่ข้อมูลล่าสุด เทียบกับงบทั้งเดือน • ถ้าช่วงที่เลือกตัดกลางเดือน แท่งของเดือนนั้นจะนับเฉพาะวันที่อยู่ในช่วง • ยอดใช้จริงเป็นยอดก่อน VAT': 'All channels combined • A month still running shows spend up to the latest data date against the whole month\'s budget • If the selected range cuts a month, that month\'s bars count only the days in the range • Actual spend is before VAT',
     'งบการตลาด เทียบยอดใช้จริง': 'Marketing budget vs actual spend',
     'งบรายเดือน ใช้ไปแล้ว คงเหลือ และใช้ไปเร็วกว่าหรือช้ากว่าแผน จากไฟล์งบและยอดใช้จริงที่อัปโหลด': 'Monthly budget, spent, remaining and whether spending is ahead of or behind plan, from the uploaded budget and actual-spend files',
     'การตลาด': 'Marketing',
