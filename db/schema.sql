@@ -570,3 +570,49 @@ CREATE TABLE IF NOT EXISTS user_prefs (
   PRIMARY KEY (user_id, pref_key),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;
+
+-- Marketing budget vs actual (lib/marketing.js). Two standard files: a monthly
+-- budget per channel and the daily spend per channel. A later file replaces the
+-- same month x channel (budget) or day x channel (actual); each row remembers
+-- the upload that last wrote it, so deleting an upload removes exactly those.
+CREATE TABLE IF NOT EXISTS marketing_uploads (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  company_id INT NOT NULL,
+  kind VARCHAR(10) NOT NULL,
+  filename VARCHAR(255) NOT NULL,
+  row_count INT NOT NULL DEFAULT 0,
+  date_from DATE NULL,
+  date_to DATE NULL,
+  total_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+  uploaded_by INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX (company_id),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS marketing_budget (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  company_id INT NOT NULL,
+  upload_id INT NOT NULL,
+  budget_month DATE NOT NULL,
+  channel VARCHAR(100) NOT NULL,
+  amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+  UNIQUE KEY uq_marketing_budget (company_id, budget_month, channel),
+  INDEX (upload_id),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (upload_id) REFERENCES marketing_uploads(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS marketing_actual (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  company_id INT NOT NULL,
+  upload_id INT NOT NULL,
+  spend_date DATE NOT NULL,
+  channel VARCHAR(100) NOT NULL,
+  amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+  note VARCHAR(500) NOT NULL DEFAULT '',
+  UNIQUE KEY uq_marketing_actual (company_id, spend_date, channel),
+  INDEX (upload_id),
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+  FOREIGN KEY (upload_id) REFERENCES marketing_uploads(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;

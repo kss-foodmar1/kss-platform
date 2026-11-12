@@ -1,0 +1,69 @@
+// Marketing budget vs actual — upload, list, delete, templates. KSS staff for
+// any company; a company admin for their own company only. The computed report
+// is served like any other source by routes/dashboards.js ('marketing').
+//
+//   GET    /api/marketing/template/:kind               budget | actual  (CSV, opens in Excel)
+//   GET    /api/marketing/companies/:id                uploads + what is loaded
+//   POST   /api/marketing/companies/:id/uploads        { kind, filename, table: [[cell,...],...] }
+//   DELETE /api/marketing/companies/:id/uploads/:uid
+const express = require('express');
+const { requireAuth } = require('../middleware/auth');
+const { wrap } = require('../lib/access');
+const marketing = require('../lib/marketing');
+const pool = require('../db/pool');
+
+const router = express.Router();
+
+async function companyAccess(req, res, next) {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(404).json({ error: 'ไม่พบบริษัทนี้' });
+  const u = req.user;
+  const ok = u.role === 'kss_superadmin' || (u.role === 'company_admin' && u.company_id === id);
+  if (!ok) return res.status(403).json({ error: 'ไม่มีสิทธิ์จัดการข้อมูลการตลาดของบริษัทนี้' });
+  const [[c]] = await pool.query(`SELECT id FROM companies WHERE id = ?`, [id]);
+  if (!c) return res.status(404).json({ error: 'ไม่พบบริษัทนี้' });
+  req.companyId = id;
+  next();
+}
+
+const send = (fn) =>
+  wrap(async (req, res) => {
+    try {
+      await fn(req, res);
+    } catch (err) {
+      if (err.status) return res.status(err.status).json({ error: err.message, details: err.details });
+      throw err;
+    }
+  });
+
+router.get('/template/:kind', requireAuth, (req, res) => {
+  const t = marketing.templateCsv(req.params.kind);
+  if (!t) return res.status(404).json({ error: 'ไม่พบแม่แบบนี้' });
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="${t.filename}"`);
+  res.send(t.body);
+});
+
+router.use('/companies/:id', requireAuth, wrap(companyAccess));
+
+router.get('/companies/:id', send(async (req, res) => res.json(await marketing.overview(req.companyId))));
+
+router.post(
+  '/companies/:id/uploads',
+  send(async (req, res) => {
+    const { kind, filename, table } = req.body || {};
+    const result = await marketing.importUpload(req.companyId, req.user.id, { kind, filename, table });
+    res.json({ ok: true, ...result, overview: await marketing.overview(req.companyId) });
+  })
+);
+
+router.delete(
+  '/companies/:id/uploads/:uid',
+  send(async (req, res) => {
+    const ok = await marketing.deleteUpload(req.companyId, Number(req.params.uid));
+    if (!ok) return res.status(404).json({ error: 'ไม่พบไฟล์นี้' });
+    res.json({ ok: true, overview: await marketing.overview(req.companyId) });
+  })
+);
+
+module.exports = router;

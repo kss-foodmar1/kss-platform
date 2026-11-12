@@ -1024,10 +1024,12 @@ async function renderCompanyDetail(main, companyId, tab) {
   } else if (tab === 'data') {
     body.innerHTML = `
       <section class="admin-card" id="co-pos"><h2>ยอดขาย POS (Foodstory และ POS ที่ไม่มี API)</h2><div class="pos-panel"></div><div class="ck-branch-panel"></div></section>
+      <section class="admin-card" id="co-marketing"><h2>งบการตลาด เทียบยอดใช้จริง</h2><div class="marketing-panel"></div></section>
       <section class="admin-card" id="fmh-files"><h2>ข้อมูลย้อนหลังจากไฟล์ FMH (เกิน 90 วัน)</h2><div class="fmh-files-panel"></div></section>`;
     renderPosPanel(body.querySelector('.pos-panel'), companyId);
     renderCkBranchPanel(body.querySelector('.ck-branch-panel'), companyId);
     renderFmhFilesPanel(body.querySelector('.fmh-files-panel'), companyId);
+    renderMarketingPanel(body.querySelector('.marketing-panel'), companyId);
     if (focus === 'fmh-files') body.querySelector('#fmh-files').scrollIntoView({ block: 'start' });
   } else if (tab === 'line') {
     body.innerHTML = '<section class="admin-card" id="line-bot"><h2>LINE แจ้งเตือนผู้บริหาร</h2><div class="line-panel"></div></section>';
@@ -1301,12 +1303,14 @@ async function renderMyDashboards(main, companyId) {
       <p class="muted settings-lead">ทุกแหล่งข้อมูลที่ Dashboard ใช้ อยู่ในหน้านี้</p>
       <section class="admin-card" id="fmh-key"><h2>FMH API</h2><p class="helper-text" style="margin-top:0">API Key จะถูกเข้ารหัสก่อนเก็บ และไม่แสดงค่าจริงอีกหลังบันทึก</p><div class="fmh-key-slot"></div></section>
       <section class="admin-card" id="pos-sales"><h2>ยอดขาย POS (Foodstory และ POS ที่ไม่มี API)</h2><div class="pos-panel"></div><div class="ck-branch-panel"></div></section>
+      <section class="admin-card" id="marketing"><h2>งบการตลาด เทียบยอดใช้จริง</h2><div class="marketing-panel"></div></section>
       <section class="admin-card" id="fmh-files"><h2>ข้อมูลย้อนหลังจากไฟล์ FMH (เกิน 90 วัน)</h2><div class="fmh-files-panel"></div></section>`;
     renderFmhKeyPanel(body.querySelector('.fmh-key-slot'), companyId, () => {});
     renderPosPanel(body.querySelector('.pos-panel'), companyId);
     renderCkBranchPanel(body.querySelector('.ck-branch-panel'), companyId);
     renderFmhFilesPanel(body.querySelector('.fmh-files-panel'), companyId);
-    const target = focus && body.querySelector({ pos: '#pos-sales', 'fmh-files': '#fmh-files' }[focus]);
+    renderMarketingPanel(body.querySelector('.marketing-panel'), companyId);
+    const target = focus && body.querySelector({ pos: '#pos-sales', marketing: '#marketing', 'fmh-files': '#fmh-files' }[focus]);
     if (target) target.scrollIntoView({ block: 'start' });
   } else if (tab === 'alerts') {
     body.innerHTML = `
@@ -2483,4 +2487,107 @@ async function renderAiQuestions(main, view = {}) {
       msg.textContent = err.message;
     }
   });
+}
+
+// ---------- marketing budget vs actual (lib/marketing.js) ----------
+// Two standard files: monthly budget per channel, daily spend per channel.
+// The file is read in this browser; only its table goes to the server, which
+// checks the whole file and saves nothing if one row is bad.
+const MARKETING_KINDS = {
+  budget: { title: 'งบรายเดือน', cols: 'เดือน · ช่องทาง · จำนวนเงิน (บาท)', range: (o) => (o.budget.month_from ? `${o.budget.month_from.slice(0, 7)} – ${o.budget.month_to.slice(0, 7)}` : '–'), total: (o) => o.budget.total, rows: (o) => o.budget.rows },
+  actual: { title: 'ยอดใช้จริงรายวัน', cols: 'วันที่ · ช่องทาง · จำนวนเงิน (บาท) · หมายเหตุ', range: (o) => (o.actual.date_from ? `${thDate(o.actual.date_from)} – ${thDate(o.actual.date_to)}` : '–'), total: (o) => o.actual.total, rows: (o) => o.actual.rows },
+};
+
+async function renderMarketingPanel(container, companyId, flash = '') {
+  if (!container.innerHTML) container.innerHTML = '<p class="muted">กำลังโหลด...</p>';
+  let o;
+  try {
+    o = await api(`/api/marketing/companies/${companyId}`);
+  } catch (err) {
+    container.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
+    return;
+  }
+  const kindCard = (k) => {
+    const d = MARKETING_KINDS[k];
+    return `<div class="marketing-kind" data-kind="${k}">
+      <h3 class="pos-h3">${d.title}</h3>
+      <p class="helper-text" style="margin-top:0;">คอลัมน์: ${esc(d.cols)} · <a href="/api/marketing/template/${k}" download>ดาวน์โหลดแม่แบบ (CSV เปิดใน Excel ได้)</a></p>
+      <form class="inline-form marketing-form">
+        <input type="file" name="file" accept=".xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required aria-label="ไฟล์${esc(d.title)}">
+        <button type="submit" class="btn small primary">อัปโหลด${esc(d.title)}</button>
+      </form>
+      <p class="muted marketing-state">${d.rows(o) ? `ในระบบ: ${d.rows(o).toLocaleString('th-TH')} แถว · ${esc(d.range(o))} · รวม ${baht(d.total(o))}` : 'ยังไม่มีข้อมูล'}</p>
+    </div>`;
+  };
+  container.innerHTML = `
+    <p class="helper-text" style="margin-top:0;">ใช้ไฟล์แม่แบบ 2 ไฟล์ (Excel .xlsx หรือ CSV) — ไฟล์ถูกอ่านในเครื่องของคุณ ระบบตรวจทั้งไฟล์ก่อนบันทึก ถ้ามีแถวที่อ่านไม่ได้จะบอกเลขแถวและไม่บันทึกอะไรเลย · อัปโหลดซ้ำได้ ไม่นับซ้ำ: งบจะแทนที่งบเดือนและช่องทางเดิม ยอดใช้จริงจะแทนที่วันและช่องทางเดิม · ช่องทางที่เขียนต่างกัน เช่น facebook และ Meta ระบบรวมให้เป็นช่องทางเดียว</p>
+    <div class="marketing-msg" role="status">${flash}</div>
+    <div class="marketing-kinds">${kindCard('budget')}${kindCard('actual')}</div>
+    ${
+      o.uploads.length
+        ? `<h3 class="pos-h3">ไฟล์ที่อัปโหลด</h3>
+           <div class="table-scroll"><table class="mini-table"><thead><tr><th>ชนิด</th><th>ไฟล์</th><th>ช่วง</th><th class="num">แถว</th><th class="num">รวม</th><th>อัปโหลดเมื่อ</th><th></th></tr></thead><tbody>${o.uploads
+             .map(
+               (u) => `<tr data-id="${u.id}"><td>${esc(MARKETING_KINDS[u.kind] ? MARKETING_KINDS[u.kind].title : u.kind)}</td><td>${esc(u.filename)}</td>
+                 <td>${esc(u.kind === 'budget' ? `${(u.date_from || '').slice(0, 7)} – ${(u.date_to || '').slice(0, 7)}` : `${thDate(u.date_from)} – ${thDate(u.date_to)}`)}</td>
+                 <td class="num">${Number(u.row_count).toLocaleString('th-TH')}</td><td class="num">${baht(u.total_amount)}</td>
+                 <td>${esc(fmtDateTime(u.created_at))}${u.uploaded_by_email ? `<br><span class="muted">${esc(u.uploaded_by_email)}</span>` : ''}</td>
+                 <td><button type="button" class="btn small danger marketing-del" aria-label="ลบไฟล์ ${esc(u.filename)}">ลบ</button></td></tr>`
+             )
+             .join('')}</tbody></table></div>
+           <p class="muted">ลบไฟล์ = ลบแถวที่ไฟล์นั้นเป็นคนบันทึกล่าสุดเท่านั้น</p>`
+        : ''
+    }`;
+  const msg = (html) => { container.querySelector('.marketing-msg').innerHTML = html; };
+
+  container.querySelectorAll('.marketing-form').forEach((form) => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const kind = form.closest('.marketing-kind').dataset.kind;
+      const file = form.file.files[0];
+      if (!file) return;
+      msg('<p class="muted">กำลังอ่านไฟล์...</p>');
+      let table;
+      try {
+        const buf = await file.arrayBuffer();
+        const isZip = new Uint8Array(buf)[0] === 0x50 && new Uint8Array(buf)[1] === 0x4b;
+        if (!isZip && /\.xls$/i.test(file.name)) throw new Error('ไฟล์ .xls รุ่นเก่ายังไม่รองรับ — เปิดใน Excel แล้ว Save As เป็น .xlsx หรือ CSV');
+        if (isZip) table = await FmhFile.readXlsx(buf);
+        else {
+          const text = PosParse.decode(buf);
+          table = PosParse.parseCsv(text, PosParse.detectDelimiter(text));
+        }
+      } catch (err) {
+        msg(`<div class="error-msg">${esc(err.message)}</div>`);
+        return;
+      }
+      const btn = form.querySelector('button');
+      btn.disabled = true;
+      try {
+        const r = await api(`/api/marketing/companies/${companyId}/uploads`, { method: 'POST', body: JSON.stringify({ kind, filename: file.name, table }) });
+        renderMarketingPanel(container, companyId, `<div class="ok-msg">บันทึกแล้ว ${r.rows.toLocaleString('th-TH')} แถว (${esc(MARKETING_KINDS[kind].title)}) · รวม ${baht(r.total)} — Widget "การตลาด" ในคลัง Widget ใช้ข้อมูลนี้</div>`);
+      } catch (err) {
+        const det = ((err.data && err.data.details) || []).slice(0, 20).map((d) => `<li>${d.row ? `แถว ${d.row}: ` : ''}${esc(d.message)}</li>`).join('');
+        msg(`<div class="error-msg">${esc(err.message)}${det ? `<ul class="marketing-errors">${det}</ul>` : ''}</div>`);
+        btn.disabled = false;
+      }
+    });
+  });
+  container.querySelectorAll('.marketing-del').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const id = b.closest('tr').dataset.id;
+      if (!b.dataset.sure) {
+        b.dataset.sure = '1';
+        b.textContent = 'กดอีกครั้งเพื่อลบ';
+        setTimeout(() => { b.dataset.sure = ''; b.textContent = 'ลบ'; }, 4000);
+        return;
+      }
+      try {
+        await api(`/api/marketing/companies/${companyId}/uploads/${id}`, { method: 'DELETE' });
+        renderMarketingPanel(container, companyId, '<div class="ok-msg">ลบไฟล์แล้ว</div>');
+      } catch (err) {
+        msg(`<div class="error-msg">${esc(err.message)}</div>`);
+      }
+    })
+  );
 }
