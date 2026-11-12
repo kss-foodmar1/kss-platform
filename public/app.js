@@ -4166,12 +4166,18 @@ function renderHeatmap(body, rows, cfg) {
     const rs = cells.get(rk + '\u0001' + ck);
     if (rs) val.set(rk + '\u0001' + ck, evalMetric(cfg.value, rs));
   }));
+  // plain: a table that reads like the sheet it came from: full figures, no shading, rows ranked and
+  // totalled by the sum of their cells (the cell's metric may be a max, e.g. a monthly budget repeated on every day)
+  const plain = !!cfg.plain;
+  if (plain) {
+    rowKeys = rowKeys.map(([k]) => { const sum = colKeys.reduce((a, ck) => a + (val.get(k + '\u0001' + ck) || 0), 0); return [k, sum, sum]; }).sort((a, b) => b[1] - a[1]);
+  }
   const pal = HEAT_PALETTES[cfg.palette] || HEAT_PALETTES.blue;
   const scale = cfg.scale || (cfg.row_norm ? 'row' : 'global');
   const all = [...val.values()];
   const gMin = Math.min(0, ...all), gMax = Math.max(1e-9, ...all);
   const colLabel = (ck) => (cfg.col_date ? bucketLabel(ck, cfg.bucket || 'day') : ck);
-  const short = (v) => fmtCompact(v, cfg.format);
+  const short = (v) => (plain ? fmtValue(v, cfg.format) : fmtCompact(v, cfg.format));
   const shade = (step, list) => `background:${list[step]};color:${onColor(list[step])}`;
   // threshold_col: each cell against its column's median (a month across
   // branches); below `threshold` × median is flagged, far below is darker.
@@ -4184,7 +4190,7 @@ function renderHeatmap(body, rows, cfg) {
     });
   }
   const lastCol = colKeys[colKeys.length - 1];
-  let html = `<table class="heat-table"><thead><tr><th class="heat-row">${esc(cfg.row_label || '')}</th>${colKeys.map((ck) => `<th>${esc(colLabel(ck))}</th>`).join('')}<th>${scale === 'diverging_row' ? 'เฉลี่ย' : scale === 'threshold_col' ? 'ล่าสุด เทียบค่ากลาง' : 'รวม'}</th></tr></thead><tbody>`;
+  let html = `<table class="heat-table${plain ? ' plain' : ''}"><thead><tr><th class="heat-row">${esc(cfg.row_label || '')}</th>${colKeys.map((ck) => `<th>${esc(colLabel(ck))}</th>`).join('')}<th>${scale === 'diverging_row' ? 'เฉลี่ย' : scale === 'threshold_col' ? 'ล่าสุด เทียบค่ากลาง' : 'รวม'}</th></tr></thead><tbody>`;
   rowKeys.forEach(([rk, , rowValue]) => {
     const vals = colKeys.map((ck) => val.get(rk + '\u0001' + ck));
     const present = vals.filter((v) => v !== undefined);
@@ -4195,6 +4201,7 @@ function renderHeatmap(body, rows, cfg) {
       const tip = `${rk} · ${colLabel(colKeys[i])}: ${v === undefined ? 'ไม่มีข้อมูล' : fmtValue(v, cfg.format)}${scale === 'diverging_row' && v !== undefined ? ` (${v >= avg ? '+' : ''}${fmtValue(v - avg, cfg.format)} จากค่าเฉลี่ยของแถว)` : ''}`;
       if (v === undefined) return `<td class="heat-empty" title="${esc(tip)}">–</td>`;
       let style;
+      if (plain) return `<td title="${esc(tip)}">${esc(short(v))}</td>`;
       if (scale === 'threshold_col') {
         const med = colMed.get(colKeys[i]);
         const r = med ? v / med : 1;
@@ -4236,7 +4243,7 @@ function renderHeatmap(body, rows, cfg) {
     : scale === 'diverging_row'
     ? `<span>ต่ำกว่าค่าเฉลี่ยของแถว</span><span class="heat-ramp">${swatches([...HEAT_PALETTES.red.slice(1, 6)].reverse())}<i style="background:var(--cream)"></i>${swatches(HEAT_PALETTES.blue.slice(1, 6))}</span><span>สูงกว่า</span>`
     : `<span>${esc(scale === 'row' ? 'น้อยสุดในแถว' : short(gMin))}</span><span class="heat-ramp">${swatches(pal)}</span><span>${esc(scale === 'row' ? 'มากสุดในแถว' : short(gMax))}</span><span class="muted">· ช่อง – คือไม่มีข้อมูล</span>`;
-  body.insertAdjacentHTML('beforeend', `<div class="heat-legend">${legend}</div>`);
+  if (!plain) body.insertAdjacentHTML('beforeend', `<div class="heat-legend">${legend}</div>`);
   if (totalRows > rowKeys.length) body.insertAdjacentHTML('beforeend', `<p class="widget-foot">แสดง ${rowKeys.length} จาก ${totalRows} รายการ</p>`);
 }
 // ฿12.3k-style numbers for cells too small for a full figure.

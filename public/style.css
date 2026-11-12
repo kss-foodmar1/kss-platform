@@ -550,6 +550,14 @@ table.mini-table th.num, table.mini-table td.num { text-align: right; }
 .heat-table tbody th.heat-row { position: sticky; left: 0; top: auto; }
 .heat-table td { text-align: right; padding: 4px 6px; border-radius: 4px; min-width: 46px; white-space: nowrap; }
 .heat-table td.heat-empty { color: var(--muted); text-align: center; }
+.heat-table.plain { border-spacing: 0; border-collapse: collapse; font-size: 14px; width: 100%; }
+.heat-table.plain th, .heat-table.plain td { padding: 12px 14px; border-bottom: 1px solid var(--line-soft); border-radius: 0; min-width: 96px; }
+.heat-table.plain thead th { font-size: 12px; letter-spacing: .02em; border-bottom: 1.5px solid var(--line); }
+.heat-table.plain th.heat-row { min-width: 130px; font-size: 14px; background: var(--white); }
+.heat-table.plain tbody tr:hover td, .heat-table.plain tbody tr:hover th.heat-row { background: var(--cream); }
+.heat-table.plain td.heat-empty { color: var(--muted); text-align: right; }
+.heat-table.plain td.heat-total, .heat-table.plain tr.heat-sum td, .heat-table.plain tr.heat-sum th { font-weight: 700; background: var(--cream); border-left: 1px solid var(--line-soft); }
+.heat-table.plain tr.heat-sum th, .heat-table.plain tr.heat-sum td { border-top: 1.5px solid var(--line); border-bottom: 0; }
 .heat-table td.heat-total, .heat-table tr.heat-sum td { font-weight: 700; background: var(--cream); color: var(--ink); }
 .bucket-toggle { display: flex; gap: 6px; margin-bottom: 8px; }
 .bucket-toggle .range-chip, .page-filter .range-chip { padding: 3px 10px; font-size: 12px; }

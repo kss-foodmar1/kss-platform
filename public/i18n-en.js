@@ -6,6 +6,9 @@
 window.I18N_EN = {
   exact: {
     // ---- marketing widgets (catalog) ----
+    'ตารางเหมือนไฟล์งบที่อัปโหลด: แถวคือช่องทาง คอลัมน์คือเดือน พร้อมยอดรวมต่อช่องทางและต่อเดือน': 'A table like the uploaded budget file: a row per channel, a column per month, with totals per channel and per month',
+    'ไม่มีงบในช่วงที่เลือก — เลือกช่วงที่มีเดือนที่ตั้งงบไว้ หรืออัปโหลดไฟล์งบที่ ตั้งค่า → การเชื่อมข้อมูล → งบการตลาด': 'No budget in the selected period — pick a period with budgeted months, or upload the budget file at Settings → Data connections → Marketing budget',
+    'งบเป็นบาทต่อเดือน เดือนที่อยู่ในช่วงที่เลือกแสดงงบทั้งเดือน • "–" คือไม่ได้ตั้งงบช่องทางนั้นในเดือนนั้น • ยอดตามไฟล์ (ก่อน VAT ถ้าติ๊กรวม VAT ตอนอัปโหลด)': 'Budget in baht per month; a month inside the selected period shows its whole budget • "–" = no budget set for that channel that month • Amounts as in the file (before VAT if "VAT included" was ticked on upload)',
     'รายการยอดใช้จริงตามไฟล์ที่อัปโหลด': 'Actual spend lines as uploaded',
     'ทุกบรรทัดยอดใช้จริงที่อัปโหลด (วัน ช่องทาง จำนวนเงิน หมายเหตุ) ไว้เทียบกับไฟล์ต้นทาง ค้นหา เรียง และ Export ได้': 'Every actual-spend line uploaded (day, channel, amount, note), to check against the source file; sortable and exportable',
     'ยอดใช้จริง (บาท)': 'Actual spend (baht)',
