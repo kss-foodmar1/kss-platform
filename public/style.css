@@ -1774,9 +1774,13 @@ td.num .par-flag { display: block; width: fit-content; margin: 2px 0 0 auto; }
 .mkt-row .btn.small, .marketing-kind .tpl-link { min-height: 44px; display: inline-flex; align-items: center; gap: 6px; }
 .marketing-kind .tpl-link { text-decoration: none; }
 .mkt-opts { margin-top: 8px; font-size: 13px; }
-.mkt-opts summary { cursor: pointer; color: var(--primary); min-height: 32px; display: flex; align-items: center; }
 .mkt-opts label { display: block; margin-top: 8px; color: var(--ink-2); }
-.mkt-check { display: flex !important; gap: 8px; align-items: flex-start; }
+.mkt-check { display: flex !important; gap: 10px; align-items: center; min-height: 44px; }
+.mkt-check input { width: 22px; height: 22px; flex: 0 0 22px; margin: 0; }
+.mkt-year input { display: block; margin-top: 4px; width: 100%; max-width: 200px; }
+.marketing-kind input[type=month], .marketing-kind input[type=number], .marketing-kind select { min-height: 44px; box-sizing: border-box; }
+.marketing-kind input[type=file] { min-height: 44px; box-sizing: border-box; }
+.marketing-kind .tpl-list { display: inline-flex; align-items: center; min-height: 44px; }
 .mkt-h4 { margin: 0 0 4px; font-size: 14px; }
 .mkt-preview { margin-top: 8px; }
 .mkt-pv { border: 1px solid var(--primary-line); background: var(--surface-2); border-radius: 10px; padding: 10px 12px; font-size: 13px; }
@@ -1796,3 +1800,6 @@ td.num .par-flag { display: block; width: fit-content; margin: 2px 0 0 auto; }
   .mkt-uploads td[data-label]::before { content: attr(data-label) ': '; color: var(--muted); font-size: 12px; }
   .mkt-uploads .marketing-del { min-height: 44px; width: 100%; margin-top: 6px; }
 }
+.mkt-row label { min-width: 0; max-width: 100%; }
+.marketing-kind select { max-width: 100%; }
+@media (max-width: 700px) { .mkt-row label { flex: 1 1 100%; } .marketing-kind .mkt-row select, .marketing-kind .mkt-row input[type=month] { width: 100%; } }

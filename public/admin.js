@@ -1636,7 +1636,7 @@ async function renderPosPanel(container, companyId, view = { filter: 'unmatched'
   const recipeOptions = o.fmh_menus.map((m) => `<option value="${esc(m.name)}">${esc(m.name)} (฿${Number(m.cost).toLocaleString('th-TH', { maximumFractionDigits: 2 })})</option>`).join('');
 
   container.innerHTML = `
-    <p class="helper-text" style="margin-top:0;">สำหรับร้านที่ POS ไม่มี API (เช่น Foodstory): export ไฟล์ยอดขายรายบิลแบบละเอียดเป็น CSV แล้วอัปโหลดที่นี่ ระบบจับคู่ชื่อเมนูกับสูตรใน FMH เพื่อคิดต้นทุนและกำไรขั้นต้น ไฟล์ถูกอ่านในเครื่องของคุณ ส่งขึ้นระบบเฉพาะยอดรวมรายวันต่อเมนู — ชื่อลูกค้าและเบอร์โทรไม่ถูกส่ง</p>
+    <p class="helper-text" style="margin-top:0;">สำหรับร้านที่ POS ไม่มี API (เช่น Foodstory): export ไฟล์ยอดขายรายบิลแบบละเอียดเป็น CSV แล้วอัปโหลดที่นี่ ระบบจับคู่ชื่อเมนูกับสูตรใน FMH เพื่อคิดต้นทุนและกำไรขั้นต้น ไฟล์ถูกอ่านในเครื่องของคุณ ส่งขึ้นระบบเฉพาะยอดรวมรายวันต่อเมนู — ชื่อลูกค้าและเบอร์โทรไม่ถูกส่ง · ถ้าจะใช้ widget "ค่าการตลาด % ของยอดขาย" ให้ export ยอดขายก่อน VAT และก่อน service charge และอัปโหลดให้ครบทุกสาขา</p>
     <form class="inline-form pos-upload-form">
       <label class="pos-source">ไฟล์มาจาก POS
         <select name="source" aria-label="ไฟล์มาจาก POS">
@@ -2517,8 +2517,8 @@ async function renderMarketingPanel(container, companyId, flash = '') {
       <div class="mkt-step"><span class="mkt-n">1</span><div>
         <div class="mkt-row">
           <label>${isBudget ? 'เดือนแรกของแม่แบบ' : 'เดือนของแม่แบบ'} <input type="month" class="tpl-month" value="${mktMonthNow()}" placeholder="${mktMonthNow()}" aria-label="${isBudget ? 'เดือนแรกของแม่แบบงบ' : 'เดือนของแม่แบบยอดใช้จริง'}"></label>
-          ${isBudget ? '' : `<label>ยอดที่มี <select class="tpl-gran" aria-label="ความละเอียดของยอดใช้จริง"><option value="day">รายวัน (ทีละวัน)</option><option value="month">รายเดือน (ยอดรวมต่อเดือน)</option></select></label>`}
-          <a class="btn small primary tpl-link" data-k="${k}" href="/api/marketing/template/${k}" download><span aria-hidden="true">⬇</span> ดาวน์โหลดแม่แบบ</a>
+          ${isBudget ? '' : `<label>ยอดที่มี <select class="tpl-gran" aria-label="ความละเอียดของยอดใช้จริง"><option value="day">รายวัน (ทีละวัน)</option><option value="month">รายเดือน (ยอดรวมต่อเดือน กระจายเท่ากันทุกวัน)</option></select></label>`}
+          <a class="btn small primary tpl-link" data-k="${k}" href="/api/marketing/template/${k}" download><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg> ดาวน์โหลดแม่แบบ</a>
         </div>
         <p class="muted tpl-note" style="margin:6px 0 0;"></p>
         <p class="muted" style="margin:4px 0 0;"><a class="tpl-list" data-k="${k}" href="/api/marketing/template/${k}?layout=list" download>ดาวน์โหลดแบบรายการ (1 แถวต่อ 1 รายการ) แทน</a></p>
@@ -2529,10 +2529,10 @@ async function renderMarketingPanel(container, companyId, flash = '') {
           <input type="file" name="file" accept=".xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required aria-label="ไฟล์${esc(d.title)}">
           <button type="submit" class="btn small">ตรวจไฟล์ก่อนบันทึก</button>
         </form>
-        <details class="mkt-opts"><summary>ตัวเลือกเพิ่มเติม</summary>
+        <div class="mkt-opts">
           <label class="mkt-check"><input type="checkbox" name="vat"> ตัวเลขในไฟล์นี้รวม VAT แล้ว (ระบบหาร 1.07 เก็บเป็นยอดก่อน VAT)</label>
-          <label>ปี (ใช้เมื่อหัวคอลัมน์เป็น "ม.ค." "ก.พ." ที่ไม่มีปี) <input type="number" name="year" min="2000" max="2700" placeholder="เช่น 2026 หรือ 2569" style="width:130px"></label>
-        </details>
+          <label class="mkt-year">ปีของหัวคอลัมน์ (กรอกเฉพาะเมื่อหัวคอลัมน์เป็น "ม.ค." "ก.พ." ที่ไม่มีปี) <input type="number" name="year" min="2000" max="2700" placeholder="เช่น 2026 หรือ 2569"></label>
+        </div>
       </div></div>
       <div class="mkt-preview"></div>
       <p class="muted marketing-state">${d.rows(o) ? `ในระบบ: ${d.rows(o).toLocaleString('th-TH')} แถว · ${esc(d.range(o))} · รวม ${baht(d.total(o))} (ก่อน VAT)` : 'ยังไม่มีข้อมูล'}</p>
@@ -2584,7 +2584,12 @@ async function renderMarketingPanel(container, companyId, flash = '') {
            <p class="muted">ลบไฟล์ = ลบแถวที่ไฟล์นั้นเป็นคนบันทึกล่าสุดเท่านั้น</p>`
         : ''
     }`;
-  const msg = (html) => { container.querySelector('.marketing-msg').innerHTML = html; };
+  const msg = (html) => {
+    const el = container.querySelector('.marketing-msg');
+    el.innerHTML = html;
+    if (html && !/กำลังอ่านไฟล์/.test(html)) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  };
+  if (flash) container.querySelector('.marketing-msg').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   const errBox = (err) => {
     const all = (err.data && err.data.details) || [];
     const det = all.slice(0, 20).map((d) => `<li>${d.row ? `แถว ${d.row}: ` : ''}${esc(d.message)}</li>`).join('');
@@ -2629,6 +2634,9 @@ async function renderMarketingPanel(container, companyId, flash = '') {
     const box = form.closest('.marketing-kind');
     const kind = box.dataset.kind;
     const pv = box.querySelector('.mkt-preview');
+    const clearPv = () => { pv.innerHTML = ''; };
+    box.querySelectorAll('.mkt-opts input').forEach((i) => i.addEventListener('change', clearPv));
+    form.file.addEventListener('change', clearPv);
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const file = form.file.files[0];
@@ -2653,6 +2661,8 @@ async function renderMarketingPanel(container, companyId, flash = '') {
       const body = { kind, filename: file.name, table, vat_included: opts.querySelector('[name=vat]').checked, year: Number(opts.querySelector('[name=year]').value) || undefined };
       const btn = form.querySelector('button');
       btn.disabled = true;
+      const btnText = btn.textContent;
+      btn.textContent = 'กำลังตรวจ...';
       try {
         const p = await api(`/api/marketing/companies/${companyId}/uploads`, { method: 'POST', body: JSON.stringify({ ...body, dry_run: true }) });
         msg('');
@@ -2673,6 +2683,7 @@ async function renderMarketingPanel(container, companyId, flash = '') {
         msg(errBox(err));
       }
       btn.disabled = false;
+      btn.textContent = btnText;
     });
   });
 
@@ -2715,20 +2726,21 @@ async function renderMarketingPanel(container, companyId, flash = '') {
   });
 
   container.querySelectorAll('.marketing-del').forEach((b) =>
-    b.addEventListener('click', async () => {
-      const id = b.closest('tr').dataset.id;
-      if (!b.dataset.sure) {
-        b.dataset.sure = '1';
-        b.textContent = 'กดอีกครั้งเพื่อลบ';
-        setTimeout(() => { b.dataset.sure = ''; b.textContent = 'ลบ'; }, 4000);
-        return;
-      }
-      try {
-        await api(`/api/marketing/companies/${companyId}/uploads/${id}`, { method: 'DELETE' });
-        renderMarketingPanel(container, companyId, '<div class="ok-msg">ลบไฟล์แล้ว</div>');
-      } catch (err) {
-        msg(errBox(err));
-      }
+    b.addEventListener('click', () => {
+      const tr = b.closest('tr');
+      const id = tr.dataset.id;
+      const name = tr.querySelector('[data-label="ไฟล์"]').textContent.trim();
+      const rowsN = tr.querySelector('[data-label="แถว"]').textContent.trim();
+      msg('<div class="mkt-del-out"></div>');
+      confirmBox(container.querySelector('.mkt-del-out'), `จะลบไฟล์ "${esc(name)}" (${esc(rowsN)} รายการ) — ลบเฉพาะข้อมูลที่ไฟล์นี้เป็นคนบันทึกล่าสุด ข้อมูลที่ไฟล์อื่นทับไปแล้วจะไม่หาย และกู้คืนไม่ได้`, { go: 'ยืนยันลบไฟล์', danger: true }, async () => {
+        try {
+          await api(`/api/marketing/companies/${companyId}/uploads/${id}`, { method: 'DELETE' });
+          renderMarketingPanel(container, companyId, '<div class="ok-msg">ลบไฟล์แล้ว</div>');
+        } catch (err) {
+          msg(errBox(err));
+        }
+      });
+      container.querySelector('.marketing-msg').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     })
   );
 }

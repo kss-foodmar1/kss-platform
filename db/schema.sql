@@ -618,7 +618,7 @@ CREATE TABLE IF NOT EXISTS marketing_actual (
 ) DEFAULT CHARSET=utf8mb4;
 
 -- Monthly actual spend (a file with month columns instead of days). Counts only for a
--- month x channel that has no daily rows; the report puts it on the last day of the month.
+-- month x channel that has no daily rows; the report spreads it evenly over the days of the month.
 CREATE TABLE IF NOT EXISTS marketing_actual_month (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   company_id INT NOT NULL,

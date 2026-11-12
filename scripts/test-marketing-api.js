@@ -123,10 +123,11 @@ const sum = (rows, f) => Math.round(rows.reduce((s, r) => s + Number(r[f] || 0),
   const mon = await ca('POST', `/api/marketing/companies/${co}/uploads`, { kind: 'actual', filename: 'monthly.csv', table: [['ช่องทาง', '2026-11', '2026-12'], ['Meta', 9999, 4000], ['Influencer', 5000, ''] ] });
   check('monthly actual: saved as month columns', mon.status === 200 && mon.json.monthly === true && mon.json.rows === 3, JSON.stringify(mon.json).slice(0, 250));
   rows = await reportRows();
-  const metaNov30 = rows.find((r) => r.spend_date === '2026-11-30' && r.channel === 'Meta');
-  const infNov30 = rows.find((r) => r.spend_date === '2026-11-30' && r.channel === 'Influencer');
-  const metaDec31 = rows.find((r) => r.spend_date === '2026-12-31' && r.channel === 'Meta');
-  check('monthly actual: month with daily rows keeps daily (Meta Nov 30 has no monthly 9,999); month without daily lands on the last day', !(metaNov30 && metaNov30.actual === 9999) && infNov30 && infNov30.actual === 5000 && metaDec31 && metaDec31.actual === 4000, JSON.stringify({ metaNov30, infNov30, metaDec31 }));
+  const sumOf = (f) => Math.round(rows.filter(f).reduce((t, r) => t + r.actual, 0) * 100) / 100;
+  const metaNovMonthly = rows.filter((r) => r.channel === 'Meta' && r.spend_date.startsWith('2026-11')).reduce((t, r) => t + r.actual, 0);
+  check('monthly actual: a month with daily rows keeps only the daily figures (Meta Nov = 2,000, not + 9,999)', Math.round(metaNovMonthly) === 2000, String(metaNovMonthly));
+  check('monthly actual: a month without daily rows is spread over every day and sums back to the month', sumOf((r) => r.channel === 'Influencer' && r.spend_date.startsWith('2026-11')) === 5000 && sumOf((r) => r.channel === 'Meta' && r.spend_date.startsWith('2026-12')) === 4000 && rows.filter((r) => r.channel === 'Meta' && r.spend_date.startsWith('2026-12')).length === 31);
+  check('monthly actual: a range inside the month takes its share (Dec 1-15 of 4,000 ~ 1,935)', Math.abs(sumOf((r) => r.channel === 'Meta' && r.spend_date >= '2026-12-01' && r.spend_date <= '2026-12-15') - 1935.48) < 0.1);
   const tm = await ca('GET', '/api/marketing/template/actual?granularity=month&from=2026-11');
   check('template: monthly actual has 12 month columns', tm.status === 200 && tm.text.split('\r\n')[0].split(',').length === 13);
   const nbc = await cnt('marketing_budget');
