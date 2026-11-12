@@ -22,10 +22,14 @@
     { key: 'plan_next_month', th: 'เดือนหน้า', en: 'Next month' },
     { key: 'plan_this_quarter', th: 'ไตรมาสนี้', en: 'This quarter' },
     { key: 'plan_next_quarter', th: 'ไตรมาสหน้า', en: 'Next quarter' },
-    { key: 'plan_6m', th: '6 เดือนข้างหน้า', en: 'Next 6 months' },
-    { key: 'plan_12m', th: '12 เดือนข้างหน้า', en: 'Next 12 months' },
+    // these two start on the 1st of THIS month, so the name says so
+    { key: 'plan_6m', th: '6 เดือน (นับจากเดือนนี้)', en: '6 months from this month' },
+    { key: 'plan_12m', th: '12 เดือน (นับจากเดือนนี้)', en: '12 months from this month' },
     { key: 'plan_this_year', th: 'ปีนี้ (ทั้งปี)', en: 'This year (whole)' },
+    // looking back, to review how a finished period went
     { key: 'last_month', th: 'เดือนที่แล้ว', en: 'Last month' },
+    { key: 'plan_last_quarter', th: 'ไตรมาสที่แล้ว', en: 'Last quarter' },
+    { key: 'plan_last_year', th: 'ปีที่แล้ว', en: 'Last year' },
   ];
   const PLAN_DEFAULT = 'plan_this_month';
   const DEFAULT = 'd30';
@@ -51,6 +55,8 @@
       case 'plan_next_month': return { start: iso(new Date(t.getFullYear(), t.getMonth() + 1, 1)), end: iso(new Date(t.getFullYear(), t.getMonth() + 2, 0)) };
       case 'plan_this_quarter': { const q = Math.floor(t.getMonth() / 3) * 3; return { start: iso(new Date(t.getFullYear(), q, 1)), end: iso(new Date(t.getFullYear(), q + 3, 0)) }; }
       case 'plan_next_quarter': { const q = Math.floor(t.getMonth() / 3) * 3 + 3; return { start: iso(new Date(t.getFullYear(), q, 1)), end: iso(new Date(t.getFullYear(), q + 3, 0)) }; }
+      case 'plan_last_quarter': { const q = Math.floor(t.getMonth() / 3) * 3 - 3; return { start: iso(new Date(t.getFullYear(), q, 1)), end: iso(new Date(t.getFullYear(), q + 3, 0)) }; }
+      case 'plan_last_year': return { start: `${t.getFullYear() - 1}-01-01`, end: `${t.getFullYear() - 1}-12-31` };
       case 'plan_6m': return { start: iso(new Date(t.getFullYear(), t.getMonth(), 1)), end: iso(new Date(t.getFullYear(), t.getMonth() + 6, 0)) };
       case 'plan_12m': return { start: iso(new Date(t.getFullYear(), t.getMonth(), 1)), end: iso(new Date(t.getFullYear(), t.getMonth() + 12, 0)) };
       case 'plan_this_year': return { start: `${t.getFullYear()}-01-01`, end: `${t.getFullYear()}-12-31` };

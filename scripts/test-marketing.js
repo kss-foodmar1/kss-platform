@@ -151,5 +151,11 @@ t('wide fixes: unreadable header with data errors; year hint; 2-digit year windo
   assert.ok(r5.errors[0].message.includes('Facebook') && r5.errors[0].message.includes('IG'));
   assert.ok(!r5.errors[0].message.includes('แถวที่'.repeat(2)));
 });
+t('data_through: last day with spend on every row, empty when nothing is spent', () => {
+  const none = m.computeRows([{ month: '2026-11-01', channel: 'Meta', amount: 300 }], []);
+  assert.ok(none.every((r) => r.data_through === ''));
+  const rows = m.computeRows([{ month: '2026-11-01', channel: 'Meta', amount: 300 }], [{ date: '2026-11-03', channel: 'Meta', amount: 10, note: '' }, { date: '2026-11-07', channel: 'TikTok', amount: 5, note: '' }, { date: '2026-11-09', channel: 'Meta', amount: 0, note: '' }]);
+  assert.ok(rows.length > 0 && rows.every((r) => r.data_through === '2026-11-07'));
+});
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

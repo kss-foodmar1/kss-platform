@@ -194,6 +194,18 @@ function evalMetric(m, rows) {
     // The rest of a whole, never below zero: a stack's remainder segment.
     case 'floor0':
       return Math.max(0, evalMetric(m.a, rows));
+    // The latest date in a column (ISO text), or "" when there is none: "data up to 10 Nov".
+    case 'latest_date': {
+      let best = '';
+      rows.forEach((r) => { const d = dateOnly(pick(r, m.field)); if (d && d > best) best = d; });
+      return best;
+    }
+    // Text instead of a number while the gate is too small to trust: a forecast made from
+    // 3% of the period, or "per day left" when no days are left, reads "–", not a wild figure.
+    case 'when': {
+      const g = evalMetric(m.gate, rows);
+      return g < (m.min ?? Number.MIN_VALUE) ? m.text : evalMetric(m.a, rows);
+    }
     default:
       return 0;
   }
@@ -418,6 +430,13 @@ function rowMatches(rule, row) {
     case 'matches': return new RegExp(rule.pattern, rule.flags || '').test(String(pick(row, rule.field) ?? ''));
     // Rows dated today or earlier (real today): the part of a plan that has already run.
     case 'upto_today': { const d = dateOnly(pick(row, rule.field)); return !!d && d <= realTodayIso(); }
+    // A row's date on or before another date column of the same row ("data up to" for the marketing plan);
+    // false when either is missing, so a plan with no spend uploaded yet counts nothing as elapsed.
+    case 'date_lte_field': {
+      const d = dateOnly(pick(row, rule.field));
+      const o = dateOnly(pick(row, rule.other));
+      return !!d && !!o && d <= o;
+    }
     // The last N days counting today (1 = today only), in the viewer's calendar.
     case 'within_days': {
       const d = dateOnly(pick(row, rule.field));
@@ -1363,7 +1382,7 @@ class DashboardView {
             ? `<div class="range-control" role="group" aria-label="ช่วงวันที่">
                  <select class="range-preset" aria-label="${esc(L('ช่วงเวลา', 'Period'))}">
                    ${RangePresets.available(this.fileCapable, this.planMode).map((p) => `<option value="${p.key}"${p.key === this.rangePreset ? ' selected' : ''}>${esc(RangePresets.label(p.key, I18N.lang))}</option>`).join('')}
-                   <option value="custom" hidden>${esc(L('กำหนดเอง', 'Custom'))}</option>
+                   <option value="custom"${this.planMode ? '' : ' hidden'}>${esc(this.planMode ? L('กำหนดเอง (เลือกวันที่)', 'Custom (pick dates)') : L('กำหนดเอง', 'Custom'))}</option>
                  </select>
                  <input type="date" class="range-start" value="${this.range.start}" aria-label="วันที่เริ่ม">
                  <span class="muted">–</span>
@@ -1564,7 +1583,7 @@ class DashboardView {
     if (!sel) return;
     const custom = sel.querySelector('option[value="custom"]');
     if (this.rangePreset) {
-      custom.hidden = true;
+      custom.hidden = !this.planMode; // a marketing page keeps "custom" listed so people see they can pick their own dates
       sel.value = this.rangePreset;
     } else {
       // a custom pick that happens to equal a ready-made range shows as that range
@@ -1579,7 +1598,7 @@ class DashboardView {
     const end = header.querySelector('.range-end');
     const sel = header.querySelector('.range-preset');
     sel.addEventListener('change', () => {
-      if (sel.value === 'custom') return;
+      if (sel.value === 'custom') { start.focus(); return; } // the date boxes beside it are the custom range
       this.rangePreset = sel.value;
       this.range = RangePresets.compute(this.rangePreset, realTodayIso());
       start.value = this.range.start;
@@ -2862,15 +2881,26 @@ function finishInsights(out, goals) {
 // Every renderer: (bodyElement, rows, config) — rows are already date-filtered.
 
 function renderKpi(body, rows, cfg) {
-  const row = document.createElement('div');
-  row.className = 'kpi-row';
+  // A metric may carry `group` (a small heading over the cards that follow it), `hide_if_zero`
+  // (a warning card that only appears when there is something to warn about), and may evaluate to
+  // text ("–" while there is too little to go on) or a date.
+  let row = null;
   (cfg.metrics || []).forEach((m) => {
+    const v = evalMetric(m.value, rows);
+    if (m.hide_if_zero && (typeof v !== 'number' || Math.abs(v) < 0.5)) return;
+    if (!row || m.group) {
+      if (m.group) body.insertAdjacentHTML('beforeend', `<h4 class="kpi-group">${esc(m.group)}</h4>`);
+      row = document.createElement('div');
+      row.className = 'kpi-row';
+      body.appendChild(row);
+    }
+    const shown = typeof v === 'string' ? (m.format === 'date' ? (v ? dayLabel(v) : '–') : v) : fmtValue(v, m.format);
     const card = document.createElement('div');
     card.className = 'kpi-card';
-    card.innerHTML = `<div class="kpi-label">${esc(m.label)}</div><div class="kpi-value">${esc(fmtValue(evalMetric(m.value, rows), m.format))}</div>`;
+    card.innerHTML = `<div class="kpi-label">${esc(m.label)}</div><div class="kpi-value">${esc(shown)}</div>`;
     row.appendChild(card);
   });
-  body.appendChild(row);
+  if (!row) { row = document.createElement('div'); row.className = 'kpi-row'; body.appendChild(row); }
 }
 
 // Signed values: diverging blue (+) / chili (-). Margin: status colors, always
@@ -3066,7 +3096,13 @@ function renderLine(body, rows, cfg) {
         let data = keys.map((k) => (buckets.has(k) ? evalMetric(s.value, buckets.get(k)) : null));
         // running total across the period (plan vs spend so far); a series may stop at today
         if (cfg.cumulative) { let run = 0; data = data.map((v) => (v === null ? null : (run += v))); }
-        if (s.until_today) { const t = realTodayIso(); data = data.map((v, i) => (String(keys[i]).slice(0, 10) > t ? null : v)); }
+        // stop at today, or at the last day the uploaded spend reaches when that is earlier (data_through)
+        if (s.until_today) {
+          const today = realTodayIso();
+          const through = (rows.find((r) => r.data_through) || {}).data_through;
+          const t = through && through < today ? through : today;
+          data = data.map((v, i) => (String(keys[i]).slice(0, 10) > t ? null : v));
+        }
         if ((s.mark || cfg.mark) === 'bar') {
           return { type: 'bar', label: s.label, data, backgroundColor: s.color, borderRadius: 4, maxBarThickness: 36, categoryPercentage: 0.7, barPercentage: 0.9 };
         }
