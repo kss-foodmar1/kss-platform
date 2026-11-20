@@ -390,7 +390,24 @@ CREATE TABLE IF NOT EXISTS company_line (
   monthly_quota INT NOT NULL DEFAULT 300,
   members INT NULL,
   summary_day CHAR(10) NULL,
+  -- mode 'own': the company's own OA (keys above). mode 'shared': KSS's one OA (keys in env
+  -- LINE_CHANNEL_SECRET / LINE_CHANNEL_ACCESS_TOKEN); the group is bound by typing bind_code.
+  mode VARCHAR(8) NOT NULL DEFAULT 'own',
+  bind_code VARCHAR(16) NULL,
+  bind_code_expires TIMESTAMP NULL,
+  INDEX idx_company_line_group (group_id),
+  INDEX idx_company_line_code (bind_code),
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+) DEFAULT CHARSET=utf8mb4;
+
+-- Messages sent through KSS's shared OA, per company and month (a push to a group counts once per
+-- member). Basis for the OA-wide quota check and for charging each company.
+CREATE TABLE IF NOT EXISTS line_usage (
+  month CHAR(7) NOT NULL,
+  company_id INT NOT NULL,
+  messages INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (month, company_id),
   FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 ) DEFAULT CHARSET=utf8mb4;
 

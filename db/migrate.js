@@ -361,6 +361,10 @@ async function upgradeLineSummary() {
     await pool.query(`ALTER TABLE company_line ADD COLUMN summary_day CHAR(10) NULL`);
     console.log('  company_line: added summary_day');
   }
+  if (!(await columnInfo('company_line', 'mode'))) {
+    await pool.query(`ALTER TABLE company_line ADD COLUMN mode VARCHAR(8) NOT NULL DEFAULT 'own', ADD COLUMN bind_code VARCHAR(16) NULL, ADD COLUMN bind_code_expires TIMESTAMP NULL, ADD INDEX idx_company_line_group (group_id), ADD INDEX idx_company_line_code (bind_code)`);
+    console.log('  company_line: added shared-OA columns');
+  }
 }
 
 async function upgradeHomeBranch() {

@@ -1483,21 +1483,27 @@ async function renderLinePanel(container, companyId, flash = '') {
     container.innerHTML = `<div class="error-msg">${esc(err.message)}</div>`;
     return;
   }
-  const state = !v.ready ? 'ยังไม่ได้ใส่ Channel secret / Access token' : !v.group_bound ? 'รอผูกกลุ่ม — เชิญบอทเข้ากลุ่ม LINE แล้วพิมพ์ข้อความ 1 ข้อความ' : v.enabled ? 'เปิดใช้งาน · ส่งสรุปทุกวัน 08:30 เมื่อมีเรื่องใหม่หรือแย่ลง' : 'ผูกกลุ่มแล้ว · ปิดการส่งอัตโนมัติอยู่';
+  const shared = v.mode === 'shared';
+  const isKss = !!v.is_kss;
+  const state = !v.ready ? (shared ? 'OA กลางของ KSS ยังไม่ได้ตั้งค่า (ติดต่อทีม KSS)' : 'ยังไม่ได้ใส่ Channel secret / Access token') : !v.group_bound ? (shared ? 'รอผูกกลุ่ม — เชิญบอท KSS เข้ากลุ่ม LINE แล้วพิมพ์ "ผูก รหัส" ตามด้านล่าง' : 'รอผูกกลุ่ม — เชิญบอทเข้ากลุ่ม LINE แล้วพิมพ์ข้อความ 1 ข้อความ') : v.enabled ? 'เปิดใช้งาน · ส่งสรุปทุกวัน 08:30 เมื่อมีเรื่องใหม่หรือแย่ลง' : 'ผูกกลุ่มแล้ว · ปิดการส่งอัตโนมัติอยู่';
   container.innerHTML = `
     <p class="helper-text" style="margin-top:0;">ส่งสรุป "สิ่งที่ควรดูวันนี้" จาก widget ตัวเตือน เข้ากลุ่ม LINE ของผู้บริหาร ใช้ LINE Official Account ของบริษัทเอง ข้อความที่ตอบเมื่อมีคนพิมพ์ "สถานะ" ในกลุ่มไม่นับโควต้า ส่วนข้อความแจ้งเตือนอัตโนมัติจะนับตามแพ็กเกจของ OA</p>
     ${v.sample ? '<div class="warn-msg" role="status">บริษัทนี้ยังใช้ข้อมูลตัวอย่าง จึงยังไม่ส่งสรุปเข้ากลุ่ม LINE (ไม่ให้ตัวเลขตัวอย่างหลุดเข้ากลุ่มจริง) จะเริ่มส่งเมื่อสลับเป็นข้อมูลจริง</div>' : ''}
     <p class="status-line"><span class="dot ${v.ready && v.group_bound && v.enabled ? 'dot-good' : 'dot-off'}" aria-hidden="true"></span> ${esc(state)}${v.last_sent_at ? ` · ส่งล่าสุด ${esc(fmtDateTime(v.last_sent_at))}` : ''}</p>
     <p class="helper-text line-event">${v.last_event_at ? `Webhook ล่าสุด ${esc(fmtDateTime(v.last_event_at))}: ${esc(v.last_event_note)}` : 'ยังไม่เคยมี LINE เรียก webhook นี้ (ถ้าตั้งค่าแล้ว ให้กด Verify ใน LINE Developers และตรวจว่า Use webhook เปิดอยู่)'}</p>
-    ${v.quota ? `<p class="helper-text line-quota${v.quota.warn ? ' warn' : ''}" role="status">โควตาข้อความเดือนนี้: ใช้ ${v.quota.used.toLocaleString('th-TH')} / ${v.quota.limit.toLocaleString('th-TH')} (${v.quota.pct}%)${v.quota.members ? ` · กลุ่ม ${v.quota.members} คน ส่ง 1 ครั้ง = ${v.quota.members} ข้อความ` : ''}${v.quota.full ? ' — เต็มแล้ว ระบบส่งเฉพาะเรื่องวิกฤต' : v.quota.warn ? ' — ใกล้เต็ม ควรอัปเกรดแพ็กเกจ LINE OA' : ''}</p>` : ''}
+    ${v.quota ? `<p class="helper-text line-quota${v.quota.warn ? ' warn' : ''}" role="status">โควตาข้อความเดือนนี้: ใช้ ${v.quota.used.toLocaleString('th-TH')} / ${v.quota.limit.toLocaleString('th-TH')} (${v.quota.pct}%)${v.quota.shared && isKss ? ` · OA กลางทั้งระบบ ${v.quota.pool_used.toLocaleString('th-TH')} / ${v.quota.pool_limit.toLocaleString('th-TH')}` : ''}${v.quota.members ? ` · กลุ่ม ${v.quota.members} คน ส่ง 1 ครั้ง = ${v.quota.members} ข้อความ` : ''}${v.quota.full ? ' — เต็มแล้ว ระบบส่งเฉพาะเรื่องวิกฤต' : v.quota.warn ? ' — ใกล้เต็ม ควรอัปเกรดแพ็กเกจ LINE OA' : ''}</p>` : ''}
     <div class="line-msg">${flash}</div>
     <form class="line-form">
+      ${isKss ? `<label class="field-label">ใช้ LINE OA แบบไหน</label>
+      <select class="line-mode" aria-label="โหมด LINE OA"><option value="own"${shared ? '' : ' selected'}>OA ของบริษัทเอง</option><option value="shared"${shared ? ' selected' : ''}${v.shared_available || shared ? '' : ' disabled'}>OA กลางของ KSS (KSS จ่ายค่าข้อความ)${v.shared_available ? '' : ' — ยังไม่ได้ตั้งค่า'}</option></select>
+      <p class="helper-text">เปลี่ยนโหมดแล้วต้องผูกกลุ่มใหม่</p>` : ''}
+      ${shared ? `<div class="line-bind" role="status">${v.group_bound ? '<p class="helper-text">ผูกกลุ่มแล้ว ใช้ OA กลางของ KSS</p>' : `<p class="helper-text">1) เชิญบอท KSS เข้ากลุ่ม LINE ของผู้บริหาร 2) พิมพ์ในกลุ่ม: <strong>ผูก ${esc(v.bind_code)}</strong> (ใช้ได้ครั้งเดียว หมดอายุ ${esc(fmtDateTime(v.bind_expires))})</p>`}</div>` : `
       <label class="field-label">Webhook URL (ใส่ใน LINE Developers → Messaging API)</label>
       <input type="text" readonly class="line-webhook" value="${esc(v.webhook_url)}" aria-label="Webhook URL">
       <label class="field-label">Channel secret ${v.has_secret ? `<span class="muted">(บันทึกแล้ว ${esc(v.secret_hint)})</span>` : ''}</label>
       <input type="password" class="line-secret" autocomplete="off" placeholder="${v.has_secret ? 'ใส่ใหม่เพื่อเปลี่ยน' : 'Channel secret'}" aria-label="Channel secret">
       <label class="field-label">Channel access token (long-lived) ${v.has_token ? `<span class="muted">(บันทึกแล้ว ${esc(v.token_hint)})</span>` : ''}</label>
-      <input type="password" class="line-token" autocomplete="off" placeholder="${v.has_token ? 'ใส่ใหม่เพื่อเปลี่ยน' : 'Channel access token'}" aria-label="Channel access token">
+      <input type="password" class="line-token" autocomplete="off" placeholder="${v.has_token ? 'ใส่ใหม่เพื่อเปลี่ยน' : 'Channel access token'}" aria-label="Channel access token">`}
       <label class="check-row"><input type="checkbox" class="line-enabled" ${v.enabled ? 'checked' : ''}> ส่งสรุปอัตโนมัติทุกวัน 08:30 (เรื่องใหม่หรือแย่ลง + ตัวเลขรายวันที่เลือกด้านล่าง)</label>
       <fieldset class="line-watchers">
         <legend>ตัวเตือนที่ส่งเข้า LINE</legend>
@@ -1533,8 +1539,9 @@ async function renderLinePanel(container, companyId, flash = '') {
       await api(`/api/line/companies/${companyId}`, {
         method: 'PUT',
         body: JSON.stringify({
-          channel_secret: container.querySelector('.line-secret').value,
-          access_token: container.querySelector('.line-token').value,
+          ...(container.querySelector('.line-mode') && container.querySelector('.line-mode').value !== (shared ? 'shared' : 'own') ? { mode: container.querySelector('.line-mode').value } : {}),
+          channel_secret: container.querySelector('.line-secret') ? container.querySelector('.line-secret').value : '',
+          access_token: container.querySelector('.line-token') ? container.querySelector('.line-token').value : '',
           enabled: container.querySelector('.line-enabled').checked,
           summary: [...container.querySelectorAll('.s-pick:checked')].map((x) => x.value),
           watch: Object.fromEntries([...container.querySelectorAll('.watcher-row')].map((row) => {
